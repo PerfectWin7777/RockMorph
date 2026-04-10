@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #ffffff;
+            color: #ccc;
+            font-family: sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #chart {
+            flex: 1;
+            width: 100%;
+        }
+
+       #stats {
+        padding: 6px 12px;
+        background: #f5f5f5;
+        border-top: 1px solid #ddd;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 20px;
+        font-size: 12px;
+    }
+    .stat-item {
+        display: flex;
+        flex-direction: column;
+        min-width: 70px;
+    }
+    .stat-label {
+        color: #888;
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .stat-value {
+        color: #222;
+        font-weight: bold;
+        font-size: 13px;
+    }
+
+    </style>
+</head>
+
+<body>
+
+    <div id="chart"></div>
+
+    <div id="stats">
+        <div class="stat-item">
+            <span class="stat-label">DOMINANT</span>
+            <span class="stat-value" id="stat-dominant">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">SECONDARY</span>
+            <span class="stat-value" id="stat-secondary">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">MEAN</span>
+            <span class="stat-value" id="stat-mean">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">CONC. R</span>
+            <span class="stat-value" id="stat-r">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">ANISOTROPY</span>
+            <span class="stat-value" id="stat-anisotropy">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">ENTROPY</span>
+            <span class="stat-value" id="stat-entropy">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">COUNT</span>
+            <span class="stat-value" id="stat-count">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">TOTAL KM</span>
+            <span class="stat-value" id="stat-total-km">—</span>
+        </div>
+    </div>
+
+
+    <!-- Ordre impératif : qwebchannel → plotly → bridge -->
+    <script src="js/qwebchannel.js"></script>
+    <script src="js/plotly.min.js"></script>
+    <script src="js/bridge.js"></script>
+
+    <script>
+        /**
+         * rose.html — Rose Diagram visualization
+         * bridge.js handles QWebChannel init — just use onBridgeReady()
+         */
+
+        // Called by Python via runJavaScript("updatePlot('...')")
+        function updatePlot(jsonData) {
+            var data = JSON.parse(jsonData);
+            // Label selon le mode
+            var modeLabels = {
+                'count': 'Count',
+                'length': 'Length (m)',
+                'frequency': 'Frequency (%)'
+            };
+            var modeLabel = modeLabels[data.mode] || 'Value';
+
+            var trace = {
+                type: 'barpolar',
+                r: data.values,
+                theta: data.azimuths,
+                width: data.sector_width,
+                customdata: data.azimuths.map(function (az, i) {
+                    return [az, data.values[i]];
+                }),
+                marker: {
+                    color: data.color,
+                    opacity: data.opacity,
+                    line: { color: 'rgba(0,0,0,0.15)', width: 1 }
+                },
+                hovertemplate: '<b>' + modeLabel + '</b><br>' +
+                    'Azimuth: %{customdata[0]}' + '\u00b0' + '<br>' +
+                    'Value: %{customdata[1]:.2f}' +
+                    '<extra></extra>'
+            };
+
+            var layout = {
+                title: {
+                    text: data.title,
+                    font: { color: '#444', size: 13 }
+                },
+                paper_bgcolor: '#ffffff',
+                plot_bgcolor:  '#ffffff',
+                polar: {
+                    bgcolor: '#ffffff',   // ← blanc pur
+                    angularaxis: {
+                        tickcolor: '#aaa',
+                        linecolor: '#ddd',
+                        gridcolor: '#ddd',
+                        tickfont: { color: '#333', size: 12, family: 'Arial, sans-serif' },
+                        direction: 'clockwise',
+                        rotation: 90,
+                        tickvals: [0, 45, 90, 135, 180, 225, 270, 315],
+                        ticktext: ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+                    },
+                    radialaxis: {
+                        tickcolor: '#aaa',
+                        linecolor: '#ddd',
+                        gridcolor: data.show_grid ? '#ddd' : 'rgba(0,0,0,0)',
+                        tickfont: { color: '#999', size: 9 },
+                        showticklabels: data.show_grid,
+                        showgrid: data.show_grid,
+                        gridwidth: 0.1
+                    }
+                },
+                margin: { t: 40, b: 30, l: 20, r: 20 },
+                showlegend: false
+            };
+
+            Plotly.newPlot('chart', [trace], layout, { responsive: true });
+
+            // Update stats bar
+            var s = data.stats;
+            document.getElementById('stat-dominant').textContent = s.dominant + '\u00b0';
+            document.getElementById('stat-secondary').textContent = s.secondary + '\u00b0';
+            document.getElementById('stat-mean').textContent = s.mean + '\u00b0';
+            document.getElementById('stat-r').textContent = s.r.toFixed(3);
+            document.getElementById('stat-anisotropy').textContent = s.anisotropy.toFixed(3);
+            document.getElementById('stat-entropy').textContent = s.entropy.toFixed(3);
+            document.getElementById('stat-count').textContent = s.count;
+            document.getElementById('stat-total-km').textContent = s.total_km + ' km';
+        }
+
+        // Called by Python via runJavaScript("exportImage('png')")
+        function exportImage(format, resolution) {
+                resolution = resolution || 800;
+            // Plotly accepts 'png', 'jpeg', 'svg' — NOT 'jpg'
+            var plotlyFormat = format === 'jpg' ? 'jpeg' : format;
+            Plotly.toImage('chart', {
+                format: plotlyFormat,
+                width: resolution,
+                height: resolution
+            }).then(function (dataUrl) {
+                    onBridgeReady(function (bridge) {
+                        bridge.receive_export(dataUrl);
+                    });
+                });
+        }
+
+        // Called by Python via runJavaScript("exportSvg()")
+        function exportSvg() {
+            Plotly.toImage('chart', { format: 'svg', width: 1000, height: 1000 })
+                .then(function (dataUrl) {
+                    onBridgeReady(function (bridge) {
+                        bridge.receive_export(dataUrl);
+                    });
+                });
+        }
+    </script>
+
+</body>
+
+</html>

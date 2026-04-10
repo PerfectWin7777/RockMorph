@@ -1,0 +1,16 @@
+[general]
+name=RockMorph
+qgisMinimumVersion=3.36
+description=Advanced Geomorphology Toolkit for QGIS
+version=0.1.0
+author=Tony
+email=tony@rockmorph.dev
+about=RockMorph provides advanced geomorphological analysis tools including swath profiling, rose diagrams, hypsometric curves, and terrain derivatives.
+tracker=https://github.com/tony/rockmorph/issues
+repository=https://github.com/tony/rockmorph
+tags=geomorphology,dem,raster,hydrology,terrain
+homepage=https://github.com/tony/rockmorph
+category=Raster
+icon=icon.png
+experimental=True
+deprecated=False
