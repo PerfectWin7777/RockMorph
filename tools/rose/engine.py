@@ -41,10 +41,11 @@ class RoseEngine(BaseEngine):
         layer     = kwargs["layer"]
         n_sectors = kwargs.get("n_sectors", 36)
         mode      = kwargs.get("mode", "length")
-        half_rose = kwargs.get("half_rose", True)
+        half_rose = kwargs.get("half_rose", False)
         color     = kwargs.get("color", "#4a9eff")
         opacity   = kwargs.get("opacity", 0.85)
         show_grid = kwargs.get("show_grid", True)
+        show_labels = kwargs.get("show_labels", False)
         title     = kwargs.get("title", "Rose Diagram")
         min_rectitude = kwargs.get("min_rectitude", 0.0)
 
@@ -72,6 +73,7 @@ class RoseEngine(BaseEngine):
             "color":        color,
             "opacity":      opacity,
             "show_grid":    show_grid,
+            "show_labels":  show_labels,
             "title":        title,
             "stats":        stats,
             "mode":         mode, 

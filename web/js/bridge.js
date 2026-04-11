@@ -45,30 +45,50 @@ _initBridge();
 // Export scaling utilities — shared by all RockMorph HTML views
 // ---------------------------------------------------------------------------
 
+
 /**
- * Build a Plotly relayout patch that scales all text to remain
- * readable at high export resolutions.
- *
- * @param {number} fontScale  - ratio: exportWidth / BASE_EXPORT_WIDTH
- * @param {string[]} axisKeys - list of axis prefixes present in this plot
- *                              e.g. ['xaxis','yaxis','yaxis2'] for swath
- *                              e.g. ['polar'] for rose
- * @returns {Object} patch object ready for Plotly.relayout()
+ * Creates a patch object to scale UI elements (fonts, grid lines) 
+ * proportional to the export resolution.
+ * 
+ * @param {number} scaleFactor - Ratio (exportWidth / BASE_RESOLUTION)
+ * @param {string[]} axisKeys - Keys for axes (e.g., ['polar'] or ['xaxis', 'yaxis'])
  */
-function buildFontPatch(fontScale, axisKeys) {
-    var s = fontScale;
-    var patch = {
-        'title.font.size': Math.round(14 * s),
-        'legend.font.size': Math.round(11 * s),
+function buildExportStylePatch(scaleFactor, axisKeys) {
+    const s = scaleFactor;
+
+    // Core layout scaling (Titles and Legends)
+    let patch = {
+        'title.font.size': Math.round(16 * s),
+        'legend.font.size': Math.round(12 * s),
+        'margin.t': Math.round(30 * s),
+        'margin.b': Math.round(30 * s),
+        'margin.l': Math.round(30 * s),
+        'margin.r': Math.round(30 * s)
     };
 
     axisKeys.forEach(function (key) {
         if (key === 'polar') {
-            patch['polar.angularaxis.tickfont.size'] = Math.round(12 * s);
-            patch['polar.radialaxis.tickfont.size'] = Math.round(9 * s);
+            // Polar Axis Labels (N, S, E, W)
+            patch['polar.angularaxis.tickfont.size'] = Math.round(14 * s);
+            // Concentric circles labels
+            patch['polar.radialaxis.tickfont.size'] = Math.round(12 * s);
+
+            // Grid Lines (The concentric circles and radial spokes)
+            // This fixes the "disappearing circles" issue at 300 DPI
+            patch['polar.angularaxis.gridwidth'] = Math.max(1, 1.2 * s);
+            patch['polar.radialaxis.gridwidth'] = Math.max(1, 1.2 * s);
+
+            // Axis line thickness
+            patch['polar.angularaxis.linewidth'] = Math.max(1, 1.5 * s);
+            patch['polar.radialaxis.linewidth'] = Math.max(1, 1.5 * s);
         } else {
-            patch[key + '.title.font.size'] = Math.round(12 * s);
+            // Standard XY Axes (Swath Profiler)
+            patch[key + '.title.font.size'] = Math.round(14 * s);
             patch[key + '.tickfont.size'] = Math.round(11 * s);
+
+            // Grid and axis lines
+            patch[key + '.gridwidth'] = Math.max(0.5, 0.8 * s);
+            patch[key + '.linewidth'] = Math.max(1, 1.5 * s);
         }
     });
 
@@ -76,62 +96,62 @@ function buildFontPatch(fontScale, axisKeys) {
 }
 
 /**
- * Scale trace line widths for high-DPI export.
- * Returns updated traces array — does NOT mutate the originals.
- *
- * @param {Array}  traces    - current Plotly traces (gd.data)
- * @param {number} lineScale - same ratio as fontScale
- * @returns {Object} relayout-style patch — use Plotly.restyle()
+ * Scales the width of data traces (curves and bar borders).
  */
-function buildLineWidthPatch(traces, lineScale) {
-    var widths = [];
-    for (var i = 0; i < traces.length; i++) {
-        var base = (traces[i].line && traces[i].line.width) ? traces[i].line.width : 1.5;
-        widths.push(Math.max(1, base * lineScale));
+function buildTraceWidthPatch(traces, scaleFactor) {
+    let widths = [];
+    for (let i = 0; i < traces.length; i++) {
+        let baseWidth = (traces[i].line && traces[i].line.width) ? traces[i].line.width : 1.5;
+        widths.push(baseWidth * scaleFactor);
     }
     return { 'line.width': widths };
 }
 
 /**
- * Run a high-DPI export on a Plotly div.
- * Scales fonts and line widths, exports, then restores original state.
- *
- * @param {string}   divId    - id of the Plotly div
- * @param {string}   format   - 'png' | 'jpeg' | 'svg'
- * @param {number}   width    - export width in pixels
- * @param {number}   height   - export height in pixels
- * @param {string[]} axisKeys - axis prefixes for this plot type
- * @param {Function} callback - called with dataUrl when done
+ * Main Export Pipeline: 
+ * Temporary UI boost -> Image Capture -> UI Reset.
  */
 function exportHighDpi(divId, format, width, height, axisKeys, callback) {
-    var BASE = 1920;
-    var gd = document.getElementById(divId);
-    if (!gd || !gd.data) { return; }
+    // We use 1000px as the reference "looks-good" width.
+    const BASE_RESOLUTION = 1000;
+    const gd = document.getElementById(divId);
+    if (!gd || !gd.data) return;
 
-    var fontScale = Math.max(1.0, width / BASE);
-    var fontPatch = buildFontPatch(fontScale, axisKeys);
-    var linePatch = buildLineWidthPatch(gd.data, fontScale);
+    const scaleFactor = Math.max(1.0, width / BASE_RESOLUTION);
 
-    // Store originals for restore
-    var restoreFontPatch = buildFontPatch(1.0, axisKeys);
-    var restoreLinePatch = buildLineWidthPatch(gd.data, 1.0);
+    // 1. Generate Patches
+    const exportStylePatch = buildExportStylePatch(scaleFactor, axisKeys);
+    const exportTracePatch = buildTraceWidthPatch(gd.data, scaleFactor);
 
-    Plotly.relayout(gd, fontPatch)
-        .then(function () { return Plotly.restyle(gd, linePatch); })
+    // 2. Store original state for restoration
+    const originalStylePatch = buildExportStylePatch(1.0, axisKeys);
+    const originalTracePatch = buildTraceWidthPatch(gd.data, 1.0);
+
+    // 3. Execution chain
+    Plotly.relayout(gd, exportStylePatch)
         .then(function () {
-            return Plotly.toImage(gd, { format: format, width: width, height: height });
+            return Plotly.restyle(gd, exportTracePatch);
+        })
+        .then(function () {
+            return Plotly.toImage(gd, {
+                format: format,
+                width: width,
+                height: height
+            });
         })
         .then(function (dataUrl) {
-            // Restore before calling back — UI must look normal even if callback is slow
-            return Plotly.relayout(gd, restoreFontPatch)
-                .then(function () { return Plotly.restyle(gd, restoreLinePatch); })
-                .then(function () { return dataUrl; });
+            // Revert UI to screen-friendly sizes immediately after capture
+            Plotly.relayout(gd, originalStylePatch);
+            Plotly.restyle(gd, originalTracePatch);
+            return dataUrl;
         })
-        .then(function (dataUrl) { callback(dataUrl); })
+        .then(function (dataUrl) {
+            callback(dataUrl);
+        })
         .catch(function (err) {
-            console.error('[RockMorph] export failed:', err);
-            // Always restore on error
-            Plotly.relayout(gd, restoreFontPatch);
-            Plotly.restyle(gd, restoreLinePatch);
+            console.error('[RockMorph] High-DPI Export failed:', err);
+            // Emergency revert
+            Plotly.relayout(gd, originalStylePatch);
+            Plotly.restyle(gd, originalTracePatch);
         });
 }

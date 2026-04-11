@@ -296,6 +296,10 @@ class RockMorphExporter:
             return False, "", 0, 0
         width, height = dialog.result_size
 
+        # Security check for high-res
+        if width > 5000 or height > 5000:
+            self._info(tr("Extremely high resolution may take time or crash the view."))
+
         # Ask file path
         path = self._ask_path(fmt, parent)
         if not path:

@@ -137,8 +137,8 @@
 
             var layout = {
                 title: {
-                    text: data.title,
-                    font: { color: '#444', size: 13 }
+                    text: data.title || '',
+                    font: { color: '#282828', size: 13 }
                 },
                 paper_bgcolor: '#ffffff',
                 plot_bgcolor:  '#ffffff',
@@ -148,7 +148,7 @@
                         tickcolor: '#aaa',
                         linecolor: '#ddd',
                         gridcolor: '#ddd',
-                        tickfont: { color: '#333', size: 12, family: 'Arial, sans-serif' },
+                        tickfont: { color: '#2b2a2a', size: 12, family: 'Arial, sans-serif' },
                         direction: 'clockwise',
                         rotation: 90,
                         tickvals: [0, 45, 90, 135, 180, 225, 270, 315],
@@ -158,8 +158,8 @@
                         tickcolor: '#aaa',
                         linecolor: '#ddd',
                         gridcolor: data.show_grid ? '#ddd' : 'rgba(0,0,0,0)',
-                        tickfont: { color: '#999', size: 9 },
-                        showticklabels: data.show_grid,
+                        tickfont: { color: data.show_labels ? '#2c2b2b' : '#f4efef', size: 9 },
+                        showticklabels: data.show_labels,
                         showgrid: data.show_grid,
                         gridwidth: 0.1
                     }

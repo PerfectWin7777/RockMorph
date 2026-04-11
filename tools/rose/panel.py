@@ -122,6 +122,10 @@ class RosePanel(BasePanel):
         self.grid_check.setChecked(False)
         style_layout.addRow("", self.grid_check)
 
+        self.lbl_inside = QCheckBox(tr("Show inner Labels"))
+        self.lbl_inside.setChecked(False)
+        style_layout.addRow("", self.lbl_inside)
+
         self.title_edit = QLineEdit(tr("Rose Diagram"))
         style_layout.addRow(tr("Title:"), self.title_edit)
 
@@ -173,14 +177,15 @@ class RosePanel(BasePanel):
         mode_map = {0: "count", 1: "length", 2: "frequency"}
 
         params = {
-            "layer":     layer,
-            "n_sectors": self.sectors_spin.value(),
-            "mode":      mode_map[self.mode_combo.currentIndex()],
-            "half_rose": self.half_rose_check.isChecked(),
-            "color":     self._color,
-            "opacity":   self.opacity_slider.value() / 100.0,
-            "show_grid": self.grid_check.isChecked(),
-            "title":     self.title_edit.text(),
+            "layer":        layer,
+            "n_sectors":    self.sectors_spin.value(),
+            "mode":         mode_map[self.mode_combo.currentIndex()],
+            "half_rose":    self.half_rose_check.isChecked(),
+            "color":        self._color,
+            "opacity":      self.opacity_slider.value() / 100.0,
+            "show_grid":    self.grid_check.isChecked(),
+            "show_labels":  self.lbl_inside.isChecked(),
+            "title":        self.title_edit.text(),
             "min_rectitude": self.rectitude_spin.value(),
         }
 
