@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #ffffff;
+            color: #333;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #plot-main {
+            flex: 3;
+            width: 100%;
+            min-height: 260px;
+        }
+
+        #plot-secondary {
+            flex: 2;
+            width: 100%;
+            min-height: 160px;
+            border-top: 1px solid #eee;
+        }
+
+        #plot-secondary.hidden {
+            display: none;
+        }
+
+        #stats {
+            padding: 6px 12px;
+            background: #f5f5f5;
+            border-top: 1px solid #ddd;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px 20px;
+            font-size: 12px;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            min-width: 80px;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            color: #222;
+            font-weight: bold;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="plot-main"></div>
+    <div id="plot-secondary" class="hidden"></div>
+
+    <div id="stats">
+        <div class="stat-item">
+            <span class="stat-label">LENGTH</span>
+            <span class="stat-value" id="stat-length">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">MAX ELEV</span>
+            <span class="stat-value" id="stat-max">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">MIN ELEV</span>
+            <span class="stat-value" id="stat-min">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">MEAN ELEV</span>
+            <span class="stat-value" id="stat-mean">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">TOTAL RELIEF</span>
+            <span class="stat-value" id="stat-relief">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">DEM</span>
+            <span class="stat-value" id="stat-dem">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">CRS</span>
+            <span class="stat-value" id="stat-crs">—</span>
+        </div>
+    </div>
+
+    <script src="js/qwebchannel.js"></script>
+    <script src="js/plotly.min.js"></script>
+    <script src="js/bridge.js"></script>
+
+    <script>
+        /**
+         * swath.html — Swath Profile visualization
+         * Two subplots:
+         *   - Main: min / mean / max (+ optional Q1/Q3)
+         *   - Secondary: local relief OR transversal hypsometry
+         */
+
+        var _currentData = null;
+
+        /**
+     * Main rendering function for Swath Profile.
+     * Handles Subplots, Fills, and all statistical curves.
+     */
+            function updatePlot(jsonData) {
+                const data = JSON.parse(jsonData);
+                const s = data.styles || {};
+
+                // Helper to get style properties from Python/Qt inputs
+                function getStyle(key, fallbackColor) {
+                    const cfg = s[key] || {};
+                    const color = cfg.color || fallbackColor;
+                    return {
+                        line: {
+                            color: color,
+                            width: cfg.width || 1.5,
+                            dash: cfg.dash || 'solid'
+                        },
+                        fillEnabled: cfg.fill || false,
+                        fillcolor: color + '78' // Adds transparency (alpha)
+                    };
+                }
+
+                const traces = [];
+
+                // --- PANEL 1: ELEVATION (TOP) ---
+
+                // 1. Min (Base for Envelope)
+                const styleMin = getStyle('min', '#3498db');
+                traces.push({
+                    x: data.distances, y: data.min,
+                    name: 'Min', type: 'scatter', mode: 'lines',
+                    line: styleMin.line, xaxis: 'x', yaxis: 'y',
+                    fill: styleMin.fillEnabled ? 'tozeroy' : 'none', // fill to zero line
+                    fillcolor: styleMin.fillcolor,
+                    hovertemplate: 'Min: %{y:.1f} m<extra></extra>',
+                });
+
+                // 2. Max (Fills down to Min)
+                const styleMax = getStyle('max', '#e74c3c');
+                traces.push({
+                    x: data.distances, y: data.max,
+                    name: 'Max', type: 'scatter', mode: 'lines',
+                    line: styleMax.line,
+                    fill: styleMax.fillEnabled ? 'tonexty' : 'none', // fill to previous trace (Min)
+                    fillcolor: styleMax.fillcolor,
+                    hovertemplate: 'Max: %{y:.1f} m<extra></extra>',
+                    xaxis: 'x', yaxis: 'y'
+                });
+
+                // 3. Q1 & Q3 (Interquartile Range)
+                if (data.q1 && data.q3) {
+                    const styleQ1 = getStyle('q1', '#e67e22');
+                    const styleQ3 = getStyle('q3', '#e67e22');
+
+                    // Trace Q1
+                    traces.push({
+                        x: data.distances, y: data.q1,
+                        name: 'Q1', type: 'scatter', mode: 'lines',
+                        fill: styleQ1.fillEnabled ? 'tozeroy' : 'none',
+                        fillcolor: styleQ1.fillcolor,
+                        line: styleQ1.line, xaxis: 'x', yaxis: 'y',
+                        hovertemplate: 'Q1: %{y:.1f} m<extra></extra>', 
+                        showlegend: true
+                    });
+
+                    // Trace Q3 (Fills down to Q1)
+                    traces.push({
+                        x: data.distances, y: data.q3,
+                        name: 'Q3', type: 'scatter', mode: 'lines',
+                        line: styleQ3.line,
+                        fill: styleQ3.fillEnabled ? 'tonexty' : 'none', // Fill to previous trace (Q1)
+                        fillcolor: styleQ3.fillcolor,
+                        hovertemplate: 'Q3: %{y:.1f} m<extra></extra>',
+                        xaxis: 'x', yaxis: 'y'
+                    });
+                }
+
+                // 4. Mean (Topmost line)
+                const styleMean = getStyle('mean', '#2c3e50');
+                traces.push({
+                    x: data.distances, y: data.mean,
+                    name: 'Mean', type: 'scatter', mode: 'lines',
+                    line: styleMean.line, xaxis: 'x', yaxis: 'y',
+                    hovertemplate: 'Mean: <b>%{y:.1f} m</b><extra></extra>', 
+                });
+
+
+                // --- 2. BOTTOM PANEL: SECONDARY METRICS ---
+                // Check what data is available
+                const hasRelief = !!(data.relief && data.relief.length);
+                const hasHyps = !!(data.hyps && data.hyps.length);
+                const hasSecondary = hasRelief || hasHyps;
+
+                if (hasRelief) {
+                    const styleRelief = getStyle('relief', '#27ae60');
+                    traces.push({
+                        x: data.distances, y: data.relief,
+                        name: 'Local Relief', type: 'scatter', mode: 'lines',
+                        line: styleRelief.line,
+                        fill: styleRelief.fillEnabled ? 'tozeroy' : 'none', // Fill to zero line
+                        fillcolor: styleRelief.fillcolor,
+                        hovertemplate: 'Relief: %{y:.1f} m<extra></extra>',
+                        xaxis: 'x', yaxis: 'y2'
+                    });
+                }
+
+                if (hasHyps) {
+                    const styleHyps = getStyle('hyps', '#8e44ad');
+                    traces.push({
+                        x: data.distances, y: data.hyps,
+                        name: 'Hypsometry', type: 'scatter', mode: 'lines',
+                        line: styleHyps.line,
+                        fill: styleHyps.fillEnabled ? 'tozeroy' : 'none', // Fill to zero line
+                        fillcolor: styleHyps.fillcolor,
+                        hovertemplate: 'THI: %{y:.3f}<extra></extra>',
+                        xaxis: 'x', 
+                        yaxis: hasRelief ? 'y3' : 'y2' // Right axis
+                    });
+                }
+
+                // --- 3. LAYOUT CONFIG ---
+                const layout = {
+                    title: { text: data.title || 'Swath Profile', font: { family: 'serif', size: 14 } },
+                    showlegend: true,
+                    legend: {
+                        orientation: 'h',
+                        x: 0,
+                        y: 1.02,
+                        xanchor: 'left',
+                        yanchor: 'bottom',
+                        font: { size: 10 },
+                        bgcolor: 'rgba(255,255,255,0.8)',
+                        bordercolor: '#ddd',
+                        borderwidth: 1
+                    },
+
+                    // Main Elevation Axis
+                    yaxis: {
+                        title: 'Elevation (m)',
+                        domain: hasSecondary ? [0.35, 1] : [0, 1],
+                        <!-- gridcolor: '#eee', -->
+                        zeroline: false,
+                        gridcolor: '#cccccc',
+                        gridwidth: 1,
+                        showgrid: true,
+                        dtick: data.y_dtick,
+                        minor: {
+                            showgrid: true,
+                            gridcolor: '#eeeeee',
+                            gridwidth: 0.5,
+                            dtick: data.y_dtick / 4
+                        }
+                    },
+
+                    // Relief Axis (Bottom Left)
+                    yaxis2: {
+                        title: hasRelief ? 'Relief (m)' : 'THI',
+                        domain: [0, 0.25],
+                        anchor: 'x', gridcolor: '#cccccc',
+                        gridwidth: 1,
+                        showgrid: true,
+                        dtick: data.y2_dtick || null,
+                        visible: hasRelief || hasHyps  
+                    },
+
+                    // Hypsometry Axis (Bottom Right)
+                    yaxis3: {
+                        title: 'THI',
+                        domain: [0, 0.25],
+                        overlaying: 'y2',
+                        side: 'right',
+                        range: [0, 1],
+                        anchor: 'x',
+                        visible: hasHyps && hasRelief, 
+                        showgrid: false
+                    },
+
+                    xaxis: {
+                        title: 'Distance (m)',
+                        anchor: hasSecondary ? 'y2' : 'y',
+                        gridcolor: '#cccccc',
+                        gridwidth: 1,
+                        showgrid: true,
+                        dtick: data.x_dtick,
+                        minor: {
+                            showgrid: true,
+                            gridcolor: '#eeeeee',
+                            gridwidth: 0.5,
+                            dtick: data.x_dtick / 4
+                        }
+                    },
+
+                    margin: { t: 50, b: 80, l: 60, r: 60 },
+                    hovermode: 'x unified',
+                    hoverlabel: {
+                        bgcolor: 'rgba(255,255,255,0.95)',
+                        bordercolor: '#ccc',
+                        font: { size: 11, color: '#333' }
+                    },
+                    template: 'plotly_white'
+                };
+
+                Plotly.react('plot-main', traces, layout, { responsive: true });
+
+                _updateStats(data);
+            }
+
+        // ── Stats bar ─────────────────────────────────────────────
+        function _updateStats(data) {
+            var means = data.mean.filter(function (v) { return v !== null; });
+            var mins = data.min.filter(function (v) { return v !== null; });
+            var maxs = data.max.filter(function (v) { return v !== null; });
+
+            var globalMin = Math.min.apply(null, mins);
+            var globalMax = Math.max.apply(null, maxs);
+            var globalMean = means.reduce(function (a, b) {
+                return a + b;
+            }, 0) / means.length;
+
+            document.getElementById('stat-length').textContent =
+                (data.total_length_m / 1000).toFixed(2) + ' km';
+            document.getElementById('stat-max').textContent =
+                globalMax.toFixed(1) + ' m';
+            document.getElementById('stat-min').textContent =
+                globalMin.toFixed(1) + ' m';
+            document.getElementById('stat-mean').textContent =
+                globalMean.toFixed(1) + ' m';
+            document.getElementById('stat-relief').textContent =
+                (globalMax - globalMin).toFixed(1) + ' m';
+            document.getElementById('stat-dem').textContent =
+                data.dem_name || '—';
+            document.getElementById('stat-crs').textContent =
+                data.crs_name || '—';
+        }
+
+        // ── Canvas cursor tracking ────────────────────────────────
+    /**
+             * Updates a vertical reference line.
+             * distanceM: distance from start of line in meters.
+              * If distanceM is null, the cursor is removed.
+             */
+        function updateCursor(distanceM) {
+            // If plot is not yet created, abort
+            const gd = document.getElementById('plot-main');
+            if (!gd || !gd.data) return;
+
+            
+            // If null is received (mouse too far), clear all shapes
+            if (distanceM === null || distanceM === undefined) {
+                Plotly.relayout('plot-main', {
+                    shapes: []
+                });
+                return;
+            }
+
+            const cursorLine = {
+                type: 'line',
+                x0: distanceM,
+                x1: distanceM,
+                yref: 'paper', // Full height of the chart area
+                y0: 0,
+                y1: 1,
+                line: {
+                    color: 'rgba(231, 76, 60, 0.8)', // Red
+                    width: 1,
+                    dash: 'solid'
+                }
+            };
+
+            // relayout is fast: it only updates the "shapes" layer
+            Plotly.relayout('plot-main', {
+                shapes: [cursorLine]
+            });
+        }
+
+        // ── Export ────────────────────────────────────────────────
+        function exportImage(format, resolution) {
+            resolution = resolution || 800;
+            var fmt = format === 'jpg' ? 'jpeg' : format;
+            Plotly.toImage('plot-main', {
+                format: fmt,
+                width: resolution,
+                height: resolution
+            }).then(function (dataUrl) {
+                onBridgeReady(function (bridge) {
+                    bridge.receive_export(dataUrl);
+                });
+            });
+        }
+
+        function exportSvg() {
+            Plotly.toImage('plot-main', {
+                format: 'svg',
+                width: 1200,
+                height: 800
+            }).then(function (dataUrl) {
+                onBridgeReady(function (bridge) {
+                    bridge.receive_export(dataUrl);
+                });
+            });
+        }
+    </script>
+
+</body>
+
+</html>

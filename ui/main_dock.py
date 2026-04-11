@@ -7,6 +7,7 @@ from qgis.PyQt.QtWidgets import ( # type: ignore
 from qgis.PyQt.QtCore import Qt, QCoreApplication # type: ignore
 
 from ..tools.rose.panel import RosePanel
+from ..tools.swath.panel import SwathPanel
 
 
 def tr(message):
@@ -16,7 +17,7 @@ def tr(message):
 # Registry — add new tools here only
 TOOLS = [
     ("Rose Diagram", RosePanel),
-    # ("Swath Profiler", SwathPanel),   ← future
+    ("Swath Profile",  SwathPanel),
     # ("Hypsometry",    HypsometryPanel), ← future
 ]
 

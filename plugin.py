@@ -23,6 +23,11 @@ class RockMorphPlugin:
     def unload(self):
         self.iface.removeToolBarIcon(self.action)
         if self.dock:
+           # Cleanup all panels before removing dock
+            for panel in self.dock._panels.values():
+                if hasattr(panel, 'cleanup'):
+                    print(f"Cleaning up panel: {type(panel).__name__}")
+                    panel.cleanup()
             self.iface.removeDockWidget(self.dock)
             self.dock = None
 

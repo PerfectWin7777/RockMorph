@@ -1,15 +1,15 @@
 [general]
 name=RockMorph
 qgisMinimumVersion=3.36
-description=Advanced Geomorphology Toolkit for QGIS
+description=Advanced Geomorphology Toolkit for QGIS with interactive 2D/3D analysis
 version=0.1.0
-author=Tony
-email=tony@rockmorph.dev
-about=RockMorph provides advanced geomorphological analysis tools including swath profiling, rose diagrams, hypsometric curves, and terrain derivatives.
-tracker=https://github.com/tony/rockmorph/issues
-repository=https://github.com/tony/rockmorph
-tags=geomorphology,dem,raster,hydrology,terrain
-homepage=https://github.com/tony/rockmorph
+author=Tony Winter
+email=wintertony7777@gmail.com
+about=RockMorph is a modern geomorphological analysis toolkit for QGIS. It provides interactive tools for swath profiling (2D/3D), directional rose diagrams, hypsometric analysis, terrain derivatives (slope, aspect, openness, sky view factor), and hydrological metrics such as depth-to-water. Built with a modular architecture combining PyQt and Plotly for high-performance scientific visualization.
+tracker=https://github.com/PerfectWin7777/RockMorph/issues
+repository=https://github.com/PerfectWin7777/RockMorph.git
+homepage=https://github.com/PerfectWin7777/RockMorph
+tags=geomorphology,dem,raster,terrain-analysis,hydrology,topography,swath-profile,hypsometry,rose-diagram,gis,spatial-analysis,qgis-plugin,3d-visualization,plotly,remote-sensing,geoscience
 category=Raster
 icon=icon.png
 experimental=True
