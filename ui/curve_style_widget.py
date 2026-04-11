@@ -11,10 +11,11 @@ Reusable across all RockMorph tools that render Plotly line traces.
 from PyQt5.QtWidgets import ( # type: ignore
     QWidget, QHBoxLayout, QVBoxLayout, QFormLayout,
     QLabel, QPushButton, QDoubleSpinBox, QComboBox,
-    QGroupBox, QSizePolicy,QColorDialog,QCheckBox
+    QGroupBox, QSizePolicy,QColorDialog,QCheckBox,
+    QGridLayout
 )
 from PyQt5.QtGui import QColor # type: ignore
-from PyQt5.QtCore import pyqtSignal, QCoreApplication # type: ignore
+from PyQt5.QtCore import Qt, pyqtSignal, QCoreApplication # type: ignore
 
 
 def tr(message):
@@ -56,11 +57,12 @@ class CurveStyleWidget(QWidget):
         defaults = CURVE_DEFAULTS.get(curve_id, {
             "color": "#333333",
             "width": 1.0,
-            "dash":  "solid"
+            "dash":  "solid",
+            "fill":  False
+            
         })
         self._color = defaults["color"]
-
-        self._build_ui(label, defaults)
+        self._create_widgets(label, defaults)
 
     # ------------------------------------------------------------------
     # Public API
@@ -78,30 +80,29 @@ class CurveStyleWidget(QWidget):
 
     def set_visible(self, visible: bool):
         """Show or hide this widget."""
-        self.setVisible(visible)
+        self.name_lbl.setVisible(visible)
+        self.color_btn.setVisible(visible)
+        self.width_spin.setVisible(visible)
+        self.dash_combo.setVisible(visible)
+        self.fill_check.setVisible(visible)
 
     # ------------------------------------------------------------------
     # UI
     # ------------------------------------------------------------------
+    def _create_widgets(self, label: str, defaults: dict):
+        """Create widgets — no layout here, Manager places them in grid."""
 
-    def _build_ui(self, label: str, defaults: dict):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 2, 0, 2)
-        layout.setSpacing(6)
-
-        # Curve label
-        lbl = QLabel(label)
-        lbl.setFixedWidth(80)
-        lbl.setStyleSheet("font-size: 11px; color: #444;")
-        layout.addWidget(lbl)
+        # Name label
+        self.name_lbl = QLabel(label)
+        self.name_lbl.setStyleSheet("font-size: 11px;")
 
         # Color button
         self.color_btn = QPushButton()
-        self.color_btn.setFixedSize(28, 22)
-        self._update_color_btn()
-        self.color_btn.clicked.connect(self._pick_color)
+        self.color_btn.setFixedSize(24, 22)
+        self.color_btn.setCursor(Qt.PointingHandCursor)
         self.color_btn.setToolTip(tr("Click to change color"))
-        layout.addWidget(self.color_btn)
+        self._refresh_color_btn()
+        self.color_btn.clicked.connect(self._pick_color)
 
         # Width spinner
         self.width_spin = QDoubleSpinBox()
@@ -109,36 +110,27 @@ class CurveStyleWidget(QWidget):
         self.width_spin.setSingleStep(0.5)
         self.width_spin.setValue(defaults["width"])
         self.width_spin.setDecimals(1)
-        self.width_spin.setFixedWidth(58)
         self.width_spin.setSuffix(" pt")
-        self.width_spin.setToolTip(tr("Line width in points"))
+        self.width_spin.setToolTip(tr("Line width"))
         self.width_spin.valueChanged.connect(self.style_changed.emit)
-        layout.addWidget(self.width_spin)
 
         # Dash combo
         self.dash_combo = QComboBox()
-        self.dash_combo.setFixedWidth(80)
-        for label_dash, _ in DASH_OPTIONS:
-            self.dash_combo.addItem(tr(label_dash))
-
-        # Set default dash
+        for lbl_dash, _ in DASH_OPTIONS:
+            self.dash_combo.addItem(lbl_dash)
         default_dash = defaults.get("dash", "solid")
         for i, (_, val) in enumerate(DASH_OPTIONS):
             if val == default_dash:
                 self.dash_combo.setCurrentIndex(i)
                 break
-
-        self.dash_combo.setToolTip(tr("Line dash style"))
+        self.dash_combo.setToolTip(tr("Line style"))
         self.dash_combo.currentIndexChanged.connect(self.style_changed.emit)
-        layout.addWidget(self.dash_combo)
 
-        self.fill_check = QCheckBox(tr("Fill"))
+        # Fill checkbox
+        self.fill_check = QCheckBox()
         self.fill_check.setChecked(defaults.get("fill", False))
+        self.fill_check.setToolTip(tr("Fill area under curve"))
         self.fill_check.stateChanged.connect(self.style_changed.emit)
-        layout.addWidget(self.fill_check)
-
-
-        layout.addStretch()
 
     # ------------------------------------------------------------------
     # Private
@@ -149,15 +141,14 @@ class CurveStyleWidget(QWidget):
         picked = QColorDialog.getColor(color, self, tr(f"Color — {self.curve_id}"))
         if picked.isValid():
             self._color = picked.name()
-            self._update_color_btn()
+            self._refresh_color_btn()
             self.style_changed.emit()
 
-    def _update_color_btn(self):
+    def _refresh_color_btn(self):
         self.color_btn.setStyleSheet(
             f"background-color: {self._color}; "
             f"border: 1px solid #888; border-radius: 3px;"
         )
-
 
 class CurveStyleManager(QGroupBox):
     """
@@ -209,28 +200,34 @@ class CurveStyleManager(QGroupBox):
     # ------------------------------------------------------------------
 
     def _build_ui(self, curves: list):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(2)
+        grid = QGridLayout(self)
+        grid.setContentsMargins(8, 8, 8, 8)
+        grid.setSpacing(4)
 
-        # Header row
-        header = QHBoxLayout()
-        for text, width in [
-            ("Curve", 80), ("Color", 28),
-            ("Width", 58), ("Style", 80)
-        ]:
+        # ── Header row ────────────────────────────────────────
+        headers = ["Curve", "Color", "Width", "Style", "Fill"]
+        for col, text in enumerate(headers):
             lbl = QLabel(tr(text))
-            lbl.setFixedWidth(width)
-            lbl.setStyleSheet(
-                "font-size: 9px; color: #888; text-transform: uppercase;"
-            )
-            header.addWidget(lbl)
-        header.addStretch()
-        layout.addLayout(header)
+            lbl.setStyleSheet("font-size: 10px; font-weight: bold; color: #888;")
+            lbl.setAlignment(Qt.AlignCenter if col > 0 else Qt.AlignLeft | Qt.AlignVCenter)
+            grid.addWidget(lbl, 0, col)
 
-        # One widget per curve
-        for curve_id, label in curves:
+        # ── Column stretch ────────────────────────────────────
+        grid.setColumnStretch(0, 2)   # Curve name — plus large
+        grid.setColumnStretch(1, 1)   # Color
+        grid.setColumnStretch(2, 2)   # Width
+        grid.setColumnStretch(3, 2)   # Style
+        grid.setColumnStretch(4, 1)   # Fill
+
+        # ── One row per curve ─────────────────────────────────
+        for row, (curve_id, label) in enumerate(curves, start=1):
             w = CurveStyleWidget(curve_id, tr(label))
             w.style_changed.connect(self.styles_changed.emit)
             self._widgets[curve_id] = w
-            layout.addWidget(w)
+
+            # Place each control in its column
+            grid.addWidget(w.name_lbl,    row, 0, Qt.AlignVCenter)
+            grid.addWidget(w.color_btn,   row, 1, Qt.AlignCenter)
+            grid.addWidget(w.width_spin,  row, 2, Qt.AlignCenter)
+            grid.addWidget(w.dash_combo,  row, 3, Qt.AlignCenter)
+            grid.addWidget(w.fill_check,  row, 4, Qt.AlignCenter)
