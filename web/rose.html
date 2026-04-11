@@ -183,30 +183,22 @@
         }
 
         // Called by Python via runJavaScript("exportImage('png')")
-        function exportImage(format, resolution) {
-                resolution = resolution || 800;
-            // Plotly accepts 'png', 'jpeg', 'svg' — NOT 'jpg'
-            var plotlyFormat = format === 'jpg' ? 'jpeg' : format;
-            Plotly.toImage('chart', {
-                format: plotlyFormat,
-                width: resolution,
-                height: resolution
-            }).then(function (dataUrl) {
-                    onBridgeReady(function (bridge) {
-                        bridge.receive_export(dataUrl);
-                    });
-                });
+       function exportImage(format, width, height) {
+            var fmt      = (format === 'jpg') ? 'jpeg' : format;
+            var axisKeys = ['polar'];
+            exportHighDpi('chart', fmt, width, height, axisKeys, function(dataUrl) {
+                onBridgeReady(function(bridge) { bridge.receive_export(dataUrl); });
+            });
         }
 
-        // Called by Python via runJavaScript("exportSvg()")
         function exportSvg() {
-            Plotly.toImage('chart', { format: 'svg', width: 1000, height: 1000 })
-                .then(function (dataUrl) {
-                    onBridgeReady(function (bridge) {
-                        bridge.receive_export(dataUrl);
-                    });
-                });
+            Plotly.toImage(document.getElementById('chart'), {
+                format: 'svg', width: 1000, height: 1000
+            }).then(function(dataUrl) {
+                onBridgeReady(function(bridge) { bridge.receive_export(dataUrl); });
+            });
         }
+
     </script>
 
 </body>

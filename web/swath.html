@@ -259,7 +259,6 @@
                     yaxis: {
                         title: 'Elevation (m)',
                         domain: hasSecondary ? [0.35, 1] : [0, 1],
-                        <!-- gridcolor: '#eee', -->
                         zeroline: false,
                         gridcolor: '#cccccc',
                         gridwidth: 1,
@@ -395,31 +394,23 @@
         }
 
         // ── Export ────────────────────────────────────────────────
-        function exportImage(format, resolution) {
-            resolution = resolution || 800;
-            var fmt = format === 'jpg' ? 'jpeg' : format;
-            Plotly.toImage('plot-main', {
-                format: fmt,
-                width: resolution,
-                height: resolution
-            }).then(function (dataUrl) {
-                onBridgeReady(function (bridge) {
-                    bridge.receive_export(dataUrl);
+        function exportImage(format, width, height) {
+                var fmt = (format === 'jpg') ? 'jpeg' : format;
+                var axisKeys = ['xaxis', 'yaxis', 'yaxis2', 'yaxis3'];
+                exportHighDpi('plot-main', fmt, width, height, axisKeys, function (dataUrl) {
+                    onBridgeReady(function (bridge) { bridge.receive_export(dataUrl); });
                 });
-            });
-        }
+            }
 
         function exportSvg() {
-            Plotly.toImage('plot-main', {
-                format: 'svg',
-                width: 1200,
-                height: 800
-            }).then(function (dataUrl) {
-                onBridgeReady(function (bridge) {
-                    bridge.receive_export(dataUrl);
+                // SVG is vector — fonts scale with the viewer, no DPI patch needed
+                Plotly.toImage(document.getElementById('plot-main'), {
+                    format: 'svg', width: 1200, height: 800
+                }).then(function (dataUrl) {
+                    onBridgeReady(function (bridge) { bridge.receive_export(dataUrl); });
                 });
-            });
-        }
+            }
+            
     </script>
 
 </body>
