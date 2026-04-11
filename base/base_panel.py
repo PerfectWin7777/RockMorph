@@ -62,6 +62,20 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         Updates the webview or any other display widget.
         """
         pass
+    
+    def _csv_headers(self) -> list:
+        """
+        Override in subclass to define CSV column names.
+        Required if the tool supports CSV export.
+        """
+        return []
+
+    def _build_csv_rows(self) -> list:
+        """
+        Override in subclass to build CSV row dicts.
+        Required if the tool supports CSV export.
+        """
+        return []
 
     def show_error(self, message: str) -> None:
         """Push a warning message to the QGIS message bar."""

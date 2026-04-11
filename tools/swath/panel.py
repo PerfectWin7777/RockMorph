@@ -543,74 +543,71 @@ class SwathPanel(BasePanel):
     # ------------------------------------------------------------------
 
     def _on_export(self, fmt: str):
-        
-
-        if fmt == "CSV":
-            path, _ = QFileDialog.getSaveFileName(
-                self, tr("Export CSV"), "", "CSV (*.csv)"
-            )
-            if not path:
-                return
+        fmt_lower = fmt.lower()
+        # Tabular formats
+        if fmt_lower == "csv":
             if self._last_data is None:
                 self.show_error(tr("No data — run Compute first."))
                 return
-            data = self._last_data
-            headers = ["distance_m", "mean", "min", "max"]
-            if data.get("q1"):
-                headers += ["q1", "q3"]
-            if data.get("relief"):
-                headers.append("relief")
-            if data.get("hyps"):
-                headers.append("hyps")
-
-            rows = []
-            for i, d in enumerate(data["distances"]):
-                row = {
-                    "distance_m": d,
-                    "mean": data["mean"][i],
-                    "min":  data["min"][i],
-                    "max":  data["max"][i],
-                }
-                if data.get("q1"):
-                    row["q1"] = data["q1"][i]
-                    row["q3"] = data["q3"][i]
-                if data.get("relief"):
-                    row["relief"] = data["relief"][i]
-                if data.get("hyps"):
-                    row["hyps"] = data["hyps"][i]
-                rows.append(row)
-
-            self._exporter.save_csv(rows, headers, path)
+            self._exporter.export_csv(
+                self._build_csv_rows(),
+                self._csv_headers(),
+                parent=self
+            )
             return
 
-        res, ok = QInputDialog.getItem(
-            self, tr("Export resolution"),
-            tr("Choose resolution:"),
-            ["800 px", "1200 px", "2000 px"], 0, False
+        # Image formats
+        ok, path, width, height = self._exporter.prepare_image_export(
+            fmt_lower, parent=self
         )
         if not ok:
             return
-        resolution = int(res.split()[0])
-
-        ext_map = {"PNG": "png", "JPG": "jpg", "SVG": "svg"}
-        ext = ext_map.get(fmt, "png")
-        path, _ = QFileDialog.getSaveFileName(
-            self, tr(f"Export {fmt}"), "", f"{fmt} (*.{ext})"
-        )
-        if not path:
-            return
 
         self._pending_export_path = path
-        if fmt == "SVG":
+
+        if fmt_lower == "svg":
             self.webview.page().runJavaScript("exportSvg()")
         else:
-            plotly_fmt = "jpeg" if ext == "jpg" else ext
+            plotly_fmt = "jpeg" if fmt_lower == "jpg" else fmt_lower
             self.webview.page().runJavaScript(
-                f"exportImage('{plotly_fmt}', {resolution})"
+                f"exportImage('{plotly_fmt}', {width}, {height})"
             )
 
     def _save_export(self, data_url: str):
         self._exporter.save_image(data_url, self._pending_export_path)
+    
+    def _csv_headers(self) -> list:
+        headers = ["distance_m", "mean", "min", "max"]
+        if self._last_data and self._last_data.get("q1"):
+            headers += ["q1", "q3"]
+        if self._last_data and self._last_data.get("relief"):
+            headers.append("relief")
+        if self._last_data and self._last_data.get("hyps"):
+            headers.append("hypsomtry")
+        return headers
+
+    def _build_csv_rows(self) -> list:
+        if self._last_data is None:
+            return []
+        data    = self._last_data
+        headers = self._csv_headers()
+        rows    = []
+        for i, d in enumerate(data["distances"]):
+            row = {
+                "distance_m": d,
+                "mean":       data["mean"][i],
+                "min":        data["min"][i],
+                "max":        data["max"][i],
+            }
+            if "q1" in headers:
+                row["q1"] = data["q1"][i]
+                row["q3"] = data["q3"][i]
+            if "relief" in headers:
+                row["relief"] = data["relief"][i]
+            if "hyps" in headers:
+                row["hyps"] = data["hyps"][i]
+            rows.append(row)
+        return rows
 
     def closeEvent(self, event):
         """Cleanup when panel is closed."""

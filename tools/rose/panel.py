@@ -308,55 +308,49 @@ class RosePanel(BasePanel):
     def _on_export(self, fmt: str):
         fmt_lower = fmt.lower()
 
-        if fmt == "CSV":
-            path, _ = QFileDialog.getSaveFileName(
-                self, tr("Export CSV"), "", "CSV (*.csv)"
-            )
-            if not path:
-                return
-            if not hasattr(self, "_last_data"):
+        # Tabular formats
+        if fmt_lower == "csv":
+            if self._last_data is None:
                 self.show_error(tr("No data — run Compute first."))
                 return
-            data = self._last_data
-            rows = [
-                {"azimuth": az, "value": val}
-                for az, val in zip(data["azimuths"], data["values"])
-            ]
-            self._exporter.save_csv(rows, ["azimuth", "value"], path)
+            self._exporter.export_csv(
+                self._build_csv_rows(),
+                self._csv_headers(),
+                parent=self
+            )
             return
-        
-        res, ok = QInputDialog.getItem(
-            self,
-            tr("Export resolution"),
-            tr("Choose resolution:"),
-            ["800 px", "1200 px", "2000 px"],
-            0,
-            False
+
+        # Image formats
+        ok, path, width, height = self._exporter.prepare_image_export(
+            fmt_lower, parent=self
         )
         if not ok:
-            return
-        
-        resolution = int(res.split()[0])
-
-        ext_map = {"PNG": "png", "JPG": "jpg", "SVG": "svg"}
-        ext = ext_map.get(fmt, "png")
-        path, _ = QFileDialog.getSaveFileName(
-            self, tr(f"Export {fmt}"), "", f"{fmt} (*.{ext})"
-        )
-        if not path:
             return
 
         self._pending_export_path = path
 
-        if fmt == "SVG":
+        if fmt_lower == "svg":
             self.webview.page().runJavaScript("exportSvg()")
         else:
-            # Always send 'jpeg' to Plotly, never 'jpg'
-            plotly_fmt = "jpeg" if ext == "jpg" else ext
+            plotly_fmt = "jpeg" if fmt_lower == "jpg" else fmt_lower
             self.webview.page().runJavaScript(
-                    f"exportImage('{plotly_fmt}', {resolution})"
-                )
-            
+                f"exportImage('{plotly_fmt}', {width}, {height})"
+            )
+
+    def _csv_headers(self) -> list:
+        return ["azimuth", "value"]
+
+    def _build_csv_rows(self) -> list:
+        if self._last_data is None:
+            return []
+        return [
+            {"azimuth": az, "value": val}
+            for az, val in zip(
+                self._last_data["azimuths"],
+                self._last_data["values"]
+            )
+        ]
+        
     def _save_export(self, data_url: str) -> None:
         """Called by JS bridge after Plotly.toImage()."""
         self._exporter.save_image(data_url, self._pending_export_path)
