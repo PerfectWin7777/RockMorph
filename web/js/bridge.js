@@ -58,11 +58,18 @@ function buildExportStylePatch(scaleFactor, axisKeys) {
 
     // Core layout scaling (Titles and Legends)
     let patch = {
-        'title.font.size': Math.round(16 * s),
+       // Boost main title and push it up slightly (y: 0.95 to 0.98)
+        'title.font.size': Math.round(18 * s),
+        'title.y': 0.98, 
+        
+        // Legend scaling
         'legend.font.size': Math.round(12 * s),
+        'legend.tracegroupgap': Math.round(10 * s),
+
+        // Global margins must expand at high DPI to prevent labels from being cut off
         'margin.t': Math.round(30 * s),
         'margin.b': Math.round(30 * s),
-        'margin.l': Math.round(30 * s),
+        'margin.l': Math.round(50 * s),
         'margin.r': Math.round(30 * s)
     };
 
@@ -85,6 +92,13 @@ function buildExportStylePatch(scaleFactor, axisKeys) {
             // Standard XY Axes (Swath Profiler)
             patch[key + '.title.font.size'] = Math.round(14 * s);
             patch[key + '.tickfont.size'] = Math.round(11 * s);
+
+            // CRITICAL: This prevents the title from overlapping the tick numbers
+            // 'standoff' is the distance between the title and the axis
+            patch[key + '.title.standoff'] = Math.round(20 * s);
+
+            // Allow Plotly to automatically push margins if text is too long
+            patch[key + '.automargin'] = true;
 
             // Grid and axis lines
             patch[key + '.gridwidth'] = Math.max(0.5, 0.8 * s);
