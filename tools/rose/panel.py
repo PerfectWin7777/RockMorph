@@ -5,13 +5,10 @@ from PyQt5.QtWidgets import ( # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QSpinBox, QComboBox,
     QCheckBox, QSlider, QLineEdit, QGroupBox,
-    QColorDialog, QSizePolicy,QDoubleSpinBox,
-    QInputDialog
+    QColorDialog, QSizePolicy,QDoubleSpinBox
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView # type: ignore
-from PyQt5.QtWebChannel import QWebChannel # type: ignore
-from PyQt5.QtWebEngineWidgets import QWebEngineSettings # type: ignore
-from PyQt5.QtCore import Qt, QUrl, QObject, pyqtSlot, QCoreApplication # type: ignore
+from PyQt5.QtCore import Qt, QCoreApplication # type: ignore
 from PyQt5.QtGui import QColor # type: ignore
 from qgis.PyQt.QtWidgets import QFileDialog # type: ignore
 from qgis.gui import QgsMapLayerComboBox # type: ignore
@@ -30,22 +27,6 @@ def tr(message):
     return QCoreApplication.translate("RockMorph", message)
 
 
-class RoseBridge(QObject):
-    """
-    QObject exposed to JavaScript via QWebChannel.
-    Handles callbacks from the HTML side (export data).
-    """
-
-    def __init__(self, panel, parent=None):
-        super().__init__(parent)
-        self._panel = panel
-
-    @pyqtSlot(str)
-    def receive_export(self, data_url: str):
-        """Called by JS after Plotly.toImage() — receives base64 image or SVG."""
-        self._panel._save_export(data_url)
-
-
 class RosePanel(BasePanel):
     """
     UI panel for the Rose Diagram tool.
@@ -58,7 +39,10 @@ class RosePanel(BasePanel):
         self._color    = "#4a9eff"
         self._pending_export_path = None
         super().__init__(iface, parent)
-
+    
+    def _html_file(self) -> str:
+        return "rose.html"
+    
     # ------------------------------------------------------------------
     # BasePanel interface
     # ------------------------------------------------------------------
@@ -224,67 +208,9 @@ class RosePanel(BasePanel):
         # Use double quotes wrapper to avoid conflicts with JSON content
         js = f'updatePlot({json.dumps(json_data)})'
         self.webview.page().runJavaScript(js)
-    # ------------------------------------------------------------------
-    # WebChannel setup
-    # ------------------------------------------------------------------
 
-    def _setup_webchannel(self):
-        # Allow local file access — required for plotly.min.js
-        settings = self.webview.settings()
-        settings.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, True)
-        settings.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
-        settings.setAttribute(QWebEngineSettings.AllowRunningInsecureContent, True)
-        settings.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
 
-        self._bridge = RoseBridge(self)
-        self._channel = QWebChannel()
-        self._channel.registerObject("bridge", self._bridge)
-        self.webview.page().setWebChannel(self._channel)
-
-    def _load_html(self):
-        web_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "web"
-        )
-        html_path = os.path.join(web_dir, "rose.html")
-        js_dir = os.path.join(web_dir, "js").replace("\\", "/")
-
-        # Write a temp HTML with absolute paths next to rose.html
-        with open(html_path, "r", encoding="utf-8") as f:
-            html_content = f.read()
-
-        html_content = html_content.replace(
-            'src="js/qwebchannel.js"',
-            f'src="file:///{js_dir}/qwebchannel.js"'
-        ).replace(
-            'src="js/plotly.min.js"',
-            f'src="file:///{js_dir}/plotly.min.js"'
-        ).replace(
-            'src="js/bridge.js"',
-            f'src="file:///{js_dir}/bridge.js"'
-        )
-
-        # Write resolved HTML to temp file and load it
-        # temp_path = os.path.join(web_dir, "_rose_temp.html")
-        # with open(temp_path, "w", encoding="utf-8") as f:
-        #     f.write(html_content)
-
-        # print("Loading temp HTML:", temp_path)
-        self.webview.load(QUrl.fromLocalFile(html_path))
-        self.webview.loadFinished.connect(self._on_load_finished)
-
-    def _on_load_finished(self, ok):
-        # print("Page loaded:", ok)
-        
-        self.webview.page().runJavaScript(
-            "typeof Plotly !== 'undefined' ? 'Plotly OK' : 'Plotly MISSING'",
-            lambda result: print("Plotly check:", result)
-        )
-
-        self.webview.page().runJavaScript(
-            "typeof updatePlot !== 'undefined' ? 'updatePlot OK' : 'updatePlot MISSING'",
-            lambda result: print("updatePlot check:", result)
-        )
+   
 
     # ------------------------------------------------------------------
     # Style helpers
@@ -351,7 +277,7 @@ class RosePanel(BasePanel):
             )
         ]
         
-    def _save_export(self, data_url: str) -> None:
-        """Called by JS bridge after Plotly.toImage()."""
-        self._exporter.save_image(data_url, self._pending_export_path)
+    # def _save_export(self, data_url: str) -> None:
+    #     """Called by JS bridge after Plotly.toImage()."""
+    #     self._exporter.save_image(data_url, self._pending_export_path)
 

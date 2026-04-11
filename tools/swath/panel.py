@@ -10,12 +10,10 @@ from PyQt5.QtWidgets import ( # type: ignore
     QLabel, QPushButton, QSpinBox, QDoubleSpinBox,
     QCheckBox, QLineEdit, QGroupBox, QSizePolicy
 )
-from PyQt5.QtWidgets import QFileDialog, QInputDialog # type: ignore
 from PyQt5.QtGui import QColor # type: ignore
-from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings # type: ignore
-from PyQt5.QtWebChannel import QWebChannel # type: ignore
-from PyQt5.QtCore import Qt, QUrl, QObject, pyqtSlot, QCoreApplication # type: ignore
-from qgis.gui import QgsMapLayerComboBox, QgsRubberBand ,QgsMapCanvas # type: ignore
+from PyQt5.QtWebEngineWidgets import QWebEngineView # type: ignore
+from PyQt5.QtCore import Qt, QCoreApplication # type: ignore
+from qgis.gui import QgsMapLayerComboBox, QgsRubberBand  # type: ignore
 from qgis.core import (  # type: ignore
     QgsMapLayerProxyModel, QgsWkbTypes,Qgis,
     QgsPointXY, QgsGeometry, QgsProject,QgsCoordinateTransform
@@ -32,20 +30,6 @@ from .engine import SwathEngine
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
 
-
-class SwathBridge(QObject):
-    """
-    QObject exposed to JavaScript via QWebChannel.
-    Handles export callbacks from HTML side.
-    """
-
-    def __init__(self, panel, parent=None):
-        super().__init__(parent)
-        self._panel = panel
-
-    @pyqtSlot(str)
-    def receive_export(self, data_url: str):
-        self._panel._save_export(data_url)
 
 
 class SwathPanel(BasePanel):
@@ -65,6 +49,9 @@ class SwathPanel(BasePanel):
         # Ensure tracking is off on init
         if hasattr(self, 'tracking_check'):
             self.tracking_check.setChecked(False)
+    
+    def _html_file(self) -> str:
+        return "swath.html"
 
     # ------------------------------------------------------------------
     # BasePanel interface
@@ -481,62 +468,7 @@ class SwathPanel(BasePanel):
 
         self.iface.mapCanvas().refresh()
 
-    # ------------------------------------------------------------------
-    # WebChannel
-    # ------------------------------------------------------------------
-
-    def _setup_webchannel(self):
-        settings = self.webview.settings()
-        settings.setAttribute(
-            QWebEngineSettings.LocalContentCanAccessFileUrls, True
-        )
-        settings.setAttribute(
-            QWebEngineSettings.LocalContentCanAccessRemoteUrls, True
-        )
-        settings.setAttribute(
-            QWebEngineSettings.AllowRunningInsecureContent, True
-        )
-        settings.setAttribute(
-            QWebEngineSettings.JavascriptEnabled, True
-        )
-
-        self._bridge  = SwathBridge(self)
-        self._channel = QWebChannel()
-        self._channel.registerObject("bridge", self._bridge)
-        self.webview.page().setWebChannel(self._channel)
-
-        # from PyQt5.QtWebEngineWidgets import QWebEnginePage # type: ignore
-
-        # class DebugPage(QWebEnginePage):
-        #     def javaScriptConsoleMessage(self, level, message, line, source):
-        #         print(f"JS [{level}] line {line}: {message}")
-
-        # self.webview.setPage(DebugPage(self.webview))
-
-    def _load_html(self):
-        web_dir   = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "web"
-        )
-        html_path = os.path.join(web_dir, "swath.html")
-        js_dir    = os.path.join(web_dir, "js").replace("\\", "/")
-
-        with open(html_path, "r", encoding="utf-8") as f:
-            html_content = f.read()
-
-        html_content = html_content\
-            .replace('src="js/qwebchannel.js"',
-                     f'src="file:///{js_dir}/qwebchannel.js"')\
-            .replace('src="js/plotly.min.js"',
-                     f'src="file:///{js_dir}/plotly.min.js"')\
-            .replace('src="js/bridge.js"',
-                     f'src="file:///{js_dir}/bridge.js"')
-
-        temp_path = os.path.join(web_dir, "_swath_temp.html")
-        with open(temp_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-        self.webview.load(QUrl.fromLocalFile(temp_path))
+    
 
     # ------------------------------------------------------------------
     # Export
@@ -572,9 +504,6 @@ class SwathPanel(BasePanel):
             self.webview.page().runJavaScript(
                 f"exportImage('{plotly_fmt}', {width}, {height})"
             )
-
-    def _save_export(self, data_url: str):
-        self._exporter.save_image(data_url, self._pending_export_path)
     
     def _csv_headers(self) -> list:
         headers = ["distance_m", "mean", "min", "max"]

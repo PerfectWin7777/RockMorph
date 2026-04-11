@@ -39,3 +39,5 @@ venv/
 # Test outputs
 tests/output/
 tests/data/temp/
+
+command.txt
