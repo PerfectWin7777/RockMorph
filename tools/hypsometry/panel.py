@@ -32,6 +32,8 @@ from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal  # type: igno
 from PyQt5.QtGui import QColor  # type: ignore
 from qgis.gui import QgsMapLayerComboBox  # type: ignore
 from qgis.core import QgsMapLayerProxyModel, QgsWkbTypes  # type: ignore
+from qgis.core import QgsCoordinateTransform, QgsProject  # type: ignore
+
 
 from ...base.base_panel import BasePanel
 from ...core.exporter import RockMorphExporter
@@ -56,17 +58,51 @@ def tr(message):
 
 
 """
-TODO(hypsometry): Mode B — multiple DEM/basin pairs
-                  Add ModeBInputWidget, plug into same _results pipeline
+# ─────────────────────────────────────────────────────────────────
+# TODO — high priority
+# ─────────────────────────────────────────────────────────────────
 
-TODO(hypsometry): Export CSV par groupe actif (pas tous les bassins)
-                  Ajouter bouton "Export current group"
+# TODO(hypsometry/highlight): QgsRubberBand on active basin polygon
+#       Show a blue outline on the canvas when a basin is selected
+#       in the tree — similar to SwathPanel rubber band.
+#       Cleanup in panel.cleanup() like swath does.
+#       Trigger: _on_selection_changed() and _show_active_group()
 
-TODO(hypsometry): Highlight bassin sélectionné sur le canvas QGIS
-                  QgsRubberBand sur le polygone actif
+# TODO(hypsometry/progress): Per-basin progress bar
+#       _ComputeWorker currently gives no feedback during long runs.
+#       Solution: make HypsometryEngine.compute() accept a
+#       progress_callback(current, total) parameter.
+#       Worker emits progress(int) signal, panel updates QProgressBar.
+#       Switch progress_bar from indeterminate (setRange(0,0))
+#       to determinate (setRange(0, total)).
 
-TODO(hypsometry): Progress per basin — émettre un signal depuis le worker
-                  pour mettre à jour une vraie barre de progression
+# TODO(hypsometry/export-group): Export current group to CSV
+#       Add "Export current group" button next to existing CSV export.
+#       Exports only the basins in self._groups[self._active_group].
+#       Uses same _csv_headers() / _build_csv_rows() but filtered.
+
+# ─────────────────────────────────────────────────────────────────
+# TODO — medium priority
+# ─────────────────────────────────────────────────────────────────
+
+# TODO(hypsometry/mode-b): Multiple DEM/basin pairs (Mode B)
+#       Add ModeBInputWidget — a QTableWidget where user adds
+#       (dem_layer, basin_layer, label) rows one by one.
+#       "Compute all" button runs engine on each pair.
+#       Results fed into same self._results pipeline.
+#       Grouping, navigation, export all unchanged.
+#       Switch between Mode A / Mode B via a radio button at top of panel.
+
+# ─────────────────────────────────────────────────────────────────
+# TODO — low priority / future
+# ─────────────────────────────────────────────────────────────────
+
+# TODO(hypsometry/pdf-report): Export group as PDF report
+#       One page per group: curves + stats table + HI interpretation.
+#       Use QPrinter or reportlab.
+
+# TODO(hypsometry/i18n): Run pylupdate5 after all new tr() calls
+#       New strings added: zoom, select, copy, export curve, etc.
 """
 
 # ---------------------------------------------------------------------------
@@ -621,6 +657,14 @@ class HypsometryPanel(BasePanel):
             
             # Buffer the extent a bit (10%) so it's not touching the edges
             extent.scale(1.1)
+           
+            basin_crs  = layer.crs()
+            canvas_crs = canvas.mapSettings().destinationCrs()
+            if basin_crs != canvas_crs:
+                transform = QgsCoordinateTransform(
+                    basin_crs, canvas_crs, QgsProject.instance()
+                )
+                extent = transform.transformBoundingBox(extent)
             
             canvas.setExtent(extent)
             canvas.refresh()
@@ -640,10 +684,9 @@ class HypsometryPanel(BasePanel):
         # Flash the feature so the user sees it immediately
         self.iface.mapCanvas().flashFeatureIds(layer, [fid])
     
+
     def _copy_basin_stats(self, fid: int):
         """Format basin results as text and copy to system clipboard."""
-       
-        
         result = self._find_result_by_fid(fid)
         if not result:
             return
@@ -666,6 +709,7 @@ class HypsometryPanel(BasePanel):
         # Feedback to user
         self.show_info(tr(f"Stats for '{result['label']}' copied to clipboard."))
     
+
     def _export_basin_xy(self, fid: int):
         """Export the raw (x, y) points of a single basin to a CSV file."""
         result = self._find_result_by_fid(fid)
