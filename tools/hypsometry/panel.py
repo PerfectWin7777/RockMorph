@@ -603,14 +603,31 @@ class HypsometryPanel(BasePanel):
             return
             
         data = item.data(0, Qt.UserRole)
-        if data is None or data.get("type") != "basin":
+        if data is None :
             return
 
-        fid = data["fid"]
-        from PyQt5.QtWidgets import QMenu # type: ignore
-
         menu = QMenu(self)
+
+       # clic on group header → export group
+        if data.get("type") == "group":
+            g_idx        = data["index"]
+            group        = self._groups[g_idx]
+            export_action = menu.addAction(
+                tr(f"Export '{group['label']}' to CSV")
+            )
+            chosen = menu.exec_(
+                self.basin_tree.viewport().mapToGlobal(pos)
+            )
+            if chosen == export_action:
+                self._export_group_csv(g_idx)
+            return
+
+        if data.get("type") != "basin":
+           return 
+
+        fid = data["fid"]
         
+        # click on basin item → zoom, select, copy, export curve, move to ungrouped
         # --- NEW ACTIONS ---
         zoom_action = menu.addAction(tr("Zoom to Basin"))
         select_action = menu.addAction(tr("Select on Map"))
@@ -737,6 +754,33 @@ class HypsometryPanel(BasePanel):
         # 3. Use the exporter to save
         headers = ["area_fraction", "elev_fraction"]
         self._exporter.save_csv(rows, headers, path)
+    
+    def _export_group_csv(self, group_index: int):
+        """Export all basins of a specific group to CSV."""
+        if group_index >= len(self._groups):
+            return
+
+        group   = self._groups[group_index]
+        members = group["members"]
+
+        rows = [
+            {
+                "label":    r["label"],
+                "fid":      r["fid"],
+                "hi":       r["hi"],
+                "area_km2": r["area_km2"],
+                "min_elev": r["min_elev"],
+                "max_elev": r["max_elev"],
+                "relief":   r["relief"],
+                "n_pixels": r["n_pixels"],
+            }
+            for r in members
+        ]
+
+        headers = ["label", "fid", "hi", "area_km2",
+                "min_elev", "max_elev", "relief", "n_pixels"]
+
+        self._exporter.export_csv(rows, headers, parent=self)
 
     # ------------------------------------------------------------------
     # Navigation ◄ ►
