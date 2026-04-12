@@ -561,25 +561,77 @@ class HypsometryPanel(BasePanel):
             self._send_curves_to_plot(curves)
 
     def _on_tree_context_menu(self, pos):
-        """Right-click on a basin → option to move to Ungrouped."""
+        """Right-click on a basin item in the tree."""
         item = self.basin_tree.itemAt(pos)
         if item is None:
             return
+            
         data = item.data(0, Qt.UserRole)
         if data is None or data.get("type") != "basin":
             return
 
+        fid = data["fid"]
+        from PyQt5.QtWidgets import QMenu # type: ignore
+
         menu = QMenu(self)
-        action = menu.addAction(tr("Move to Ungrouped"))
+        
+        # --- NEW ACTIONS ---
+        zoom_action = menu.addAction(tr("Zoom to Basin"))
+        select_action = menu.addAction(tr("Select on Map"))
+        menu.addSeparator()
+        # -------------------
+        
+        move_action = menu.addAction(tr("Move to Ungrouped"))
+        
+        # Map menu to global position and execute
         chosen = menu.exec_(self.basin_tree.viewport().mapToGlobal(pos))
-        if chosen == action:
-            self._groups = move_to_ungrouped(self._groups, data["fid"])
+        
+        if chosen == zoom_action:
+            self._zoom_to_basin(fid)
+        elif chosen == select_action:
+            self._select_on_map(fid)
+        elif chosen == move_action:
+            self._groups = move_to_ungrouped(self._groups, fid)
             self._active_group = min(
                 self._active_group, max(0, len(self._groups) - 1)
             )
             self._refresh_tree()
             self._show_active_group()
+    
 
+    def _zoom_to_basin(self, fid: int):
+        """Zoom the QGIS map canvas to the selected basin feature."""
+        layer = self.basin_combo.currentLayer()
+        if not layer:
+            return
+
+        feature = layer.getFeature(fid)
+        if feature.isValid():
+            # Get geometry extent and zoom
+            canvas = self.iface.mapCanvas()
+            extent = feature.geometry().boundingBox()
+            
+            # Buffer the extent a bit (10%) so it's not touching the edges
+            extent.scale(1.1)
+            
+            canvas.setExtent(extent)
+            canvas.refresh()
+            
+            # Flash the feature to help the user locate it (Pro touch!)
+            canvas.flashFeatureIds(layer, [fid])
+
+    def _select_on_map(self, fid: int):
+        """Select the feature on the QGIS layer and optionally flash it."""
+        layer = self.basin_combo.currentLayer()
+        if not layer:
+            return
+
+        # Select only this feature
+        layer.selectByIds([fid])
+        
+        # Flash the feature so the user sees it immediately
+        self.iface.mapCanvas().flashFeatureIds(layer, [fid])
+        
     # ------------------------------------------------------------------
     # Navigation ◄ ►
     # ------------------------------------------------------------------
