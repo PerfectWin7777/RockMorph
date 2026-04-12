@@ -8,7 +8,7 @@ from qgis.PyQt.QtCore import Qt, QCoreApplication # type: ignore
 
 from ..tools.rose.panel import RosePanel
 from ..tools.swath.panel import SwathPanel
-
+from ..tools.hypsometry.panel import HypsometryPanel
 
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
@@ -16,9 +16,9 @@ def tr(message):
 
 # Registry — add new tools here only
 TOOLS = [
-    ("Rose Diagram", RosePanel),
+    ("Rose Diagram",   RosePanel),
     ("Swath Profile",  SwathPanel),
-    # ("Hypsometry",    HypsometryPanel), ← future
+   ("Hypsometry",      HypsometryPanel),
 ]
 
 
@@ -87,7 +87,7 @@ class RockMorphDock(QDockWidget):
         self.setWidget(container)
 
         # Load first tool
-        self._switch_tool(0)
+        self._switch_tool(2)
 
     def _switch_tool(self, index: int):
         """

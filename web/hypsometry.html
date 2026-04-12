@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #ffffff;
+            color: #333;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ── Group header ──────────────────────────────────── */
+        #group-header {
+            padding: 6px 12px;
+            background: #f0f4f8;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            min-height: 32px;
+        }
+
+        #group-label {
+            font-weight: bold;
+            color: #2d6a9f;
+            font-size: 13px;
+            flex: 1;
+        }
+
+        #group-stats {
+            color: #666;
+            font-size: 11px;
+        }
+
+        /* ── Plot ──────────────────────────────────────────── */
+        #plot-main {
+            flex: 1;
+            width: 100%;
+            min-height: 300px;
+        }
+
+        /* ── Stats bar ─────────────────────────────────────── */
+        #stats {
+            padding: 6px 12px;
+            background: #f5f5f5;
+            border-top: 1px solid #ddd;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 20px;
+            font-size: 12px;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            min-width: 70px;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            color: #222;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        /* ── Empty state ───────────────────────────────────── */
+        #empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #aaa;
+            font-size: 13px;
+            gap: 8px;
+        }
+
+        #empty-state.hidden {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Group info bar -->
+    <div id="group-header" style="display:none">
+        <span id="group-label">—</span>
+        <span id="group-stats"></span>
+    </div>
+
+    <!-- Empty state -->
+    <div id="empty-state">
+        <span style="font-size:32px">⛰</span>
+        <span>Select basins and click Compute</span>
+    </div>
+
+    <!-- Plot -->
+    <div id="plot-main"></div>
+
+    <!-- Stats bar -->
+    <div id="stats">
+        <div class="stat-item">
+            <span class="stat-label">BASINS</span>
+            <span class="stat-value" id="stat-n">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">HI MEAN</span>
+            <span class="stat-value" id="stat-hi-mean">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">HI RANGE</span>
+            <span class="stat-value" id="stat-hi-range">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">AREA TOTAL</span>
+            <span class="stat-value" id="stat-area">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">RELIEF MEAN</span>
+            <span class="stat-value" id="stat-relief">—</span>
+        </div>
+    </div>
+
+    <script src="js/qwebchannel.js"></script>
+    <script src="js/plotly.min.js"></script>
+    <script src="js/bridge.js"></script>
+
+    <script>
+        /**
+         * hypsometry.html — Hypsometric Curve visualization
+         *
+         * Receives groups from Python via:
+         *   updatePlot(jsonData)  — render a group of curves
+         *   clearPlot()           — reset to empty state
+         *
+         * Exports via:
+         *   exportImage(format, width, height)
+         *   exportSvg()
+         */
+
+        // Plotly color palette — one per curve in a group
+        var CURVE_COLORS = [
+            '#2d6a9f', '#e74c3c', '#27ae60', '#8e44ad',
+            '#e67e22', '#16a085', '#c0392b', '#2980b9'
+        ];
+
+        // Reference lines for morphological interpretation
+        var REFERENCE_LINES = [
+            { y: 0.6, label: 'Young (HI=0.6)', color: '#e74c3c', dash: 'dot' },
+            { y: 0.5, label: 'Mature (HI=0.5)', color: '#e67e22', dash: 'dot' },
+            { y: 0.4, label: 'Old (HI=0.4)', color: '#27ae60', dash: 'dot' },
+        ];
+
+        // ── State ────────────────────────────────────────────
+        var _currentGroup = null;
+
+        // ── Main render ──────────────────────────────────────
+
+        /**
+         * Render a group of hypsometric curves.
+         * Called by Python: updatePlot(jsonString)
+         *
+         * @param {string} jsonData - JSON string of group dict:
+         *   {
+         *     label   : string,
+         *     members : [{label, hi, x, y, area_km2, relief, ...}],
+         *     stats   : {hi_mean, hi_min, hi_max, area_total_km2, ...},
+         *     show_reference_lines : bool
+         *   }
+         */
+        function updatePlot(jsonData) {
+            var group = JSON.parse(jsonData);
+            _currentGroup = group;
+
+            // Show plot, hide empty state
+            document.getElementById('empty-state').classList.add('hidden');
+            document.getElementById('plot-main').style.display = 'block';
+
+            var traces = [];
+            var members = group.members || [];
+            var showRef = group.show_reference_lines !== false;
+
+            // ── Curve traces ──────────────────────────────────
+            members.forEach(function (basin, idx) {
+                var color = CURVE_COLORS[idx % CURVE_COLORS.length];
+                traces.push({
+                    x: basin.x,
+                    y: basin.y,
+                    name: basin.label + '  (HI=' + basin.hi.toFixed(3) + ')',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: color, width: 1.8 },
+                    hovertemplate:
+                        '<b>' + basin.label + '</b><br>' +
+                        'Area fraction: %{x:.2f}<br>' +
+                        'Elev fraction: %{y:.2f}<br>' +
+                        'HI = ' + basin.hi.toFixed(3) +
+                        '<extra></extra>',
+                });
+            });
+
+            // ── Reference horizontal lines ─────────────────────
+            // Implemented as scatter traces — compatible with exportHighDpi
+            if (showRef) {
+                REFERENCE_LINES.forEach(function (ref) {
+                    traces.push({
+                        x: [0, 1],
+                        y: [ref.y, ref.y],
+                        name: ref.label,
+                        type: 'scatter',
+                        mode: 'lines',
+                        line: {
+                            color: ref.color,
+                            width: 1,
+                            dash: ref.dash
+                        },
+                        hoverinfo: 'skip',
+                        showlegend: true,
+                    });
+                });
+            }
+
+            // ── Layout ────────────────────────────────────────
+            var layout = {
+                title: {
+                    text: group.label || '',
+                    font: { family: 'serif', size: 14 },
+                    y: 0.98
+                },
+                showlegend: true,
+                legend: {
+                    orientation: 'v',
+                    x: 1.01,
+                    y: 1,
+                    xanchor: 'left',
+                    yanchor: 'top',
+                    font: { size: 10 },
+                    bgcolor: 'rgba(255,255,255,0.9)',
+                    bordercolor: '#ddd',
+                    borderwidth: 1
+                },
+                xaxis: {
+                    title: { text: 'Cumulative area fraction', standoff: 15 },
+                    range: [0, 1],
+                    showgrid: true,
+                    gridcolor: '#cccccc',
+                    showline: true,
+                    linewidth: 1,
+                    ticks: 'outside',
+                    ticklen: 4,
+                    tickwidth: 1,
+                    automargin: true,
+                    minor: {
+                        showgrid: true,
+                        gridcolor: '#eeeeee',
+                        gridwidth: 0.5,
+                        dtick: 0.05
+                    }
+                },
+                yaxis: {
+                    title: { text: 'Normalized elevation', standoff: 15 },
+                    range: [0, 1],
+                    showgrid: true,
+                    gridcolor: '#cccccc',
+                    showline: true,
+                    linewidth: 1,
+                    ticks: 'outside',
+                    ticklen: 4,
+                    tickwidth: 1,
+                    automargin: true,
+                    minor: {
+                        showgrid: true,
+                        gridcolor: '#eeeeee',
+                        gridwidth: 0.5,
+                        dtick: 0.05
+                    }
+                },
+                margin: { t: 50, b: 50, l: 70, r: 160 },
+                hovermode: 'closest',
+                template: 'plotly_white'
+            };
+
+            Plotly.react('plot-main', traces, layout, { responsive: true });
+
+            // Update header and stats bar
+            _updateHeader(group);
+            _updateStats(group.stats || {}, members);
+        }
+
+        /**
+         * Reset to empty state.
+         * Called by Python when user clears results.
+         */
+        function clearPlot() {
+            _currentGroup = null;
+            document.getElementById('empty-state').classList.remove('hidden');
+            document.getElementById('plot-main').style.display = 'none';
+            document.getElementById('group-header').style.display = 'none';
+            _resetStats();
+        }
+
+        // ── Header ───────────────────────────────────────────
+
+        function _updateHeader(group) {
+            var header = document.getElementById('group-header');
+            var stats = group.stats || {};
+
+            header.style.display = 'flex';
+            document.getElementById('group-label').textContent =
+                group.label || '—';
+
+            var parts = [];
+            if (stats.n) parts.push(stats.n + ' basins');
+            if (stats.hi_mean) parts.push('HI mean: ' + stats.hi_mean.toFixed(3));
+            if (stats.area_total_km2) parts.push('Total: ' + stats.area_total_km2.toFixed(0) + ' km²');
+
+            document.getElementById('group-stats').textContent = parts.join('  ·  ');
+        }
+
+        // ── Stats bar ─────────────────────────────────────────
+
+        function _updateStats(stats, members) {
+            document.getElementById('stat-n').textContent =
+                stats.n || members.length || '—';
+
+            document.getElementById('stat-hi-mean').textContent =
+                stats.hi_mean ? stats.hi_mean.toFixed(3) : '—';
+
+            document.getElementById('stat-hi-range').textContent =
+                (stats.hi_min !== undefined && stats.hi_max !== undefined)
+                    ? stats.hi_min.toFixed(2) + ' – ' + stats.hi_max.toFixed(2)
+                    : '—';
+
+            document.getElementById('stat-area').textContent =
+                stats.area_total_km2
+                    ? stats.area_total_km2.toFixed(0) + ' km²'
+                    : '—';
+
+            document.getElementById('stat-relief').textContent =
+                stats.relief_mean
+                    ? stats.relief_mean.toFixed(0) + ' m'
+                    : '—';
+        }
+
+        function _resetStats() {
+            ['stat-n', 'stat-hi-mean', 'stat-hi-range',
+                'stat-area', 'stat-relief'].forEach(function (id) {
+                    document.getElementById(id).textContent = '—';
+                });
+        }
+
+        // ── Export ────────────────────────────────────────────
+
+        function exportImage(format, width, height) {
+            var fmt = (format === 'jpg') ? 'jpeg' : format;
+            var axisKeys = ['xaxis', 'yaxis'];
+            exportHighDpi(
+                'plot-main', fmt, width, height, axisKeys,
+                function (dataUrl) {
+                    onBridgeReady(function (bridge) {
+                        bridge.receive_export(dataUrl);
+                    });
+                }
+            );
+        }
+
+        function exportSvg() {
+            Plotly.toImage(
+                document.getElementById('plot-main'),
+                { format: 'svg', width: 1200, height: 900 }
+            ).then(function (dataUrl) {
+                onBridgeReady(function (bridge) {
+                    bridge.receive_export(dataUrl);
+                });
+            });
+        }
+
+    </script>
+</body>
+
+</html>

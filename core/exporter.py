@@ -93,6 +93,11 @@ RESOLUTION_PRESETS = [
         tr("A4 portrait at 600 DPI. Highest print quality.")
     ),
     (
+        tr("Print — A4 landscape, 600 DPI"),
+        7016, 4961, 600,
+        tr("A4 landscape at 600 DPI. Highest print quality.")
+    ),
+    (
         tr("Custom…"),
         -1, -1, -1,
         tr("Define your own width and height in pixels.")

@@ -101,8 +101,15 @@ function buildExportStylePatch(scaleFactor, axisKeys) {
             patch[key + '.automargin'] = true;
 
             // Grid and axis lines
-            patch[key + '.gridwidth'] = Math.max(0.5, 0.8 * s);
-            patch[key + '.linewidth'] = Math.max(1, 1.5 * s);
+            patch[key + '.showline'] = true;
+            patch[key + '.gridwidth'] = Math.max(0.5, 0.9 * s);
+            patch[key + '.linewidth'] = Math.max(1, 1.3 * s);
+            patch[key + '.tickwidth'] = Math.max(1, 1.3 * s);
+            patch[key + '.ticklen'] =   Math.max(1, 5.0 * s);
+
+            // We scale the minor grid width (base was 0.5)
+            // We use a slightly lower multiplier to keep them "secondary"
+            patch[key + '.minor.gridwidth'] = Math.max(0.2, 0.8 * s);
         }
     });
 
@@ -121,6 +128,35 @@ function buildTraceWidthPatch(traces, scaleFactor) {
     return { 'line.width': widths };
 }
 
+// Scale dash patterns for high-DPI
+function buildDashPatch(traces, scaleFactor) {
+    var dashMap = {
+        'dot': [2, 3],      // base: 2px on, 3px off
+        'dash': [8, 4],      // base: 8px on, 4px off
+        'dashdot': [8, 4, 2, 4] // base pattern
+    };
+
+    var dashes = [];
+    for (var i = 0; i < traces.length; i++) {
+        var currentDash = (traces[i].line && traces[i].line.dash)
+            ? traces[i].line.dash
+            : 'solid';
+
+        if (currentDash === 'solid' || !dashMap[currentDash]) {
+            dashes.push(currentDash); // solid reste solid
+        } else {
+            // Scale the pattern values
+            var pattern = dashMap[currentDash];
+            var scaled = pattern.map(function (v) {
+                return Math.round(v * scaleFactor) + 'px';
+            });
+            dashes.push(scaled.join(','));
+        }
+    }
+    return { 'line.dash': dashes };
+}
+
+
 /**
  * Main Export Pipeline: 
  * Temporary UI boost -> Image Capture -> UI Reset.
@@ -136,27 +172,25 @@ function exportHighDpi(divId, format, width, height, axisKeys, callback) {
     // 1. Generate Patches
     const exportStylePatch = buildExportStylePatch(scaleFactor, axisKeys);
     const exportTracePatch = buildTraceWidthPatch(gd.data, scaleFactor);
+    const exportDashPatch = buildDashPatch(gd.data, scaleFactor);
 
     // 2. Store original state for restoration
     const originalStylePatch = buildExportStylePatch(1.0, axisKeys);
     const originalTracePatch = buildTraceWidthPatch(gd.data, 1.0);
+    const originalDashPatch = buildDashPatch(gd.data, 1.0);
 
     // 3. Execution chain
     Plotly.relayout(gd, exportStylePatch)
+        .then(function () { return Plotly.restyle(gd, exportTracePatch); })
+        .then(function () { return Plotly.restyle(gd, exportDashPatch); }) 
         .then(function () {
-            return Plotly.restyle(gd, exportTracePatch);
-        })
-        .then(function () {
-            return Plotly.toImage(gd, {
-                format: format,
-                width: width,
-                height: height
-            });
+            return Plotly.toImage(gd, { format: format, width: width, height: height });
         })
         .then(function (dataUrl) {
             // Revert UI to screen-friendly sizes immediately after capture
             Plotly.relayout(gd, originalStylePatch);
             Plotly.restyle(gd, originalTracePatch);
+            Plotly.restyle(gd, originalDashPatch);
             return dataUrl;
         })
         .then(function (dataUrl) {
@@ -167,5 +201,6 @@ function exportHighDpi(divId, format, width, height, axisKeys, callback) {
             // Emergency revert
             Plotly.relayout(gd, originalStylePatch);
             Plotly.restyle(gd, originalTracePatch);
+            Plotly.restyle(gd, originalDashPatch);
         });
 }

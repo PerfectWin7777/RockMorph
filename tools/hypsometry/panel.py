@@ -1,0 +1,613 @@
+# tools/hypsometry/panel.py
+
+"""
+tools/hypsometry/panel.py
+
+HypsometryPanel — UI panel for the Hypsometric Curve tool.
+
+Layout
+------
+  Input group      : DEM + basin layer + label field
+  Grouping group   : strategy + max curves + bins
+  List widget      : one row per basin, sortable, selectable
+  WebEngineView    : hypsometry.html
+  Export group     : PNG / JPG / SVG / CSV
+
+Authors: RockMorph contributors / Tony
+"""
+
+import json
+from PyQt5.QtWidgets import (  # type: ignore
+    QVBoxLayout, QHBoxLayout, QFormLayout,
+    QPushButton, QSpinBox, QComboBox,
+    QCheckBox, QGroupBox, QLabel,
+    QTreeWidget, QTreeWidgetItem,
+    QSizePolicy, QAbstractItemView,
+    QProgressBar, QLineEdit
+)
+from PyQt5.QtWebEngineWidgets import QWebEngineView  # type: ignore
+from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal  # type: ignore
+from PyQt5.QtGui import QColor  # type: ignore
+from qgis.gui import QgsMapLayerComboBox  # type: ignore
+from qgis.core import QgsMapLayerProxyModel, QgsWkbTypes  # type: ignore
+
+from ...base.base_panel import BasePanel
+from ...core.exporter import RockMorphExporter
+from .engine import HypsometryEngine
+from .grouper import group_results, move_to_ungrouped
+
+
+def tr(message):
+    return QCoreApplication.translate("RockMorph", message)
+
+
+"""
+TODO(hypsometry): Mode B — multiple DEM/basin pairs
+                  Add ModeBInputWidget, plug into same _results pipeline
+
+TODO(hypsometry): Export CSV par groupe actif (pas tous les bassins)
+                  Ajouter bouton "Export current group"
+
+TODO(hypsometry): Highlight bassin sélectionné sur le canvas QGIS
+                  QgsRubberBand sur le polygone actif
+
+TODO(hypsometry): Progress per basin — émettre un signal depuis le worker
+                  pour mettre à jour une vraie barre de progression
+"""
+
+# ---------------------------------------------------------------------------
+# Background worker — keeps UI responsive during long compute
+# ---------------------------------------------------------------------------
+
+class _ComputeWorker(QThread):
+    """
+    Runs HypsometryEngine.compute() in a background thread.
+    Emits finished(result_dict) or error(message).
+    """
+    finished = pyqtSignal(dict)
+    error    = pyqtSignal(str)
+
+    def __init__(self, engine, params):
+        super().__init__()
+        self._engine = engine
+        self._params = params
+
+    def run(self):
+        try:
+            result = self._engine.compute(**self._params)
+            self.finished.emit(result)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.error.emit(str(e))
+
+
+# ---------------------------------------------------------------------------
+# Panel
+# ---------------------------------------------------------------------------
+
+class HypsometryPanel(BasePanel):
+    """
+    UI panel for the Hypsometric Curve tool.
+    """
+
+    def __init__(self, iface, parent=None):
+        self._engine         = HypsometryEngine()
+        self._exporter       = RockMorphExporter(iface)
+        self._results        = []    # flat list from engine
+        self._groups         = []    # grouped list from grouper
+        self._active_group   = 0     # index into _groups
+        self._worker         = None
+        super().__init__(iface, parent)
+
+    # ------------------------------------------------------------------
+    # BasePanel hooks
+    # ------------------------------------------------------------------
+
+    def _html_file(self) -> str:
+        return "hypsometry.html"
+
+    def _build_ui(self):
+        root = QVBoxLayout(self._inner)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
+
+        # ── Input ─────────────────────────────────────────────
+        input_group  = QGroupBox(tr("Input"))
+        input_layout = QFormLayout(input_group)
+
+        self.dem_combo = QgsMapLayerComboBox()
+        self.dem_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        input_layout.addRow(tr("DEM layer:"), self.dem_combo)
+
+        self.basin_combo = QgsMapLayerComboBox()
+        self.basin_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        self.basin_combo.layerChanged.connect(self._on_basin_layer_changed)
+        input_layout.addRow(tr("Basin layer:"), self.basin_combo)
+
+        
+
+        self.label_combo = QComboBox()
+        self.label_combo.setToolTip(tr(
+            "Field used as curve label.\n"
+            "Auto detects: nom, name, id, bv, basin."
+        ))
+        input_layout.addRow(tr("Label field:"), self.label_combo)
+        
+        self._on_basin_layer_changed(self.basin_combo.currentLayer())
+        
+        self.n_points_spin = QSpinBox()
+        self.n_points_spin.setRange(50, 1000)
+        self.n_points_spin.setValue(200)
+        self.n_points_spin.setToolTip(tr("Number of points per curve."))
+        input_layout.addRow(tr("Curve points:"), self.n_points_spin)
+
+        self.ref_lines_check = QCheckBox(tr("Show HI reference lines"))
+        self.ref_lines_check.setChecked(True)
+        self.ref_lines_check.setToolTip(tr(
+            "Show horizontal reference lines at HI = 0.4, 0.5, 0.6\n"
+            "(old / mature / young relief thresholds)"
+        ))
+        input_layout.addRow("", self.ref_lines_check)
+
+        root.addWidget(input_group)
+
+        # ── Compute button + progress ─────────────────────────
+        self.compute_btn = QPushButton(tr("Compute all basins"))
+        self.compute_btn.setFixedHeight(36)
+        self.compute_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2d6a9f; color: white;
+                border-radius: 4px; font-weight: bold;
+            }
+            QPushButton:hover   { background-color: #3a7fc1; }
+            QPushButton:pressed { background-color: #1f4f7a; }
+            QPushButton:disabled { background-color: #aaa; }
+        """)
+        self.compute_btn.clicked.connect(self._on_compute)
+        root.addWidget(self.compute_btn)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)   # indeterminate
+        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setVisible(False)
+        root.addWidget(self.progress_bar)
+
+        # ── Grouping ──────────────────────────────────────────
+        group_group  = QGroupBox(tr("Smart grouping"))
+        group_layout = QFormLayout(group_group)
+
+        self.strategy_combo = QComboBox()
+        self.strategy_combo.addItems([
+            tr("None (one by one)"),
+            tr("Group by HI"),
+            tr("Group by Area"),
+            tr("Group by Relief"),
+        ])
+        self.strategy_combo.currentIndexChanged.connect(self._on_strategy_changed)
+        group_layout.addRow(tr("Strategy:"), self.strategy_combo)
+
+        self.max_spin = QSpinBox()
+        self.max_spin.setRange(1, 20)
+        self.max_spin.setValue(6)
+        self.max_spin.setToolTip(tr("Max curves per group."))
+        group_layout.addRow(tr("Max per group:"), self.max_spin)
+
+        self.bins_spin = QSpinBox()
+        self.bins_spin.setRange(2, 10)
+        self.bins_spin.setValue(4)
+        self.bins_spin.setToolTip(tr("Number of bins for HI/Area/Relief grouping."))
+        group_layout.addRow(tr("Bins:"), self.bins_spin)
+
+        self.apply_group_btn = QPushButton(tr("Apply grouping"))
+        self.apply_group_btn.setFixedHeight(28)
+        self.apply_group_btn.clicked.connect(self._apply_grouping)
+        self.apply_group_btn.setEnabled(False)
+        group_layout.addRow("", self.apply_group_btn)
+
+        root.addWidget(group_group)
+
+        # ── Basin list ────────────────────────────────────────
+        list_group  = QGroupBox(tr("Results"))
+        list_layout = QVBoxLayout(list_group)
+
+        self.basin_tree = QTreeWidget()
+        self.basin_tree.setHeaderLabels([
+            tr("Basin"), tr("HI"), tr("Area km²"), tr("Relief m")
+        ])
+        self.basin_tree.setFixedHeight(160)
+        self.basin_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.basin_tree.setSortingEnabled(True)
+        self.basin_tree.itemSelectionChanged.connect(self._on_selection_changed)
+        self.basin_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.basin_tree.customContextMenuRequested.connect(self._on_tree_context_menu)
+        list_layout.addWidget(self.basin_tree)
+
+        # Navigation buttons
+        nav_layout = QHBoxLayout()
+        self.prev_btn = QPushButton("◄")
+        self.prev_btn.setFixedWidth(40)
+        self.prev_btn.clicked.connect(self._on_prev)
+        self.prev_btn.setEnabled(False)
+
+        self.group_info_label = QLabel("—")
+        self.group_info_label.setAlignment(Qt.AlignCenter)
+        self.group_info_label.setStyleSheet("color: #666; font-size: 11px;")
+
+        self.next_btn = QPushButton("►")
+        self.next_btn.setFixedWidth(40)
+        self.next_btn.clicked.connect(self._on_next)
+        self.next_btn.setEnabled(False)
+
+        nav_layout.addWidget(self.prev_btn)
+        nav_layout.addWidget(self.group_info_label, stretch=1)
+        nav_layout.addWidget(self.next_btn)
+        list_layout.addLayout(nav_layout)
+
+        root.addWidget(list_group)
+
+        # ── WebEngineView ─────────────────────────────────────
+        self.webview.setMinimumHeight(360)
+        self.webview.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding
+        )
+        root.addWidget(self.webview)
+
+        # ── Export ────────────────────────────────────────────
+        export_group  = QGroupBox(tr("Export"))
+        export_layout = QHBoxLayout(export_group)
+        for fmt in ["PNG", "JPG", "SVG", "CSV"]:
+            btn = QPushButton(fmt)
+            btn.setFixedHeight(28)
+            btn.clicked.connect(lambda checked, f=fmt: self._on_export(f))
+            export_layout.addWidget(btn)
+        root.addWidget(export_group)
+
+        # ── Warnings label ────────────────────────────────────
+        self.warning_label = QLabel("")
+        self.warning_label.setWordWrap(True)
+        self.warning_label.setStyleSheet("color: #c0392b; font-size: 10px;")
+        self.warning_label.setVisible(False)
+        root.addWidget(self.warning_label)
+
+    # ------------------------------------------------------------------
+    # Layer changed — refresh label field combo
+    # ------------------------------------------------------------------
+
+    def _on_basin_layer_changed(self, layer):
+        """Refresh label field combo when basin layer changes."""
+        self.label_combo.clear()
+        self.label_combo.addItem(tr("Auto-detect"), None)
+        if layer is None:
+            return
+        for field in layer.fields():
+            self.label_combo.addItem(field.name(), field.name())
+
+    # ------------------------------------------------------------------
+    # Compute
+    # ------------------------------------------------------------------
+
+    def _on_compute(self):
+        dem_layer   = self.dem_combo.currentLayer()
+        basin_layer = self.basin_combo.currentLayer()
+
+        if not self._engine.validate(
+            dem_layer=dem_layer, basin_layer=basin_layer
+        ):
+            self.show_error(tr(
+                "Please select a valid DEM layer and a polygon basin layer."
+            ))
+            return
+
+        label_field = self.label_combo.currentData()
+
+        params = {
+            "dem_layer":   dem_layer,
+            "basin_layer": basin_layer,
+            "label_field": label_field,
+            "n_points":    self.n_points_spin.value(),
+        }
+
+        # Disable UI during compute
+        self.compute_btn.setEnabled(False)
+        self.compute_btn.setText(tr("Computing…"))
+        self.progress_bar.setVisible(True)
+        self.apply_group_btn.setEnabled(False)
+
+        # Run in background thread
+        self._worker = _ComputeWorker(self._engine, params)
+        self._worker.finished.connect(self._on_compute_finished)
+        self._worker.error.connect(self._on_compute_error)
+        self._worker.start()
+
+    def _on_compute_finished(self, result: dict):
+        """Called when background worker finishes."""
+        self.compute_btn.setEnabled(True)
+        self.compute_btn.setText(tr("Compute all basins"))
+        self.progress_bar.setVisible(False)
+
+        self._results = result.get("results", [])
+        warnings      = result.get("warnings", [])
+        skipped       = result.get("skipped", [])
+
+        if not self._results:
+            self.show_error(tr("No valid basins found."))
+            return
+
+        # Show warnings
+        if warnings:
+            self.warning_label.setText("\n".join(warnings[:5]))
+            self.warning_label.setVisible(True)
+        else:
+            self.warning_label.setVisible(False)
+
+        # Apply default grouping
+        self._apply_grouping()
+        self.apply_group_btn.setEnabled(True)
+
+        # Info
+        msg = tr(f"{len(self._results)} basins computed.")
+        if skipped:
+            msg += tr(f" {len(skipped)} skipped.")
+        self.show_info(msg)
+
+    def _on_compute_error(self, message: str):
+        self.compute_btn.setEnabled(True)
+        self.compute_btn.setText(tr("Compute all basins"))
+        self.progress_bar.setVisible(False)
+        self.show_error(message)
+
+    # ------------------------------------------------------------------
+    # Grouping
+    # ------------------------------------------------------------------
+
+    def _apply_grouping(self):
+        """Apply current grouping strategy to _results."""
+        if not self._results:
+            return
+
+        strategy_map = {0: "none", 1: "hi", 2: "area", 3: "relief"}
+        strategy = strategy_map.get(self.strategy_combo.currentIndex(), "none")
+
+        self._groups = group_results(
+            self._results,
+            strategy      = strategy,
+            max_per_group = self.max_spin.value(),
+            n_bins        = self.bins_spin.value(),
+        )
+
+        self._active_group = 0
+        self._refresh_tree()
+        self._show_active_group()
+
+    def _on_strategy_changed(self, _index):
+        """Auto-apply when strategy changes if results exist."""
+        if self._results:
+            self._apply_grouping()
+
+    # ------------------------------------------------------------------
+    # Tree widget
+    # ------------------------------------------------------------------
+
+    def _refresh_tree(self):
+        """Rebuild tree from current _groups."""
+        self.basin_tree.clear()
+
+        if not self._groups:
+            return
+
+        strategy = self.strategy_combo.currentIndex()
+
+        if strategy == 0:
+            # Ungrouped — flat list
+            for result in self._results:
+                self._add_tree_item(self.basin_tree.invisibleRootItem(), result)
+        else:
+            # Grouped — tree with group headers
+            for g_idx, group in enumerate(self._groups):
+                group_item = QTreeWidgetItem(self.basin_tree)
+                group_item.setText(0, group["label"])
+                group_item.setData(0, Qt.UserRole, {"type": "group", "index": g_idx})
+                group_item.setExpanded(g_idx == self._active_group)
+                group_item.setBackground(0, QColor("#e8f0f8"))
+
+                for result in group["members"]:
+                    self._add_tree_item(group_item, result)
+
+        self.basin_tree.resizeColumnToContents(0)
+
+    def _add_tree_item(self, parent, result: dict):
+        item = QTreeWidgetItem(parent)
+        item.setText(0, result["label"])
+        item.setText(1, f"{result['hi']:.3f}")
+        item.setText(2, f"{result['area_km2']:.1f}")
+        item.setText(3, f"{result['relief']:.0f}")
+        item.setData(0, Qt.UserRole, {"type": "basin", "fid": result["fid"]})
+        return item
+
+    def _on_selection_changed(self):
+        """
+        On selection change in tree:
+        - Single item   → show that basin alone
+        - Multiple items → superpose selected curves
+        - Group header  → show that whole group
+        """
+        selected = self.basin_tree.selectedItems()
+        if not selected:
+            return
+
+        # Collect result dicts from selection
+        curves = []
+        for item in selected:
+            data = item.data(0, Qt.UserRole)
+            if data is None:
+                continue
+            if data["type"] == "basin":
+                result = self._find_result_by_fid(data["fid"])
+                if result:
+                    curves.append(result)
+            elif data["type"] == "group":
+                group = self._groups[data["index"]]
+                curves.extend(group["members"])
+                self._active_group = data["index"]
+                self._update_nav_buttons()
+
+        if curves:
+            self._send_curves_to_plot(curves)
+
+    def _on_tree_context_menu(self, pos):
+        """Right-click on a basin → option to move to Ungrouped."""
+        from PyQt5.QtWidgets import QMenu  # type: ignore
+        item = self.basin_tree.itemAt(pos)
+        if item is None:
+            return
+        data = item.data(0, Qt.UserRole)
+        if data is None or data.get("type") != "basin":
+            return
+
+        menu = QMenu(self)
+        action = menu.addAction(tr("Move to Ungrouped"))
+        chosen = menu.exec_(self.basin_tree.viewport().mapToGlobal(pos))
+        if chosen == action:
+            self._groups = move_to_ungrouped(self._groups, data["fid"])
+            self._active_group = min(
+                self._active_group, max(0, len(self._groups) - 1)
+            )
+            self._refresh_tree()
+            self._show_active_group()
+
+    # ------------------------------------------------------------------
+    # Navigation ◄ ►
+    # ------------------------------------------------------------------
+
+    def _on_prev(self):
+        if self._active_group > 0:
+            self._active_group -= 1
+            self._show_active_group()
+
+    def _on_next(self):
+        if self._active_group < len(self._groups) - 1:
+            self._active_group += 1
+            self._show_active_group()
+
+    def _show_active_group(self):
+        if not self._groups:
+            return
+        group = self._groups[self._active_group]
+        self._send_group_to_plot(group)
+        self._update_nav_buttons()
+
+        # Expand active group in tree
+        if self.strategy_combo.currentIndex() > 0:
+            root = self.basin_tree.invisibleRootItem()
+            for i in range(root.childCount()):
+                child = root.child(i)
+                child.setExpanded(i == self._active_group)
+
+    def _update_nav_buttons(self):
+        total = len(self._groups)
+        idx   = self._active_group
+        self.prev_btn.setEnabled(idx > 0)
+        self.next_btn.setEnabled(idx < total - 1)
+        self.group_info_label.setText(
+            f"{idx + 1} / {total}" if total > 1 else ""
+        )
+
+    # ------------------------------------------------------------------
+    # Plot communication
+    # ------------------------------------------------------------------
+
+    def _send_group_to_plot(self, group: dict):
+        """Send a full group dict to hypsometry.html."""
+        payload = {
+            "label":                group["label"],
+            "members":              group["members"],
+            "stats":                group.get("stats", {}),
+            "show_reference_lines": self.ref_lines_check.isChecked(),
+        }
+        self._last_data = payload
+        js = f"updatePlot({json.dumps(json.dumps(payload))})"
+        self.webview.page().runJavaScript(js)
+
+    def _send_curves_to_plot(self, curves: list):
+        """Send an ad-hoc list of curves (from manual selection)."""
+        from .grouper import _group_stats  # type: ignore
+        payload = {
+            "label":                tr("Selection"),
+            "members":              curves,
+            "stats":                _group_stats(curves),
+            "show_reference_lines": self.ref_lines_check.isChecked(),
+        }
+        self._last_data = payload
+        js = f"updatePlot({json.dumps(json.dumps(payload))})"
+        self.webview.page().runJavaScript(js)
+
+    # ------------------------------------------------------------------
+    # BasePanel abstract methods
+    # ------------------------------------------------------------------
+
+    def _on_result(self, data: dict):
+        pass   # not used — panel drives plot directly
+
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def _on_export(self, fmt: str):
+        fmt_lower = fmt.lower()
+
+        if fmt_lower == "csv":
+            if not self._results:
+                self.show_error(tr("No data — run Compute first."))
+                return
+            self._exporter.export_csv(
+                self._build_csv_rows(),
+                self._csv_headers(),
+                parent=self
+            )
+            return
+
+        ok, path, width, height = self._exporter.prepare_image_export(
+            fmt_lower, parent=self
+        )
+        if not ok:
+            return
+
+        self._pending_export_path = path
+
+        if fmt_lower == "svg":
+            self.webview.page().runJavaScript("exportSvg()")
+        else:
+            plotly_fmt = "jpeg" if fmt_lower == "jpg" else fmt_lower
+            self.webview.page().runJavaScript(
+                f"exportImage('{plotly_fmt}', {width}, {height})"
+            )
+
+    def _csv_headers(self) -> list:
+        return ["label", "fid", "hi", "area_km2",
+                "min_elev", "max_elev", "relief", "n_pixels"]
+
+    def _build_csv_rows(self) -> list:
+        return [
+            {
+                "label":    r["label"],
+                "fid":      r["fid"],
+                "hi":       r["hi"],
+                "area_km2": r["area_km2"],
+                "min_elev": r["min_elev"],
+                "max_elev": r["max_elev"],
+                "relief":   r["relief"],
+                "n_pixels": r["n_pixels"],
+            }
+            for r in self._results
+        ]
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _find_result_by_fid(self, fid: int) -> dict | None:
+        for r in self._results:
+            if r["fid"] == fid:
+                return r
+        return None
