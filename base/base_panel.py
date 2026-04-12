@@ -75,6 +75,8 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
     
         self._last_data: dict | None = None
         self._pending_export_path: str = ""
+        self._pending_export_dpi  = 300
+        self.div_id = 'plot-main'  # div ID for plotly export
 
         # Root layout with scroll
         root = QVBoxLayout(self)
@@ -228,6 +230,6 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         """Push an info message to the QGIS message bar."""
         self.iface.messageBar().pushInfo("RockMorph", message)
 
-    def _save_export(self, data_url: str) -> None:
+    def _save_export(self, svg_data_url: str) -> None:
         """Called by JS bridge after Plotly.toImage()."""
-        self._exporter.save_image(data_url, self._pending_export_path)
+        self._exporter.save_image( svg_data_url, self._pending_export_path)

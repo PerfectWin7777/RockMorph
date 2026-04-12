@@ -46,62 +46,23 @@ from PyQt5.QtWidgets import ( # type: ignore
     QDialogButtonBox, QGroupBox, QFileDialog,
     QSizePolicy
 )
-from PyQt5.QtCore import QCoreApplication, Qt # type: ignore
-from PyQt5.QtGui import QFont # type: ignore
-
+from PyQt5.QtCore import QCoreApplication, Qt, QByteArray,QSizeF  # type: ignore
+from PyQt5.QtGui import QFont, QImage, QPainter            # type: ignore
+from PyQt5.QtSvg import QSvgRenderer                       # type: ignore
+from PyQt5.QtPrintSupport import QPrinter  # type: ignore
+            
 
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
 
 
-# ---------------------------------------------------------------------------
-# Resolution presets
-# Each preset defines a (label, width_px, height_px, dpi, description) tuple.
-# width/height are the Plotly toImage dimensions.
-# dpi is informational — shown to the user for context.
-# ---------------------------------------------------------------------------
-
-RESOLUTION_PRESETS = [
-    (
-        tr("Screen — 720p"),
-        1280, 720, 96,
-        tr("Good for presentations and web embedding.")
-    ),
-    (
-        tr("Screen — 1080p"),
-        1920, 1080, 96,
-        tr("High-resolution screen export.")
-    ),
-    (
-        tr("Print — A4 landscape, 150 DPI"),
-        1754, 1240, 150,
-        tr("A4 landscape at 150 DPI. Suitable for reports.")
-    ),
-    (
-        tr("Print — A4 portrait, 300 DPI"),
-        2480, 3508, 300,
-        tr("A4 portrait at 300 DPI. Publication quality.")
-    ),
-    (
-        tr("Print — A4 landscape, 300 DPI"),
-        3508, 2480, 300,
-        tr("A4 landscape at 300 DPI. Journal-ready.")
-    ),
-    (
-        tr("Print — A4 portrait, 600 DPI"),
-        4961, 7016, 600,
-        tr("A4 portrait at 600 DPI. Highest print quality.")
-    ),
-    (
-        tr("Print — A4 landscape, 600 DPI"),
-        7016, 4961, 600,
-        tr("A4 landscape at 600 DPI. Highest print quality.")
-    ),
-    (
-        tr("Custom…"),
-        -1, -1, -1,
-        tr("Define your own width and height in pixels.")
-    ),
+# DPI presets — replaces pixel resolution presets
+DPI_PRESETS = [
+    (tr("Screen  —  96 dpi"),  96,  tr("Good for presentations and web embedding.")),
+    (tr("Draft   — 150 dpi"), 150,  tr("Suitable for reports. Internal documents.")),
+    (tr("Print   — 300 dpi"), 300,  tr("Standard publication quality.")),
+    (tr("High    — 600 dpi"), 600,  tr("Highest print quality. Journal submission.")),
+    (tr("Custom…"),            -1,  tr("Define your own DPI.")),
 ]
 
 # File dialog filters per format
@@ -110,6 +71,7 @@ FORMAT_FILTERS = {
     "jpg":  "JPEG Image (*.jpg)",
     "jpeg": "JPEG Image (*.jpg)",
     "svg":  "SVG Vector (*.svg)",
+    "pdf":  "PDF Document (*.pdf)",
     "csv":  "CSV Spreadsheet (*.csv)",
     "json": "JSON File (*.json)",
 }
@@ -123,78 +85,55 @@ class ResolutionDialog(QDialog):
     """
     Professional resolution picker dialog.
 
-    Shows a list of presets with descriptions.
-    Falls back to a custom width/height spinner if the user selects "Custom".
+    Shows a list of presets_dpi with descriptions.
+    Falls back to a custom dpi spinner if the user selects "Custom".
 
-    Returns (width, height) in pixels via .result_size attribute.
+    Returns selected DPI via ResolutionDialog.result_dpi attribute.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(tr("Export Resolution"))
-        self.setMinimumWidth(400)
-        self.result_size = None
+        self.setWindowTitle(tr("Export Quality"))
+        self.setMinimumWidth(380)
+        self.result_dpi = 300
         self._build_ui()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setSpacing(12)
 
-        # ── Preset selector ───────────────────────────────────
-        preset_group = QGroupBox(tr("Preset"))
-        preset_layout = QFormLayout(preset_group)
+        group        = QGroupBox(tr("Resolution"))
+        group_layout = QFormLayout(group)
 
-        self.preset_combo = QComboBox()
-        for label, w, h, dpi, desc in RESOLUTION_PRESETS:
-            self.preset_combo.addItem(label)
-        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
-        preset_layout.addRow(tr("Format:"), self.preset_combo)
+        self.combo = QComboBox()
+        for label, dpi, _ in DPI_PRESETS:
+            self.combo.addItem(label, dpi)
+        self.combo.setCurrentIndex(2)   # 300 dpi default
+        self.combo.currentIndexChanged.connect(self._on_changed)
+        group_layout.addRow(tr("Quality:"), self.combo)
 
-        self.desc_label = QLabel()
+        self.desc_label = QLabel(DPI_PRESETS[2][2])
         self.desc_label.setWordWrap(True)
-        self.desc_label.setStyleSheet("color: #666; font-size: 10px;")
-        preset_layout.addRow("", self.desc_label)
+        self.desc_label.setStyleSheet("color: #666; font-size: 12px;")
+        group_layout.addRow("", self.desc_label)
 
-        root.addWidget(preset_group)
+        self.custom_spin = QSpinBox()
+        self.custom_spin.setRange(72, 2000)
+        self.custom_spin.setValue(300)
+        self.custom_spin.setSingleStep(10)
+        self.custom_spin.setSuffix(" dpi")
+        self.custom_spin.setVisible(False)
+        self.custom_spin.valueChanged.connect(self._on_spin_changed)
+        group_layout.addRow(" ", self.custom_spin)
 
-        # ── Resolution info ───────────────────────────────────
-        info_group = QGroupBox(tr("Output size"))
-        info_layout = QFormLayout(info_group)
-
-        self.size_label = QLabel()
+        self.result_label = QLabel(" 300 dpi")
         bold = QFont()
         bold.setBold(True)
-        self.size_label.setFont(bold)
-        info_layout.addRow(tr("Pixels:"), self.size_label)
+        self.result_label.setFont(bold)
+        group_layout.addRow("Selected DPI:", self.result_label)
 
-        self.dpi_label = QLabel()
-        self.dpi_label.setStyleSheet("color: #666;")
-        info_layout.addRow(tr("DPI:"), self.dpi_label)
+        root.addWidget(group)
 
-        root.addWidget(info_group)
-
-        # ── Custom size (hidden by default) ───────────────────
-        self.custom_group = QGroupBox(tr("Custom size"))
-        custom_layout = QFormLayout(self.custom_group)
-
-        self.custom_w = QSpinBox()
-        self.custom_w.setRange(100, 10000)
-        self.custom_w.setValue(1920)
-        self.custom_w.setSuffix(" px")
-        self.custom_w.valueChanged.connect(self._update_custom_info)
-        custom_layout.addRow(tr("Width:"), self.custom_w)
-
-        self.custom_h = QSpinBox()
-        self.custom_h.setRange(100, 10000)
-        self.custom_h.setValue(1080)
-        self.custom_h.setSuffix(" px")
-        self.custom_h.valueChanged.connect(self._update_custom_info)
-        custom_layout.addRow(tr("Height:"), self.custom_h)
-
-        self.custom_group.setVisible(False)
-        root.addWidget(self.custom_group)
-
-        # ── Buttons ───────────────────────────────────────────
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
@@ -202,36 +141,23 @@ class ResolutionDialog(QDialog):
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
-        # Initialize display
-        self._on_preset_changed(0)
-
-    def _on_preset_changed(self, index: int):
-        label, w, h, dpi, desc = RESOLUTION_PRESETS[index]
+    def _on_changed(self, idx):
+        _, dpi, desc = DPI_PRESETS[idx]
         self.desc_label.setText(desc)
-        is_custom = (w == -1)
-        self.custom_group.setVisible(is_custom)
-
-        if is_custom:
-            self._update_custom_info()
+        is_custom = (dpi == -1)
+        self.custom_spin.setVisible(is_custom)
+        if not is_custom:
+            self.result_label.setText(f" {dpi} dpi")
         else:
-            self.size_label.setText(f"{w} × {h} px")
-            self.dpi_label.setText(
-                f"{dpi} DPI" if dpi > 0 else "—"
-            )
+            self.result_label.setText(f" {self.custom_spin.value()} dpi")
 
-    def _update_custom_info(self):
-        w = self.custom_w.value()
-        h = self.custom_h.value()
-        self.size_label.setText(f"{w} × {h} px")
-        self.dpi_label.setText("—")
+    def _on_spin_changed(self, val):
+        self.result_label.setText(f" {val} dpi")
 
     def _on_accept(self):
-        index = self.preset_combo.currentIndex()
-        _, w, h, dpi, _ = RESOLUTION_PRESETS[index]
-        if w == -1:
-            self.result_size = (self.custom_w.value(), self.custom_h.value())
-        else:
-            self.result_size = (w, h)
+        idx       = self.combo.currentIndex()
+        _, dpi, _ = DPI_PRESETS[idx]
+        self.result_dpi = self.custom_spin.value() if dpi == -1 else dpi
         self.accept()
 
 
@@ -246,19 +172,18 @@ class RockMorphExporter:
     Usage — image export (triggered from panel):
     --------------------------------------------
         # Step 1: panel calls this to get path + resolution
-        ok, path, width, height = self._exporter.prepare_image_export(fmt, parent=self)
+        ok, path, dpi = self._exporter.prepare_image_export(fmt, parent=self)
         if not ok:
             return
 
         # Step 2: panel triggers JS
-        self.webview.page().runJavaScript(
-            f"exportImage('{fmt}', {width}, {height})"
-        )
+        div_id = 'plot-main'   # div ID for plotly 
+        self.webview.page().runJavaScript(f"exportViaSvg('{div_id}')")
 
-        # Step 3: JS calls back bridge.receive_export(dataUrl)
-        # Step 4: bridge calls panel._save_export(dataUrl)
+        # Step 3: JS calls back bridge.receive_export(svg_data_url)
+        # Step 4: bridge calls panel._save_export(svg_data_url)
         # Step 5: panel calls:
-        self._exporter.save_image(data_url, path)
+        self._exporter.save_image(svg_data_url, path, dpi)
 
     Usage — tabular export:
     -----------------------
@@ -284,51 +209,64 @@ class RockMorphExporter:
 
         Returns
         -------
-        (ok, path, width, height)
+        (ok, path, dpi) where
         ok=False if user cancelled at any step.
-        SVG ignores resolution (vector format) — returns (ok, path, 1200, 800).
+        SVG/JSON ignores resolution  — returns (ok, path, 96).
         """
-        # SVG is vector — skip resolution dialog
-        if fmt == "svg":
+        # SVG is vector — skip resolution dialog. Same thing with json
+        if fmt in ("svg", "json"):
             path = self._ask_path(fmt, parent)
             if not path:
-                return False, "", 1200, 800
-            return True, path, 1200, 800
+                return False, "", 96
+            return True, path, 96
 
         # Ask resolution
         dialog = ResolutionDialog(parent)
         if dialog.exec_() != QDialog.Accepted:
-            return False, "", 0, 0
-        width, height = dialog.result_size
+            return False, "", 0
+        
+        dpi  = dialog.result_dpi
 
         # Security check for high-res
-        if width > 5000 or height > 5000:
-            self._info(tr("Extremely high resolution may take time or crash the view."))
+        if dpi > 1000:
+            self._info(tr("Extremely high resolution over than 1000 dpi."))
+            self._info(tr("This may take time or crash the view."))
 
         # Ask file path
         path = self._ask_path(fmt, parent)
         if not path:
-            return False, "", 0, 0
+            return False, "", 0 
 
-        return True, path, width, height
+        return True, path, dpi
 
-    def save_image(self, data_url: str, path: str) -> None:
+    # REMPLACER save_image entièrement par :
+
+    def save_image(self, svg_data_url: str, path: str, dpi: int = 300) -> None:
         """
-        Write a Plotly-generated dataURL to disk.
-        Handles PNG, JPG and both SVG encodings (base64 and raw utf-8).
+        Convert Plotly SVG dataURL to final format.
+        Uses QSvgRenderer for PNG/JPG/PDF — no DOM manipulation.
+        cairosvg used automatically if installed (better quality).
 
         Parameters
         ----------
-        data_url : str — dataURL string from Plotly.toImage()
-        path     : str — absolute output file path
+        svg_data_url : str — SVG dataURL from Plotly.toImage(format='svg')
+        path         : str — output file path
+        dpi          : int — for raster formats
         """
         try:
-            fmt, payload = self._parse_data_url(data_url)
-            if fmt == "svg":
-                self._write_svg(payload, path)
+            fmt       = os.path.splitext(path)[1].lower().lstrip('.')
+            svg_bytes = self._extract_svg_bytes(svg_data_url)
+
+            if fmt == 'svg':
+                self._write_svg_bytes(svg_bytes, path)
+            elif fmt == 'png':
+                self._write_png(svg_bytes, path, dpi)
+            elif fmt in ('jpg', 'jpeg'):
+                self._write_jpg(svg_bytes, path, dpi)
+            elif fmt == 'pdf':
+                self._write_pdf(svg_bytes, path)
             else:
-                self._write_binary(payload, path)
-            self._info(tr(f"Exported → {os.path.basename(path)}"))
+                self._error(tr(f"Unsupported format: {fmt}"))
         except Exception as e:
             self._error(tr(f"Export failed: {e}"))
 
@@ -393,77 +331,119 @@ class RockMorphExporter:
         path, _   = QFileDialog.getSaveFileName(parent, caption, "", filter_)
         return path
 
-    # ------------------------------------------------------------------
-    # Internal — dataURL parsing
-    # ------------------------------------------------------------------
-
-    def _parse_data_url(self, data_url: str) -> tuple:
-        """
-        Parse a Plotly dataURL into (format, payload).
-
-        Supported formats
-        -----------------
-        data:image/png;base64,<data>
-        data:image/jpeg;base64,<data>
-        data:image/svg+xml;base64,<data>
-        data:image/svg+xml;utf8,<rawsvg>
-        data:image/svg+xml;charset=utf-8,<rawsvg>
-        """
-        if "," not in data_url:
-            raise ValueError(tr("Invalid dataURL — missing comma separator."))
-
-        header, payload = data_url.split(",", 1)
-
-        # Detect format
-        if "svg" in header:
-            fmt = "svg"
-        elif "jpeg" in header or "jpg" in header:
-            fmt = "jpg"
-        else:
-            fmt = "png"
-
-         # Detect encoding
-        is_base64 = "base64" in header
-        return fmt, (payload, is_base64)
 
     # ------------------------------------------------------------------
     # Internal — writers
     # ------------------------------------------------------------------
-
-
-    def _write_svg(self, payload: tuple, path: str) -> None:
-        """Write SVG — handles both base64 and raw utf8 payloads."""
-        raw, is_base64 = payload
-        if is_base64:
-            # Pad base64 if needed
-            raw    = self._pad_base64(raw)
-            data   = base64.b64decode(raw)
-            mode, kw = "wb", {}
-        else:
-            data   = unquote(raw)
-            mode, kw = "w", {"encoding": "utf-8"}
-
-        with open(path, mode, **kw) as f:
-            f.write(data)
     
-    
-    def _write_binary(self, payload: tuple, path: str) -> None:
-        """Write PNG or JPG from base64 payload."""
-        raw, is_base64 = payload
-        if not is_base64:
-            raise ValueError(tr("Expected base64 data for binary image format."))
-        raw   = self._pad_base64(raw)
-        data  = base64.b64decode(raw)
-        with open(path, "wb") as f:
-            f.write(data)
-    
+
+    def _write_svg_bytes(self, svg_bytes: bytes, path: str) -> None:
+        with open(path, 'wb') as f:
+            f.write(svg_bytes)
+        self._info(tr(f"SVG → {os.path.basename(path)}"))
+
+    def _write_png(self, svg_bytes: bytes, path: str, dpi: int) -> None:
+        try:
+            import cairosvg  # type: ignore
+            cairosvg.svg2png(bytestring=svg_bytes, write_to=path, dpi=dpi)
+            self._info(tr(f"PNG {dpi}dpi → {os.path.basename(path)}"))
+            return
+        except ImportError:
+            pass
+        image = self._rasterize_qt(svg_bytes, dpi)
+        if image is None:
+            self._error(tr("SVG rasterization failed."))
+            return
+        image.save(path, 'PNG')
+        self._info(tr(f"PNG {dpi}dpi → {os.path.basename(path)}"))
+
+    def _write_jpg(self, svg_bytes: bytes, path: str, dpi: int) -> None:
+        try:
+            import cairosvg  # type: ignore
+            import io
+            from PIL import Image  # type: ignore
+            png_bytes = cairosvg.svg2png(bytestring=svg_bytes, dpi=dpi)
+            img = Image.open(io.BytesIO(png_bytes)).convert('RGB')
+            img.save(path, 'JPEG', quality=95, dpi=(dpi, dpi))
+            self._info(tr(f"JPG {dpi}dpi → {os.path.basename(path)}"))
+            return
+        except ImportError:
+            pass
+        image = self._rasterize_qt(svg_bytes, dpi)
+        if image is None:
+            self._error(tr("SVG rasterization failed."))
+            return
+        image.save(path, 'JPEG', 90)
+        self._info(tr(f"JPG {dpi}dpi → {os.path.basename(path)}"))
+
+    def _write_pdf(self, svg_bytes: bytes, path: str) -> None:
+        try:
+            import cairosvg  # type: ignore
+            cairosvg.svg2pdf(bytestring=svg_bytes, write_to=path)
+            self._info(tr(f"PDF → {os.path.basename(path)}"))
+            return
+        except ImportError:
+            pass
+        try:
+            
+            renderer = QSvgRenderer()
+            renderer.load(QByteArray(svg_bytes))
+            if not renderer.isValid():
+                self._error(tr("Invalid SVG for PDF export."))
+                return
+            printer = QPrinter(QPrinter.HighResolution)
+            printer.setOutputFormat(QPrinter.PdfFormat)
+            printer.setOutputFileName(path)
+            sz = renderer.defaultSize()
+            printer.setPageSizeMM(QSizeF(
+                sz.width()  * 0.2646,
+                sz.height() * 0.2646
+            ))
+            painter = QPainter(printer)
+            renderer.render(painter)
+            painter.end()
+            self._info(tr(f"PDF → {os.path.basename(path)}"))
+        except Exception as e:
+            self._error(tr(f"PDF export failed: {e}"))
+
+       
+    def _rasterize_qt(self, svg_bytes: bytes, dpi: int) -> QImage: 
+        """Rasterize SVG to QImage using QSvgRenderer."""
+        renderer = QSvgRenderer()
+        renderer.load(QByteArray(svg_bytes)) 
+        if not renderer.isValid():
+            return None
+        scale = dpi / 96.0
+        sz    = renderer.defaultSize()
+        w     = int(sz.width()  * scale)
+        h     = int(sz.height() * scale)
+        image = QImage(w, h, QImage.Format_ARGB32)
+        image.fill(Qt.white)
+        image.setDotsPerMeterX(int(dpi / 0.0254))
+        image.setDotsPerMeterY(int(dpi / 0.0254))
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.Antialiasing,             True)
+        painter.setRenderHint(QPainter.TextAntialiasing,         True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform,    True)
+        renderer.render(painter)
+        painter.end()
+        return image
+
     @staticmethod
-    def _pad_base64(raw: str) -> str:
-        """Add missing base64 padding if needed."""
-        remainder = len(raw) % 4
-        if remainder:
-            raw += "=" * (4 - remainder)
-        return raw
+    def _extract_svg_bytes(data_url: str) -> bytes:
+        """Extract raw SVG bytes from a Plotly SVG dataURL."""
+        if ',' not in data_url:
+            raise ValueError(tr("Invalid dataURL."))
+        header, payload = data_url.split(',', 1)
+        if 'base64' in header:
+            rem = len(payload) % 4
+            if rem:
+                payload += '=' * (4 - rem)
+            return base64.b64decode(payload)
+        return unquote(payload).encode('utf-8')
+    
+    
+  
 
     # ------------------------------------------------------------------
     # Internal — QGIS message bar

@@ -34,7 +34,19 @@ from qgis.core import QgsMapLayerProxyModel, QgsWkbTypes  # type: ignore
 from ...base.base_panel import BasePanel
 from ...core.exporter import RockMorphExporter
 from .engine import HypsometryEngine
-from .grouper import group_results, move_to_ungrouped
+from .grouper import group_results, move_to_ungrouped, _group_stats
+
+import re
+
+def _natural_sort_key(s: str):
+    """
+    Sort key for natural ordering.
+    '2' < '10' < '11' instead of '10' < '11' < '2'.
+    """
+    return [
+        int(part) if part.isdigit() else part.lower()
+        for part in re.split(r'(\d+)', s)
+    ]
 
 
 def tr(message):
@@ -143,7 +155,7 @@ class HypsometryPanel(BasePanel):
         input_layout.addRow(tr("Curve points:"), self.n_points_spin)
 
         self.ref_lines_check = QCheckBox(tr("Show HI reference lines"))
-        self.ref_lines_check.setChecked(True)
+        self.ref_lines_check.setChecked(False)
         self.ref_lines_check.setToolTip(tr(
             "Show horizontal reference lines at HI = 0.4, 0.5, 0.6\n"
             "(old / mature / young relief thresholds)"
@@ -169,7 +181,7 @@ class HypsometryPanel(BasePanel):
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)   # indeterminate
-        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setFixedHeight(10)
         self.progress_bar.setVisible(False)
         root.addWidget(self.progress_bar)
 
@@ -217,7 +229,7 @@ class HypsometryPanel(BasePanel):
         ])
         self.basin_tree.setFixedHeight(160)
         self.basin_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.basin_tree.setSortingEnabled(True)
+        # self.basin_tree.setSortingEnabled(True)
         self.basin_tree.itemSelectionChanged.connect(self._on_selection_changed)
         self.basin_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.basin_tree.customContextMenuRequested.connect(self._on_tree_context_menu)
@@ -256,7 +268,7 @@ class HypsometryPanel(BasePanel):
         # ── Export ────────────────────────────────────────────
         export_group  = QGroupBox(tr("Export"))
         export_layout = QHBoxLayout(export_group)
-        for fmt in ["PNG", "JPG", "SVG", "CSV"]:
+        for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
             btn = QPushButton(fmt)
             btn.setFixedHeight(28)
             btn.clicked.connect(lambda checked, f=fmt: self._on_export(f))
@@ -368,6 +380,12 @@ class HypsometryPanel(BasePanel):
 
         strategy_map = {0: "none", 1: "hi", 2: "area", 3: "relief"}
         strategy = strategy_map.get(self.strategy_combo.currentIndex(), "none")
+        
+        # Filter results by label
+        self._results = sorted(
+            self._results,
+            key=lambda r: _natural_sort_key(r["label"])
+        )
 
         self._groups = group_results(
             self._results,
@@ -414,14 +432,17 @@ class HypsometryPanel(BasePanel):
                 for result in group["members"]:
                     self._add_tree_item(group_item, result)
 
-        self.basin_tree.resizeColumnToContents(0)
+        self.basin_tree.setColumnWidth(0, 200)  # widest column, let it take remaining space
+        self.basin_tree.resizeColumnToContents(1)  # HI
+        self.basin_tree.resizeColumnToContents(2)  # Area
+        self.basin_tree.resizeColumnToContents(3)  # Relief
 
     def _add_tree_item(self, parent, result: dict):
         item = QTreeWidgetItem(parent)
         item.setText(0, result["label"])
         item.setText(1, f"{result['hi']:.3f}")
-        item.setText(2, f"{result['area_km2']:.1f}")
-        item.setText(3, f"{result['relief']:.0f}")
+        item.setText(2, f"{result['area_km2']:.3f}")
+        item.setText(3, f"{result['relief']:.3f}")
         item.setData(0, Qt.UserRole, {"type": "basin", "fid": result["fid"]})
         return item
 
@@ -531,7 +552,7 @@ class HypsometryPanel(BasePanel):
 
     def _send_curves_to_plot(self, curves: list):
         """Send an ad-hoc list of curves (from manual selection)."""
-        from .grouper import _group_stats  # type: ignore
+       
         payload = {
             "label":                tr("Selection"),
             "members":              curves,
@@ -566,26 +587,37 @@ class HypsometryPanel(BasePanel):
                 parent=self
             )
             return
+        
+        if fmt_lower == "json":
+            if self._last_data is None:
+                self.show_error(tr("No data — run Compute first."))
+                return
+            self._exporter.export_json(
+                self._last_data,
+                parent=self
+            )
+            return
 
-        ok, path, width, height = self._exporter.prepare_image_export(
+        ok, path, dpi = self._exporter.prepare_image_export(
             fmt_lower, parent=self
         )
         if not ok:
             return
 
         self._pending_export_path = path
+        self._pending_export_dpi  = dpi
 
-        if fmt_lower == "svg":
-            self.webview.page().runJavaScript("exportSvg()")
-        else:
-            plotly_fmt = "jpeg" if fmt_lower == "jpg" else fmt_lower
-            self.webview.page().runJavaScript(
-                f"exportImage('{plotly_fmt}', {width}, {height})"
-            )
+        # last thing before export: ask JS to export the current plot as SVG data URL, then save it
+        div_id = 'plot-main'  # div ID for plotly
+        self.webview.page().runJavaScript(f"exportViaSvg('{div_id}')")
+
+
+
 
     def _csv_headers(self) -> list:
         return ["label", "fid", "hi", "area_km2",
                 "min_elev", "max_elev", "relief", "n_pixels"]
+
 
     def _build_csv_rows(self) -> list:
         return [

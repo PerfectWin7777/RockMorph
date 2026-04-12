@@ -152,8 +152,7 @@
          *   clearPlot()           — reset to empty state
          *
          * Exports via:
-         *   exportImage(format, width, height)
-         *   exportSvg()
+         * exportViaSvg(divId)    — export the current plot as SVG data URL then python backend saves it
          */
 
         // Plotly color palette — one per curve in a group
@@ -197,6 +196,7 @@
             var traces = [];
             var members = group.members || [];
             var showRef = group.show_reference_lines !== false;
+           
 
             // ── Curve traces ──────────────────────────────────
             members.forEach(function (basin, idx) {
@@ -207,7 +207,7 @@
                     name: basin.label + '  (HI=' + basin.hi.toFixed(3) + ')',
                     type: 'scatter',
                     mode: 'lines',
-                    line: { color: color, width: 1.8 },
+                    line: { color: color, width: 1.0 },
                     hovertemplate:
                         '<b>' + basin.label + '</b><br>' +
                         'Area fraction: %{x:.2f}<br>' +
@@ -218,7 +218,7 @@
             });
 
             // ── Reference horizontal lines ─────────────────────
-            // Implemented as scatter traces — compatible with exportHighDpi
+            // Implemented as scatter traces — 
             if (showRef) {
                 REFERENCE_LINES.forEach(function (ref) {
                     traces.push({
@@ -242,7 +242,7 @@
             var layout = {
                 title: {
                     text: group.label || '',
-                    font: { family: 'serif', size: 14 },
+                    font: { family: 'Times New Roman', size: 14 },
                     y: 0.98
                 },
                 showlegend: true,
@@ -252,14 +252,15 @@
                     y: 1,
                     xanchor: 'left',
                     yanchor: 'top',
-                    font: { size: 10 },
+                    font: { family: 'Times New Roman',  size: 10 },
                     bgcolor: 'rgba(255,255,255,0.9)',
                     bordercolor: '#ddd',
                     borderwidth: 1
                 },
                 xaxis: {
-                    title: { text: 'Cumulative area fraction', standoff: 15 },
+                    title: { text: 'Cumulative area fraction', standoff: 15, family: 'Times New Roman' },
                     range: [0, 1],
+                    constrain: 'domain', 
                     showgrid: true,
                     gridcolor: '#cccccc',
                     showline: true,
@@ -267,7 +268,12 @@
                     ticks: 'outside',
                     ticklen: 4,
                     tickwidth: 1,
-                    automargin: true,
+                    tickfont: { family: 'Times New Roman', size: 12 },
+                    tickformat: '.2f',
+                    dtick: 0.2,
+                    gridwidth: 0.5,
+                    //automargin: false,
+                    mirror: true,
                     minor: {
                         showgrid: true,
                         gridcolor: '#eeeeee',
@@ -276,8 +282,9 @@
                     }
                 },
                 yaxis: {
-                    title: { text: 'Normalized elevation', standoff: 15 },
+                    title: { text: 'Normalized elevation', standoff: 15 ,family: 'Times New Roman'},
                     range: [0, 1],
+                    constrain: 'domain', 
                     showgrid: true,
                     gridcolor: '#cccccc',
                     showline: true,
@@ -285,7 +292,14 @@
                     ticks: 'outside',
                     ticklen: 4,
                     tickwidth: 1,
-                    automargin: true,
+                    tickfont: { family: 'Times New Roman', size: 12 },
+                    tickformat: '.2f',
+                    dtick: 0.2,
+                    gridwidth: 0.5,
+                    //automargin: true,
+                    mirror: true,
+                    scaleanchor: 'x',      // ← anchor y-axis to x-axis
+                    scaleratio: 1,         // ← ratio 1:1 to ensure square plot
                     minor: {
                         showgrid: true,
                         gridcolor: '#eeeeee',
@@ -330,7 +344,7 @@
             var parts = [];
             if (stats.n) parts.push(stats.n + ' basins');
             if (stats.hi_mean) parts.push('HI mean: ' + stats.hi_mean.toFixed(3));
-            if (stats.area_total_km2) parts.push('Total: ' + stats.area_total_km2.toFixed(0) + ' km²');
+            if (stats.area_total_km2) parts.push('Total: ' + stats.area_total_km2.toFixed(3) + ' km²');
 
             document.getElementById('group-stats').textContent = parts.join('  ·  ');
         }
@@ -351,12 +365,12 @@
 
             document.getElementById('stat-area').textContent =
                 stats.area_total_km2
-                    ? stats.area_total_km2.toFixed(0) + ' km²'
+                    ? stats.area_total_km2.toFixed(3) + ' km²'
                     : '—';
 
             document.getElementById('stat-relief').textContent =
                 stats.relief_mean
-                    ? stats.relief_mean.toFixed(0) + ' m'
+                    ? stats.relief_mean.toFixed(2) + ' m'
                     : '—';
         }
 
@@ -367,31 +381,6 @@
                 });
         }
 
-        // ── Export ────────────────────────────────────────────
-
-        function exportImage(format, width, height) {
-            var fmt = (format === 'jpg') ? 'jpeg' : format;
-            var axisKeys = ['xaxis', 'yaxis'];
-            exportHighDpi(
-                'plot-main', fmt, width, height, axisKeys,
-                function (dataUrl) {
-                    onBridgeReady(function (bridge) {
-                        bridge.receive_export(dataUrl);
-                    });
-                }
-            );
-        }
-
-        function exportSvg() {
-            Plotly.toImage(
-                document.getElementById('plot-main'),
-                { format: 'svg', width: 1200, height: 900 }
-            ).then(function (dataUrl) {
-                onBridgeReady(function (bridge) {
-                    bridge.receive_export(dataUrl);
-                });
-            });
-        }
 
     </script>
 </body>

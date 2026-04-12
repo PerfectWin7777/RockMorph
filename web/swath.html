@@ -221,7 +221,7 @@
             const layout = {
                 title: {
                     text: data.title || '',
-                    font: { family: 'serif', size: 14 },
+                    font: { family: 'Times New Roman', size: 14 },
                     y: 0.98 // Pushes title up for export
                 },
                 showlegend: true,
@@ -235,7 +235,7 @@
 
                 // Main Elevation Axis
                 yaxis: {
-                    title: { text: 'Elevation (m)', standoff: 20 },
+                    title: { text: 'Elevation (m)', standoff: 20 , font: { family: 'Times New Roman', size: 13 } },
                     domain: hasSecondary ? [0.35, 1] : [0, 1],
                     automargin: true,
                     gridcolor: '#cccccc',
@@ -245,6 +245,7 @@
                     linewidth: 1,
                     ticklen: 4,
                     tickwidth: 1,
+                    tickfont: { family: 'Times New Roman', size: 12 },
                     dtick: data.y_dtick,
                     minor: {
                         showgrid: true,
@@ -256,7 +257,7 @@
 
                 // Relief / Secondary Axis
                 yaxis2: {
-                    title: { text: hasRelief ? 'Relief (m)' : 'THI', standoff: 20 },
+                    title: { text: hasRelief ? 'Relief (m)' : 'THI', standoff: 20 , font: { family: 'Times New Roman', size: 13 } },
                     domain: [0, 0.25],
                     anchor: 'x',
                     automargin: true,
@@ -267,12 +268,13 @@
                     linewidth: 1,
                     ticklen: 4,
                     tickwidth: 1,
+                    tickfont: { family: 'Times New Roman', size: 12 },
                     visible: hasSecondary
                 },
                 
                 // Hypsometry Overlay (Right)
                 yaxis3: {
-                    title: { text: 'THI', standoff: 20 },
+                    title: { text: 'THI', standoff: 20, font: { family: 'Times New Roman', size: 13 } },
                     domain: [0, 0.25],
                     overlaying: 'y2',
                     side: 'right',
@@ -285,11 +287,12 @@
                     linewidth: 1,
                     ticklen: 4,
                     tickwidth: 1,
+                    tickfont: { family: 'Times New Roman', size: 12 },
                     ticks: 'outside'
                 },
 
                 xaxis: {
-                    title: { text: 'Distance (m)', standoff: 20 },
+                    title: { text: 'Distance (m)', standoff: 20 , font: { family: 'Times New Roman', size: 13 } },
                     anchor: hasSecondary ? 'y2' : 'y', // Perfectly aligned with the bottom-most plot
                     automargin: true,
                     gridcolor: '#cccccc',
@@ -305,6 +308,7 @@
                     linewidth: 1,
                     ticklen : 4,
                     tickwidth: 1,
+                    tickfont: { family: 'Times New Roman', size: 12 },
                     ticks : 'outside'
                 },
 
@@ -389,24 +393,6 @@
                 shapes: [cursorLine]
             });
         }
-
-        // ── Export ────────────────────────────────────────────────
-        function exportImage(format, width, height) {
-                var fmt = (format === 'jpg') ? 'jpeg' : format;
-                var axisKeys = ['xaxis', 'yaxis', 'yaxis2', 'yaxis3'];
-                exportHighDpi('plot-main', fmt, width, height, axisKeys, function (dataUrl) {
-                    onBridgeReady(function (bridge) { bridge.receive_export(dataUrl); });
-                });
-            }
-
-        function exportSvg() {
-                // SVG is vector — fonts scale with the viewer, no DPI patch needed
-                Plotly.toImage(document.getElementById('plot-main'), {
-                    format: 'svg', width: 1200, height: 800
-                }).then(function (dataUrl) {
-                    onBridgeReady(function (bridge) { bridge.receive_export(dataUrl); });
-                });
-            }
 
     </script>
 

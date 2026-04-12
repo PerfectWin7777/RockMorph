@@ -20,7 +20,7 @@
             flex-direction: column;
         }
 
-        #chart {
+        #plot-main {
             flex: 1;
             width: 100%;
         }
@@ -56,7 +56,7 @@
 
 <body>
 
-    <div id="chart"></div>
+    <div id="plot-main"></div>
 
     <div id="stats">
         <div class="stat-item">
@@ -138,17 +138,19 @@
             var layout = {
                 title: {
                     text: data.title || '',
-                    font: { color: '#282828', size: 13 }
+                    font: { color: '#282828', size: 10, family: 'Times New Roman' },
+                    y: 0.98
                 },
                 paper_bgcolor: '#ffffff',
                 plot_bgcolor:  '#ffffff',
                 polar: {
                     bgcolor: '#ffffff',   // ← blanc pur
                     angularaxis: {
-                        tickcolor: '#aaa',
-                        linecolor: '#ddd',
-                        gridcolor: '#ddd',
-                        tickfont: { color: '#2b2a2a', size: 12, family: 'Arial, sans-serif' },
+                        tickcolor: '#363535',
+                        linecolor: '#797878',
+                        gridcolor: '#797878',
+                        gridwidth: 0.1,
+                        tickfont: { color: '#2b2a2a', size: 9, family: 'Times New Roman' },
                         direction: 'clockwise',
                         rotation: 90,
                         tickvals: [0, 45, 90, 135, 180, 225, 270, 315],
@@ -157,10 +159,13 @@
                     radialaxis: {
                         tickcolor: '#aaa',
                         linecolor: '#ddd',
-                        gridcolor: data.show_grid ? '#ddd' : 'rgba(0,0,0,0)',
-                        tickfont: { color: data.show_labels ? '#2c2b2b' : '#f4efef', size: 9 },
-                        showticklabels: data.show_labels,
                         showgrid: data.show_grid,
+                        gridcolor: data.show_grid ? '#797878' : 'rgba(249, 244, 244, 0)',
+                        tickfont: { color: data.show_labels ? '#313131' : '#f4efef', size: 9 },
+                        showticklabels: data.show_labels,
+                        ticks: data.show_labels ? 'outside' : '',
+                        tickscolor: data.show_labels ? '#313131' : '#f4efef',
+                        tickwidth: 0.5,
                         gridwidth: 0.1
                     }
                 },
@@ -168,7 +173,7 @@
                 showlegend: false
             };
 
-            Plotly.newPlot('chart', [trace], layout, { responsive: true });
+            Plotly.newPlot('plot-main', [trace], layout, { responsive: true });
 
             // Update stats bar
             var s = data.stats;
@@ -180,23 +185,6 @@
             document.getElementById('stat-entropy').textContent = s.entropy.toFixed(3);
             document.getElementById('stat-count').textContent = s.count;
             document.getElementById('stat-total-km').textContent = s.total_km + ' km';
-        }
-
-        // Called by Python via runJavaScript("exportImage('png')")
-       function exportImage(format, width, height) {
-            var fmt      = (format === 'jpg') ? 'jpeg' : format;
-            var axisKeys = ['polar'];
-            exportHighDpi('chart', fmt, width, height, axisKeys, function(dataUrl) {
-                onBridgeReady(function(bridge) { bridge.receive_export(dataUrl); });
-            });
-        }
-
-        function exportSvg() {
-            Plotly.toImage(document.getElementById('chart'), {
-                format: 'svg', width: 1000, height: 1000
-            }).then(function(dataUrl) {
-                onBridgeReady(function(bridge) { bridge.receive_export(dataUrl); });
-            });
         }
 
     </script>

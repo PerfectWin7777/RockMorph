@@ -248,7 +248,14 @@ def _enforce_max(groups: list[dict], max_per_group: int) -> list[dict]:
         chunks = _chunks(members, max_per_group)
         total  = len(chunks)
         for idx, chunk in enumerate(chunks):
-            suffix = f" ({idx + 1}/{total})" if total > 1 else ""
+            n_curves = len(chunk)
+            if total > 1:
+                start = idx * max_per_group + 1
+                end   = start + n_curves - 1
+                suffix = f"  [{start}–{end}]  ·  {n_curves} curves"
+            else:
+                suffix = f"  ·  {n_curves} curves"
+
             result.append({
                 "label":   group["label"] + suffix,
                 "members": chunk,

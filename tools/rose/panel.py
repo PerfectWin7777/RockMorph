@@ -161,7 +161,7 @@ class RosePanel(BasePanel):
         # --- Export buttons ---
         export_group = QGroupBox(tr("Export"))
         export_layout = QHBoxLayout(export_group)
-        for fmt in ["PNG", "JPG", "SVG", "CSV"]:
+        for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
             btn = QPushButton(fmt)
             btn.setFixedHeight(25)
             btn.clicked.connect(lambda checked, f=fmt: self._on_export(f))
@@ -250,23 +250,29 @@ class RosePanel(BasePanel):
                 parent=self
             )
             return
+        
+        if fmt_lower == "json":
+            if self._last_data is None:
+                self.show_error(tr("No data — run Compute first."))
+                return
+            self._exporter.export_json(
+                self._last_data,
+                parent=self
+            )
+            return
 
         # Image formats
-        ok, path, width, height = self._exporter.prepare_image_export(
-            fmt_lower, parent=self
-        )
+        ok, path, dpi = self._exporter.prepare_image_export(fmt_lower, parent=self)
         if not ok:
             return
 
         self._pending_export_path = path
+        self._pending_export_dpi  = dpi
 
-        if fmt_lower == "svg":
-            self.webview.page().runJavaScript("exportSvg()")
-        else:
-            plotly_fmt = "jpeg" if fmt_lower == "jpg" else fmt_lower
-            self.webview.page().runJavaScript(
-                f"exportImage('{plotly_fmt}', {width}, {height})"
-            )
+        div_id = 'plot-main'  # div ID for plotly export
+        self.webview.page().runJavaScript(f"exportViaSvg('{div_id}')")
+
+
 
     def _csv_headers(self) -> list:
         return ["azimuth", "value"]
