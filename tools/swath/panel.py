@@ -155,11 +155,10 @@ class SwathPanel(BasePanel):
 
         root.addWidget(options_group)
 
-       
-        
-
+    
         # --- Curve styles ---
-        self.style_manager = CurveStyleManager([
+        self.style_manager = CurveStyleManager(
+            [
             ("mean",   "Mean"),
             ("min",    "Min"),
             ("max",    "Max"),
@@ -167,7 +166,10 @@ class SwathPanel(BasePanel):
             ("q3",     "Q3"),
             ("relief", "Relief"),
             ("hyps",   "Hypsometry"),
-        ], self._inner)
+        ], 
+        self._apply_styles,
+        self._inner
+        )
 
         # Q1/Q3 hidden by default
         self.style_manager.set_visible("q1", False)
@@ -193,13 +195,8 @@ class SwathPanel(BasePanel):
             )
         )
 
-        # Apply style button — no recompute needed
-        self.apply_style_btn = QPushButton(tr("Apply styles"))
-        self.apply_style_btn.setFixedHeight(28)
-        self.apply_style_btn.clicked.connect(self._apply_styles)
-
         root.addWidget(self.style_manager)
-        root.addWidget(self.apply_style_btn)
+
 
         # --- Compute button ---
         self.compute_btn = QPushButton(tr("Compute"))

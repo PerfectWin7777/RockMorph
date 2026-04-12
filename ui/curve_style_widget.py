@@ -159,7 +159,7 @@ class CurveStyleManager(QGroupBox):
 
     styles_changed = pyqtSignal()
 
-    def __init__(self, curves: list, parent=None):
+    def __init__(self, curves: list, fct: callable, parent=None):
         """
         Parameters
         ----------
@@ -167,6 +167,7 @@ class CurveStyleManager(QGroupBox):
             e.g. [("mean", "Mean"), ("min", "Min"), ...]
         """
         super().__init__(tr("Curve Styles"), parent)
+        self.fct = fct
         self._widgets = {}
         self._build_ui(curves)
 
@@ -231,3 +232,9 @@ class CurveStyleManager(QGroupBox):
             grid.addWidget(w.width_spin,  row, 2, Qt.AlignCenter)
             grid.addWidget(w.dash_combo,  row, 3, Qt.AlignCenter)
             grid.addWidget(w.fill_check,  row, 4, Qt.AlignCenter)
+        
+        self.apply_style_btn = QPushButton(tr("Apply styles"))
+        self.apply_style_btn.setFixedHeight(28)
+        self.apply_style_btn.clicked.connect(self.fct)
+        
+        grid.addWidget(self.apply_style_btn, len(curves) + 2, 0, 1, 5)

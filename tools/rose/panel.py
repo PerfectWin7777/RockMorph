@@ -36,7 +36,7 @@ class RosePanel(BasePanel):
     def __init__(self, iface, parent=None):
         self._engine   = RoseEngine()
         self._exporter = RockMorphExporter(iface) 
-        self._color    = "#4a9eff"
+        self._color    = "#0519f2"
         self._pending_export_path = None
         super().__init__(iface, parent)
     
@@ -98,11 +98,10 @@ class RosePanel(BasePanel):
         # Color picker
         color_row = QHBoxLayout()
         self.color_preview = QPushButton()
-        self.color_preview.setFixedSize(32, 24)
+        # self.color_preview.setFixedSize(32, 24)
         self._update_color_preview()
         self.color_preview.clicked.connect(self._pick_color)
         color_row.addWidget(self.color_preview)
-        color_row.addStretch()
         style_layout.addRow(tr("Petal color:"), color_row)
 
         # Opacity slider

@@ -156,10 +156,25 @@
          */
 
         // Plotly color palette — one per curve in a group
-        var CURVE_COLORS = [
-            '#2d6a9f', '#e74c3c', '#27ae60', '#8e44ad',
-            '#e67e22', '#16a085', '#c0392b', '#2980b9'
-        ];
+        var PALETTES = {
+                'qualitative': [
+                    '#0924d5', '#e74c3c', '#0dee6a', '#8e44ad',
+                    '#e67e22', '#17f4c8', '#f0321d', '#335e7b',
+                    '#f1c40f', '#f16507', '#455764', '#12e7bc'
+                ],
+
+                'scientific': [
+                    '#121ef0', '#0a1c38', '#030d1a', '#5b8ec1',
+                    '#4bb077', '#92c5de', '#75468a', '#5d9e94',
+                    '#fee090', '#fdae61', '#f46d43', '#830e08'
+                ],
+
+                'monochrome': [
+                    '#111111', '#222222', '#333333', '#444444',
+                    '#555555', '#666666', '#777777', '#888888',
+                    '#999999', '#aaaaaa', '#bbbbbb', '#dddddd'
+                ],
+            };
 
         // Reference lines for morphological interpretation
         var REFERENCE_LINES = [
@@ -170,6 +185,26 @@
 
         // ── State ────────────────────────────────────────────
         var _currentGroup = null;
+        
+        function _getStyle(data) {
+                var s = data.style || {};
+
+                var palette;
+                if (s.single_color) {
+                    // Ungrouped mode — one color for all curves (usually 1)
+                    palette = [s.single_color];
+                } else {
+                    palette = PALETTES[s.palette] || PALETTES['qualitative'];
+                }
+
+                return {
+                    palette: palette,
+                    line_width: s.line_width !== undefined ? s.line_width : 1.0,
+                    show_grid_x: s.show_grid_x !== undefined ? s.show_grid_x : true,
+                    show_grid_y: s.show_grid_y !== undefined ? s.show_grid_y : true,
+                };
+            }
+
 
         // ── Main render ──────────────────────────────────────
 
@@ -197,17 +232,17 @@
             var members = group.members || [];
             var showRef = group.show_reference_lines !== false;
            
-
+            var st = _getStyle(group);
             // ── Curve traces ──────────────────────────────────
             members.forEach(function (basin, idx) {
-                var color = CURVE_COLORS[idx % CURVE_COLORS.length];
+                var color = st.palette[idx % st.palette.length];
                 traces.push({
                     x: basin.x,
                     y: basin.y,
                     name: basin.label + '  (HI=' + basin.hi.toFixed(3) + ')',
                     type: 'scatter',
                     mode: 'lines',
-                    line: { color: color, width: 1.0 },
+                    line: { color: color, width: st.line_width },
                     hovertemplate:
                         '<b>' + basin.label + '</b><br>' +
                         'Area fraction: %{x:.2f}<br>' +
@@ -261,7 +296,7 @@
                     title: { text: 'Cumulative area fraction', standoff: 15, family: 'Times New Roman' },
                     range: [0, 1],
                     constrain: 'domain', 
-                    showgrid: true,
+                    showgrid: st.show_grid_x,  
                     gridcolor: '#cccccc',
                     showline: true,
                     linewidth: 1,
@@ -275,7 +310,7 @@
                     //automargin: false,
                     mirror: true,
                     minor: {
-                        showgrid: true,
+                        showgrid: st.show_grid_x,  
                         gridcolor: '#eeeeee',
                         gridwidth: 0.5,
                         dtick: 0.05
@@ -285,7 +320,7 @@
                     title: { text: 'Normalized elevation', standoff: 15 ,family: 'Times New Roman'},
                     range: [0, 1],
                     constrain: 'domain', 
-                    showgrid: true,
+                    showgrid: st.show_grid_y,
                     gridcolor: '#cccccc',
                     showline: true,
                     linewidth: 1,
@@ -301,7 +336,7 @@
                     scaleanchor: 'x',      // ← anchor y-axis to x-axis
                     scaleratio: 1,         // ← ratio 1:1 to ensure square plot
                     minor: {
-                        showgrid: true,
+                        showgrid: st.show_grid_y,
                         gridcolor: '#eeeeee',
                         gridwidth: 0.5,
                         dtick: 0.05

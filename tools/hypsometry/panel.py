@@ -23,7 +23,9 @@ from PyQt5.QtWidgets import (  # type: ignore
     QCheckBox, QGroupBox, QLabel,
     QTreeWidget, QTreeWidgetItem,
     QSizePolicy, QAbstractItemView,
-    QProgressBar, QLineEdit
+    QProgressBar, QLineEdit,QDoubleSpinBox,
+    QStackedWidget,QColorDialog,
+    QMenu
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView  # type: ignore
 from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal  # type: ignore
@@ -110,6 +112,7 @@ class HypsometryPanel(BasePanel):
         self._groups         = []    # grouped list from grouper
         self._active_group   = 0     # index into _groups
         self._worker         = None
+        self._curve_color    = "#042fed"   # default single curve color
         super().__init__(iface, parent)
 
     # ------------------------------------------------------------------
@@ -163,6 +166,60 @@ class HypsometryPanel(BasePanel):
         input_layout.addRow("", self.ref_lines_check)
 
         root.addWidget(input_group)
+        
+         # ── Styles ─────────────────────────
+        style_group  = QGroupBox(tr("Style"))
+        style_layout = QFormLayout(style_group)
+
+        # Line width
+        self.line_width_spin = QDoubleSpinBox()
+        self.line_width_spin.setRange(0.5, 5.0)
+        self.line_width_spin.setSingleStep(0.1)
+        self.line_width_spin.setValue(1.0)
+        self.line_width_spin.setDecimals(1)
+        self.line_width_spin.setToolTip(tr("Curve line width for all basins."))
+        style_layout.addRow(tr("Line width:"), self.line_width_spin)
+
+        # Color picker — visible only in ungrouped mode
+        self.color_btn = QPushButton()
+        # self.color_btn.setFixedSize(32, 24)
+        self.color_btn.setToolTip(tr("Curve color (ungrouped mode only)"))
+        self._update_color_btn()
+        self.color_btn.clicked.connect(self._pick_color)
+
+        # Palette combo — visible only in grouped mode
+        self.palette_combo = QComboBox()
+        self.palette_combo.addItem(tr("Qualitative"), "qualitative")
+        self.palette_combo.addItem(tr("Scientific"),  "scientific")
+        self.palette_combo.addItem(tr("Monochrome"),  "monochrome")
+        self.palette_combo.setToolTip(tr("Color palette for grouped curves."))
+
+        # Stacked widget — switches between color picker and palette
+        self.color_stack = QStackedWidget()
+        self.color_stack.addWidget(self.color_btn)    # page 0 — ungrouped
+        self.color_stack.addWidget(self.palette_combo) # page 1 — grouped
+        self.color_stack.setCurrentIndex(0)
+        style_layout.addRow(tr("Color:"), self.color_stack)
+
+        # Grid checkboxes
+        grid_row = QHBoxLayout()
+        self.grid_x_check = QCheckBox(tr("Grid X"))
+        self.grid_x_check.setChecked(True)
+        self.grid_y_check = QCheckBox(tr("Grid Y"))
+        self.grid_y_check.setChecked(True)
+        grid_row.addWidget(self.grid_x_check)
+        grid_row.addWidget(self.grid_y_check)
+        style_layout.addRow(tr("Grids:"), grid_row)
+
+        # Apply styles button
+        self.apply_style_btn = QPushButton(tr("Apply styles"))
+        self.apply_style_btn.setFixedHeight(28)
+        self.apply_style_btn.setEnabled(False)
+        self.apply_style_btn.clicked.connect(self._apply_styles)
+        style_layout.addRow("", self.apply_style_btn)
+
+        root.addWidget(style_group)
+
 
         # ── Compute button + progress ─────────────────────────
         self.compute_btn = QPushButton(tr("Compute all basins"))
@@ -281,6 +338,29 @@ class HypsometryPanel(BasePanel):
         self.warning_label.setStyleSheet("color: #c0392b; font-size: 10px;")
         self.warning_label.setVisible(False)
         root.addWidget(self.warning_label)
+    
+   
+    def _pick_color(self):
+        """Open color dialog for single-curve mode."""
+        color = QColorDialog.getColor(
+            QColor(self._curve_color), self, tr("Curve color")
+        )
+        if color.isValid():
+            self._curve_color = color.name()
+            self._update_color_btn()
+
+    def _update_color_btn(self):
+        """Refresh color preview button."""
+        self.color_btn.setStyleSheet(
+            f"background-color: {self._curve_color}; border: 1px solid #555;"
+        )
+
+    def _apply_styles(self):
+        """Re-send current group with updated styles — no recompute."""
+        if not self._groups:
+            return
+        group = self._groups[self._active_group]
+        self._send_group_to_plot(group)
 
     # ------------------------------------------------------------------
     # Layer changed — refresh label field combo
@@ -356,6 +436,7 @@ class HypsometryPanel(BasePanel):
         # Apply default grouping
         self._apply_grouping()
         self.apply_group_btn.setEnabled(True)
+        self.apply_style_btn.setEnabled(True)
 
         # Info
         msg = tr(f"{len(self._results)} basins computed.")
@@ -398,8 +479,11 @@ class HypsometryPanel(BasePanel):
         self._refresh_tree()
         self._show_active_group()
 
-    def _on_strategy_changed(self, _index):
-        """Auto-apply when strategy changes if results exist."""
+    def _on_strategy_changed(self, index: int):
+        """Switch color widget and Auto-apply when strategy changes if results exist."""
+        # index 0 = none → color picker
+        # index > 0 = grouped → palette
+        self.color_stack.setCurrentIndex(0 if index == 0 else 1)
         if self._results:
             self._apply_grouping()
 
@@ -478,7 +562,6 @@ class HypsometryPanel(BasePanel):
 
     def _on_tree_context_menu(self, pos):
         """Right-click on a basin → option to move to Ungrouped."""
-        from PyQt5.QtWidgets import QMenu  # type: ignore
         item = self.basin_tree.itemAt(pos)
         if item is None:
             return
@@ -540,11 +623,21 @@ class HypsometryPanel(BasePanel):
 
     def _send_group_to_plot(self, group: dict):
         """Send a full group dict to hypsometry.html."""
+        is_ungrouped = (self.strategy_combo.currentIndex() == 0)
+
         payload = {
             "label":                group["label"],
             "members":              group["members"],
             "stats":                group.get("stats", {}),
             "show_reference_lines": self.ref_lines_check.isChecked(),
+            "style": {                                          
+                "line_width":    self.line_width_spin.value(),
+                "palette":       None if is_ungrouped
+                                else self.palette_combo.currentData(),
+                "single_color":  self._curve_color if is_ungrouped else None,
+                "show_grid_x":   self.grid_x_check.isChecked(),
+                "show_grid_y":   self.grid_y_check.isChecked(),
+                    }
         }
         self._last_data = payload
         js = f"updatePlot({json.dumps(json.dumps(payload))})"
@@ -552,12 +645,19 @@ class HypsometryPanel(BasePanel):
 
     def _send_curves_to_plot(self, curves: list):
         """Send an ad-hoc list of curves (from manual selection)."""
-       
+       # manual selection — use current styles but no grouping stats
         payload = {
             "label":                tr("Selection"),
             "members":              curves,
             "stats":                _group_stats(curves),
             "show_reference_lines": self.ref_lines_check.isChecked(),
+            "style": {                                         
+               "line_width":    self.line_width_spin.value(),
+                "palette":       self.palette_combo.currentData(),
+                "single_color":  None,
+                "show_grid_x":   self.grid_x_check.isChecked(),
+                "show_grid_y":   self.grid_y_check.isChecked(),
+            }
         }
         self._last_data = payload
         js = f"updatePlot({json.dumps(json.dumps(payload))})"
