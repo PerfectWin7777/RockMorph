@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (  # type: ignore
     QSizePolicy, QAbstractItemView,
     QProgressBar, QLineEdit,QDoubleSpinBox,
     QStackedWidget,QColorDialog,
-    QMenu
+    QMenu,QApplication,QFileDialog
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView  # type: ignore
 from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal  # type: ignore
@@ -580,6 +580,10 @@ class HypsometryPanel(BasePanel):
         select_action = menu.addAction(tr("Select on Map"))
         menu.addSeparator()
         # -------------------
+
+        copy_action = menu.addAction(tr("Copy Stats to Clipboard"))
+        export_xy_action = menu.addAction(tr("Export This Curve Data (CSV)..."))
+        menu.addSeparator()
         
         move_action = menu.addAction(tr("Move to Ungrouped"))
         
@@ -590,6 +594,10 @@ class HypsometryPanel(BasePanel):
             self._zoom_to_basin(fid)
         elif chosen == select_action:
             self._select_on_map(fid)
+        elif chosen == copy_action: 
+            self._copy_basin_stats(fid)
+        elif chosen == export_xy_action: 
+            self._export_basin_xy(fid)
         elif chosen == move_action:
             self._groups = move_to_ungrouped(self._groups, fid)
             self._active_group = min(
@@ -631,7 +639,61 @@ class HypsometryPanel(BasePanel):
         
         # Flash the feature so the user sees it immediately
         self.iface.mapCanvas().flashFeatureIds(layer, [fid])
+    
+    def _copy_basin_stats(self, fid: int):
+        """Format basin results as text and copy to system clipboard."""
+       
         
+        result = self._find_result_by_fid(fid)
+        if not result:
+            return
+
+        # Create a professional looking string
+        stats_text = (
+            f"Basin: {result['label']}\n"
+            f"---------------------------\n"
+            f"Hypsometric Integral (HI): {result['hi']:.3f}\n"
+            f"Drainage Area: {result['area_km2']:.3f} km²\n"
+            f"Total Relief: {result['relief']:.2f} m\n"
+            f"Min/Max Elev: {result['min_elev']:.1f} / {result['max_elev']:.1f} m\n"
+            f"Pixel Count: {result['n_pixels']}"
+        )
+
+        # Access system clipboard and set text
+        clipboard = QApplication.clipboard()
+        clipboard.setText(stats_text)
+        
+        # Feedback to user
+        self.show_info(tr(f"Stats for '{result['label']}' copied to clipboard."))
+    
+    def _export_basin_xy(self, fid: int):
+        """Export the raw (x, y) points of a single basin to a CSV file."""
+        result = self._find_result_by_fid(fid)
+        if not result:
+            return
+
+        # 1. Ask user for file path
+        default_name = f"hypsometry_{result['label']}.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self, tr("Export Curve Data"), default_name, "CSV Files (*.csv)"
+        )
+        
+        if not path:
+            return
+
+        # 2. Prepare data rows
+        # We pair each x with its corresponding y
+        rows = []
+        for xi, yi in zip(result["x"], result["y"]):
+            rows.append({
+                "area_fraction": round(xi, 6),
+                "elev_fraction": round(yi, 6)
+            })
+
+        # 3. Use the exporter to save
+        headers = ["area_fraction", "elev_fraction"]
+        self._exporter.save_csv(rows, headers, path)
+
     # ------------------------------------------------------------------
     # Navigation ◄ ►
     # ------------------------------------------------------------------
