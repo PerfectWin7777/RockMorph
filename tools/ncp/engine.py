@@ -22,10 +22,14 @@ from PyQt5.QtCore import QCoreApplication  # type: ignore
 
 from ...base.base_engine import BaseEngine
 from ...core.hydro import MainRiverExtractor, sample_river_profile
-
+from ...core.utils import smooth_data
 
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
+
+
+
+
 
 
 class NCPEngine(BaseEngine):
@@ -67,6 +71,7 @@ class NCPEngine(BaseEngine):
         label_field  = kwargs.get("label_field",  None)
         n_points     = kwargs.get("n_points",      200)
         snap_dist_m  = kwargs.get("snap_dist_m",   2.0)
+        smooth_window = kwargs.get("smooth", 0)
 
         results  = []
         skipped  = []
@@ -106,7 +111,7 @@ class NCPEngine(BaseEngine):
                     ))
                     continue
 
-                metrics = self._compute_metrics(profile, river, label, fid)
+                metrics = self._compute_metrics(profile, river, label, fid, smooth_window)
                 results.append(metrics)
 
             except Exception as e:
@@ -132,6 +137,7 @@ class NCPEngine(BaseEngine):
         river:   dict,
         label:   str,
         fid:     int,
+        smooth_window: int
     ) -> dict:
         """
         Normalize profile and compute MaxC, dL, Concavity %.
@@ -141,7 +147,7 @@ class NCPEngine(BaseEngine):
         x_norm = (distance - d_min) / (d_max - d_min)   → [0, 1]
         y_norm = (elev     - e_min) / (e_max - e_min)   → [0, 1]
 
-        Equilibrium diagonal : y = x  (straight line from origin to (1,1))
+        Equilibrium diagonal : y = 1 - x  (straight line from origin to (1,1))
 
         Metrics
         -------
@@ -153,6 +159,10 @@ class NCPEngine(BaseEngine):
         """
         dist = profile["distances_m"]
         elev = profile["elevations"]
+        
+        # Before normalization, apply smoothing if requested
+        if smooth_window > 2:
+            elev = smooth_data(elev, smooth_window)
 
         d_min, d_max = dist[0],  dist[-1]
         e_min, e_max = elev.min(), elev.max()

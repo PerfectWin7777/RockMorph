@@ -36,7 +36,7 @@ from PyQt5.QtWidgets import (  # type: ignore
     QSizePolicy, QAbstractItemView,
     QProgressBar, QButtonGroup, QRadioButton,
     QMenu, QApplication, QFileDialog, QWidget,
-    QCheckBox
+    QCheckBox, QColorDialog, QSlider,QGridLayout
 )
 from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal  # type: ignore
 from PyQt5.QtGui import QColor  # type: ignore
@@ -97,6 +97,140 @@ class _ComputeWorker(QThread):
             import traceback
             traceback.print_exc()
             self.error.emit(str(e))
+
+
+
+# ---------------------------------------------------------------------------
+# NCP Style Widget
+# ---------------------------------------------------------------------------
+
+class NCPStyleWidget(QGroupBox):
+    """
+    Control group for NCP visualization styles.
+    Emits styleChanged when any parameter is modified.
+    """
+    styleChanged = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(tr("Visualization Style"), parent)
+      
+        # Default Values
+        self._colors = {
+            "diagonal": "#f0220b",
+            "curve":    "#0631ef",
+            "concave":  "#f1c40f", # Yellow
+            "convex":   "#e67e22", # Orange
+            "basal":    "#a924b3"  # Purple
+        }
+        self._build_ui()
+
+    def _build_ui(self):
+        grid = QGridLayout(self)
+        grid.setSpacing(10)
+        grid.setContentsMargins(10, 15, 10, 10)
+
+        # --- 1. Equilibrium Line ---
+        self.diag_show = QCheckBox(tr("Show Diagonal"))
+        self.diag_show.setChecked(True)
+        self.diag_show.stateChanged.connect(self.styleChanged)
+        
+        self.diag_color_btn = self._create_color_btn("diagonal")
+        self.diag_width = QDoubleSpinBox()
+        self.diag_width.setRange(0.5, 5.0)
+        self.diag_width.setValue(1.0)
+        self.diag_width.setSingleStep(0.1)
+        self.diag_width.valueChanged.connect(self.styleChanged)
+
+        grid.addWidget(self.diag_show, 0, 0, 1, 1)
+        grid.addWidget(QLabel(tr("Color:")), 0, 1)
+        grid.addWidget(self.diag_color_btn, 0, 2)
+        grid.addWidget(QLabel(tr("Width:")), 0, 3)
+        grid.addWidget(self.diag_width, 0, 4, 1, 2)
+
+        # --- 2. NCP Curve ---
+        self.curve_color_btn = self._create_color_btn("curve")
+        self.curve_width = QDoubleSpinBox()
+        self.curve_width.setRange(0.5, 5.0)
+        self.curve_width.setValue(1.0)
+        self.curve_width.setSingleStep(0.1)
+        self.curve_width.valueChanged.connect(self.styleChanged)
+
+        grid.addWidget(QLabel(tr("Main Curve:")), 1, 0, 1, 1)
+        grid.addWidget(QLabel(tr("Color:")), 1, 1)
+        grid.addWidget(self.curve_color_btn, 1, 2)
+        grid.addWidget(QLabel(tr("Width:")), 1, 3)
+        grid.addWidget(self.curve_width, 1, 4, 1, 2)
+
+        # --- 3. Deviation Fill ---
+        self.fill_dev_show = QCheckBox(tr("Enable Deviation Fill"))
+        self.fill_dev_show.setChecked(True)
+        self.fill_dev_show.stateChanged.connect(self.styleChanged)
+
+        self.color_concave = self._create_color_btn("concave")
+        self.color_convex  = self._create_color_btn("convex")
+
+        grid.addWidget(self.fill_dev_show, 2, 0, 1, 1)
+        grid.addWidget(QLabel(tr("Concave:")), 2, 1)
+        grid.addWidget(self.color_concave, 2, 2)
+        grid.addWidget(QLabel(tr("Convex:")), 2, 3)
+        grid.addWidget(self.color_convex, 2, 4)
+
+        # --- 4. Basal Fill ---
+        self.fill_basal_show = QCheckBox(tr("Enable Basal Fill"))
+        self.fill_basal_show.setChecked(False)
+        self.fill_basal_show.stateChanged.connect(self.styleChanged)
+        self.color_basal = self._create_color_btn("basal")
+
+        grid.addWidget(self.fill_basal_show, 3, 0, 1, 1)
+        grid.addWidget(QLabel(tr("Color:")), 3, 1)
+        grid.addWidget(self.color_basal, 3, 2)
+
+        # --- 5. Annotations (Moved here) ---
+        grid.addWidget(QLabel(f"<b>{tr('Labels & Annotations')}</b>"), 4, 0, 1, 5)
+
+        self.show_arrows_check = QCheckBox(tr("Show dL / MaxC arrows"))
+        self.show_arrows_check.setChecked(True)
+        self.show_arrows_check.stateChanged.connect(self.styleChanged)
+
+        self.show_info_box_check = QCheckBox(tr("Show top-right info box"))
+        self.show_info_box_check.setChecked(True)
+        self.show_info_box_check.stateChanged.connect(self.styleChanged)
+
+        grid.addWidget(self.show_arrows_check, 5, 0, 1, 3)
+        grid.addWidget(self.show_info_box_check, 5, 3, 1, 3)
+
+
+
+    def _create_color_btn(self, key):
+        btn = QPushButton()
+        # btn.setFixedSize(24, 18)
+        btn.setStyleSheet(f"background-color: {self._colors[key]}; border: 1px solid #999;")
+        btn.clicked.connect(lambda: self._pick_color(key, btn))
+        return btn
+
+    def _pick_color(self, key, btn):
+        color = QColorDialog.getColor(QColor(self._colors[key]), self)
+        if color.isValid():
+            self._colors[key] = color.name()
+            btn.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #000;")
+            self.styleChanged.emit()
+
+    def get_style_dict(self):
+        return {
+            "diag_show":     self.diag_show.isChecked(),
+            "diag_color":    self._colors["diagonal"],
+            "diag_width":    self.diag_width.value(),
+            "curve_color":   self._colors["curve"],
+            "curve_width":   self.curve_width.value(),
+            "fill_dev":      self.fill_dev_show.isChecked(),
+            "color_concave": self._colors["concave"],
+            "color_convex":  self._colors["convex"],
+            "fill_basal":    self.fill_basal_show.isChecked(),
+            "color_basal":   self._colors["basal"],
+            "show_arrows":   self.show_arrows_check.isChecked(),
+            "show_info_box": self.show_info_box_check.isChecked()
+        }
+
 
 
 # ---------------------------------------------------------------------------
@@ -176,22 +310,22 @@ class NCPPanel(BasePanel):
         ))
         param_layout.addRow(tr("Snap tolerance:"), self.snap_spin)
 
-        self.show_arrows_check = QCheckBox(tr("Show MaxC / dL annotations"))
-        self.show_arrows_check.setChecked(True)
-        self.show_arrows_check.stateChanged.connect(
-            lambda: self._show_active() if self._results else None
-        )
+        # Smoothing Parameter
+        self.smooth_spin = QSpinBox()
+        self.smooth_spin.setRange(0, 30)
+        self.smooth_spin.setValue(5) # 0 = No smoothing
+        self.smooth_spin.setSuffix(" pts")
+        self.smooth_spin.setToolTip(tr("Smooth the elevation profile using a moving window."))
 
-        self.show_info_box_check = QCheckBox(tr("Show top-right info box"))
-        self.show_info_box_check.setChecked(True)
-        self.show_info_box_check.stateChanged.connect(
-            lambda: self._show_active() if self._results else None
-        )
+        param_layout.addRow(tr("Smoothing:"), self.smooth_spin)
 
-        param_layout.addRow("", self.show_arrows_check)
-        param_layout.addRow("", self.show_info_box_check)
 
         root.addWidget(param_group)
+        
+        # ── Style widget ──────────────────────────────
+        self.style_widget = NCPStyleWidget()
+        self.style_widget.styleChanged.connect(self._show_active)
+        root.addWidget(self.style_widget)
 
         # ── Compute button + progress ──────────────────────────────
         self.compute_btn = QPushButton(tr("Compute all basins"))
@@ -408,6 +542,7 @@ class NCPPanel(BasePanel):
             "label_field":  self.label_combo.currentData(),
             "n_points":     self.n_points_spin.value(),
             "snap_dist_m":  self.snap_spin.value(),
+            "smooth":       self.smooth_spin.value() 
         }
 
         self.compute_btn.setEnabled(False)
@@ -654,6 +789,8 @@ class NCPPanel(BasePanel):
         else:
             # Binary plot — always all results
             display_results = self._results
+        
+        st_dict = self.style_widget.get_style_dict()
 
         payload = {
             "view_mode":      self._view_mode,
@@ -662,8 +799,9 @@ class NCPPanel(BasePanel):
             "highlight_fids": highlight_fids or [],
             "mean_maxC":      round(mean_maxC, 4),
             "mean_dL":        round(mean_dL,   4),
-            "show_arrows":   self.show_arrows_check.isChecked(),
-            "show_info_box": self.show_info_box_check.isChecked(),
+            "style":          self.style_widget.get_style_dict(),
+            "show_arrows":    st_dict["show_arrows"],
+            "show_info_box":  st_dict["show_info_box"],
             "x_axis":         self.x_axis_combo.currentData(),
             "y_axis":         self.y_axis_combo.currentData(),
             "x_axis_label":   self.x_axis_combo.currentText(),
