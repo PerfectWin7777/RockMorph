@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #ffffff;
+            color: #333;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #aaa;
+            font-size: 13px;
+            gap: 8px;
+        }
+
+        #empty-state.hidden {
+            display: none;
+        }
+
+        #plot-main {
+            flex: 1;
+            width: 100%;
+            min-height: 350px;
+        }
+
+        #stats {
+            padding: 6px 12px;
+            background: #f5f5f5;
+            border-top: 1px solid #ddd;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 20px;
+            font-size: 12px;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            min-width: 80px;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            color: #222;
+            font-weight: bold;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="empty-state">
+        <span style="font-size:32px">〰</span>
+        <span>Select layers and click Compute</span>
+    </div>
+
+    <div id="plot-main"></div>
+
+    <div id="stats">
+        <div class="stat-item">
+            <span class="stat-label">BASINS</span>
+            <span class="stat-value" id="stat-n">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">MaxC MEAN</span>
+            <span class="stat-value" id="stat-maxc">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">dL MEAN</span>
+            <span class="stat-value" id="stat-dl">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">CONCAVITY MEAN</span>
+            <span class="stat-value" id="stat-concav">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">VIEW</span>
+            <span class="stat-value" id="stat-view">—</span>
+        </div>
+    </div>
+
+    <script src="js/qwebchannel.js"></script>
+    <script src="js/plotly.min.js"></script>
+    <script src="js/bridge.js"></script>
+
+    <script>
+        /**
+         * ncp.html — Normalized Channel Profile visualization
+         *
+         * Two views, one plot div:
+         *   "profiles" — normalized longitudinal profiles + equilibrium diagonal
+         *   "binary"   — scatter plot with user-chosen X and Y axes
+         *
+         * Receives from Python:
+         *   updatePlot(jsonString)
+         *   clearPlot()
+         *   exportViaSvg(divId)   — defined in bridge.js
+         */
+
+        var PALETTE = [
+            '#0924d5', '#e74c3c', '#0dee6a', '#8e44ad',
+            '#e67e22', '#17f4c8', '#f0321d', '#335e7b',
+            '#f1c40f', '#f16507', '#455764', '#12e7bc'
+        ];
+
+        var _currentData = null;
+
+        // ── Entry point ───────────────────────────────────────────────
+        function updatePlot(jsonData) {
+            var data = JSON.parse(jsonData);
+            _currentData = data;
+
+            document.getElementById('empty-state').classList.add('hidden');
+            document.getElementById('plot-main').style.display = 'block';
+
+            if (data.view_mode === 'profiles') {
+                _renderProfiles(data);
+            } else {
+                _renderBinary(data);
+            }
+
+            _updateStats(data);
+        }
+
+        function clearPlot() {
+            _currentData = null;
+            document.getElementById('empty-state').classList.remove('hidden');
+            document.getElementById('plot-main').style.display = 'none';
+            ['stat-n', 'stat-maxc', 'stat-dl', 'stat-concav', 'stat-view']
+                .forEach(function (id) {
+                    document.getElementById(id).textContent = '—';
+                });
+        }
+
+        // ── Profiles view ─────────────────────────────────────────────
+        function _renderProfiles(data) {
+            var traces = [];
+            // In profile mode, Python sends only one basin in results
+            var results = data.results || [];
+            var highlighted = data.highlight_fids || [];
+
+            // Equilibrium diagonal — from (0,1) to (1,0)
+            traces.push({
+                x: [0, 1], y: [1, 0],
+                name: 'Equilibrium',
+                type: 'scatter', mode: 'lines',
+                line: { color: '#e74c3c', width: 1.5, dash: 'dash' },
+                hoverinfo: 'skip',
+            });
+
+           results.forEach(function (r, idx) {
+                var color = PALETTE[idx % PALETTE.length];
+                var isNeg = r.concavity < 0;
+               // Yellow if below diagonal (positive), orange if above (negative)
+               var fillColor = isNeg
+                   ? 'rgba(230, 126, 34, 0.20)'   // orange — convex/juvenile
+                   : 'rgba(255, 214, 0, 0.25)';   // yellow — concave/mature
+                traces.push({
+                    x: r.x, y: r.y,
+                    name: r.label + '  (MaxC=' + r.maxC.toFixed(3) + ')',
+                    type: 'scatter', mode: 'lines',
+                    line: { color: color, width: 1.5 },
+                    fill: 'tonexty',      // fills area between this curve and previous trace
+                    fillcolor: fillColor,
+                    hovertemplate:
+                        '<b>' + r.label + '</b><br>' +
+                        'Dist norm: %{x:.3f}<br>' +
+                        'Elev norm: %{y:.3f}<br>' +
+                        'MaxC=' + r.maxC.toFixed(4) +
+                        '  dL=' + r.dL.toFixed(4) +
+                        '  Concavity=' + r.concavity.toFixed(2) + '%' +
+                        '<extra></extra>',
+                });
+            });
+
+            var layout = _profileLayout();
+
+            // Add MaxC and dL annotations for the single basin
+             // 2. Add Smart Annotations (only if one basin and toggle is ON)
+            if (results.length === 1) {
+                layout.annotations = _profileAnnotations(
+                    results[0],
+                    data.show_arrows,
+                    data.show_info_box
+                );
+            }
+
+
+            Plotly.react('plot-main', traces, layout, { responsive: true });
+        }
+        
+
+        /**
+     * Generates double-ended arrows and labels for dL and MaxC.
+     * Tony's Algorithm Logic: yC is the point on the curve, yD is on the diagonal.
+     */
+           function _profileAnnotations(r, showArrows, showBox) {
+                if (!r) return [];
+
+                var dL = r.dL;
+                var yC = r.y_at_dL;
+                var yD = r.y_diag_at_dL;
+                var ann = [];
+                
+                // --- GROUP 1: ARROWS & DATA LABELS ---
+               if (showArrows) {
+                    // --- 1. HORIZONTAL dL (Double-ended arrow) ---
+                    // Arrow pointing Right
+                    ann.push({
+                        x: dL, y: yC, ax: 0, ay: yC,
+                        axref: 'x', ayref: 'y', xref: 'x', yref: 'y',
+                        showarrow: true, arrowhead: 1, arrowsize: 1, arrowwidth: 1.0, arrowcolor: '#222'
+                    });
+                    // Arrow pointing Left
+                    ann.push({
+                        x: 0, y: yC, ax: dL, ay: yC,
+                        axref: 'x', ayref: 'y', xref: 'x', yref: 'y',
+                        showarrow: true, arrowhead: 1, arrowsize: 1, arrowwidth: 1.0, arrowcolor: '#222'
+                    });
+                    // Label dL (Placed ABOVE the arrow)
+                    ann.push({
+                        x: dL / 2, y: yC + 0.00, // +0.01 to move it up
+                        xref: 'x', yref: 'y',
+                        text: '<i>dL: ' + dL.toFixed(3) + '</i>',
+                        showarrow: false,
+                        font: { size: 11, color: '#000', family: 'serif' },
+                        xanchor: 'center',
+                        yanchor: 'bottom'
+                    });
+
+                    // --- 2. VERTICAL MaxC (Double-ended arrow) ---
+                    // Arrow pointing Up (to Diagonal)
+                    ann.push({
+                        x: dL, y: yD, ax: dL, ay: yC,
+                        axref: 'x', ayref: 'y', xref: 'x', yref: 'y',
+                        showarrow: true, arrowhead: 1, arrowsize: 1, arrowwidth: 1.0, arrowcolor: '#222'
+                    });
+                    // Arrow pointing Down (to Curve)
+                    ann.push({
+                        x: dL, y: yC, ax: dL, ay: yD,
+                        axref: 'x', ayref: 'y', xref: 'x', yref: 'y',
+                        showarrow: true, arrowhead: 1, arrowsize: 1, arrowwidth: 1.0, arrowcolor: '#222'
+                    });
+                    // Label MaxC (Placed to the right of the vertical line)
+                    ann.push({
+                        x: dL + 0.02, y: (yC + yD) / 2,
+                        xref: 'x', yref: 'y',
+                        text: '<i>MaxC: ' + Math.abs(r.maxC).toFixed(3) + '</i>',
+                        showarrow: false,
+                        font: { size: 11, color: '#000', family: 'serif' },
+                        xanchor: 'left'
+                    });
+
+                }
+                
+                // --- GROUP 2: TOP-RIGHT INFO BOX ---
+               if (showBox) {
+                    // --- 3. TOP-RIGHT INFO BOX (The "Pro" signature) ---
+                    ann.push({
+                        x: 0.91, y: 1.00, // Slightly above the top edge
+                        xref: 'paper', yref: 'paper',
+                        xanchor: 'right', yanchor: 'top',
+                        text: '<b>' + r.label + '</b><br>' +
+                            'Concavity: ' + r.concavity.toFixed(2) + '%<br>' +
+                            'MaxC: ' + Math.abs(r.maxC).toFixed(3) + '<br>' +
+                            'dL: ' + r.dL.toFixed(3),
+                        showarrow: false,
+                        font: { family: 'serif', size: 12 },
+                        align: 'right',
+                        bgcolor: 'rgba(255,255,255,0.9)',
+                        // bordercolor: '#999', borderwidth: 1
+                    });
+               }
+
+                return ann;
+            }
+
+
+        function _profileLayout() {
+                var axis = {
+                    range: [0, 1],
+                    constrain: 'domain', 
+                    showgrid: true, gridcolor: '#cccccc', gridwidth: 0.5,
+                    showline: true, linewidth: 1, mirror: true,
+                    ticks: 'outside', ticklen: 4,
+                    tickfont: { family: 'Times New Roman', size: 12 },
+                    tickformat: '.2f', dtick: 0.2,
+                    minor: {
+                        showgrid: true, gridcolor: '#eeeeee',
+                        gridwidth: 0.3, dtick: 0.05
+                    },
+                };
+                return {
+                    showlegend: true,
+                    legend: {
+                        orientation: 'v', x: 1.01, y: 1,
+                        xanchor: 'left', yanchor: 'top',
+                        font: { family: 'Times New Roman', size: 10 },
+                        bgcolor: 'rgba(255,255,255,0.9)',
+                        bordercolor: '#ddd', borderwidth: 1,
+                    },
+                    xaxis: Object.assign({}, axis, {
+                        title: {
+                            text: 'Normalized distance from source',
+                            font: { family: 'Times New Roman' }, standoff: 12,
+                        },
+                       
+                    }),
+                    yaxis: Object.assign({}, axis, {
+                        scaleanchor: 'x',      // ← anchor y-axis to x-axis
+                        scaleratio: 1,         // ← ratio 1:1 to ensure square plot
+                        title: {
+                            text: 'Normalized elevation',
+                            font: { family: 'Times New Roman' }, standoff: 12,
+                        },
+                    }),
+                    margin: { t: 30, b: 55, l: 70, r: 200 },
+                    hovermode: 'closest',
+                    template: 'plotly_white',
+                };
+            }
+
+        // ── Binary plot view ──────────────────────────────────────────
+        function _renderBinary(data) {
+            var results = data.results || [];
+            var hlFids = data.highlight_fids || [];
+            var xKey = data.x_axis || 'maxC';
+            var yKey = data.y_axis || 'dL';
+            var xLabel = data.x_axis_label || xKey;
+            var yLabel = data.y_axis_label || yKey;
+
+            // Compute means for reference lines
+            var xVals = results.map(function (r) { return r[xKey] || 0; });
+            var yVals = results.map(function (r) { return r[yKey] || 0; });
+            var xMean = xVals.reduce(function (a, b) { return a + b; }, 0) / xVals.length;
+            var yMean = yVals.reduce(function (a, b) { return a + b; }, 0) / yVals.length;
+            var xMin = Math.min.apply(null, xVals);
+            var xMax = Math.max.apply(null, xVals);
+            var yMin = Math.min.apply(null, yVals);
+            var yMax = Math.max.apply(null, yVals);
+            var xPad = (xMax - xMin) * 0.12 || 0.05;
+            var yPad = (yMax - yMin) * 0.12 || 0.05;
+
+            var traces = [];
+
+            // Main scatter — one point per basin
+            var isHlMode = hlFids.length > 0;
+            results.forEach(function (r, idx) {
+                var isHl = !isHlMode || hlFids.indexOf(r.fid) !== -1;
+                var color = PALETTE[idx % PALETTE.length];
+                traces.push({
+                    x: [r[xKey] || 0],
+                    y: [r[yKey] || 0],
+                    name: r.label,
+                    type: 'scatter', mode: 'markers+text',
+                    marker: {
+                        color: color,
+                        size: isHl ? 10 : 7,
+                        opacity: isHl ? 1.0 : 0.3,
+                        line: { color: '#fff', width: 1 }
+                    },
+                    text: [r.label],
+                    textposition: 'top center',
+                    textfont: { size: 9 },
+                    hovertemplate:
+                        '<b>' + r.label + '</b><br>' +
+                        xLabel + ': %{x:.4f}<br>' +
+                        yLabel + ': %{y:.4f}<br>' +
+                        'MaxC=' + r.maxC.toFixed(4) +
+                        '  dL=' + r.dL.toFixed(4) +
+                        '  Concavity=' + r.concavity.toFixed(2) + '%' +
+                        '<extra></extra>',
+                    showlegend: false,
+                });
+            });
+
+            // Mean vertical reference line (X axis mean)
+            traces.push({
+                x: [xMean, xMean],
+                y: [yMin - yPad, yMax + yPad],
+                name: xLabel + ' mean: ' + xMean.toFixed(3),
+                type: 'scatter', mode: 'lines',
+                line: { color: '#9b59b6', width: 1, dash: 'dash' },
+                hoverinfo: 'skip',
+            });
+
+            // Mean horizontal reference line (Y axis mean)
+            traces.push({
+                x: [xMin - xPad, xMax + xPad],
+                y: [yMean, yMean],
+                name: yLabel + ' mean: ' + yMean.toFixed(3),
+                type: 'scatter', mode: 'lines',
+                line: { color: '#16a085', width: 1, dash: 'dash' },
+                hoverinfo: 'skip',
+            });
+
+            var layout = {
+                showlegend: true,
+                legend: {
+                    orientation: 'v', x: 1.01, y: 1,
+                    xanchor: 'left', yanchor: 'top',
+                    font: { family: 'Times New Roman', size: 10 },
+                    bgcolor: 'rgba(255,255,255,0.9)',
+                    bordercolor: '#ddd', borderwidth: 1,
+                },
+                xaxis: {
+                    title: {
+                        text: xLabel,
+                        font: { family: 'Times New Roman' }, standoff: 12
+                    },
+                    range: [xMin - xPad, xMax + xPad],
+                    showgrid: true, gridcolor: '#cccccc', gridwidth: 0.5,
+                    showline: true, linewidth: 1, mirror: true,
+                    ticks: 'outside', ticklen: 4,
+                    tickfont: { family: 'Times New Roman', size: 12 },
+                    minor: { showgrid: true, gridcolor: '#eeeeee', gridwidth: 0.5 },
+                },
+                yaxis: {
+                    title: {
+                        text: yLabel,
+                        font: { family: 'Times New Roman' }, standoff: 12
+                    },
+                    range: [yMin - yPad, yMax + yPad],
+                    showgrid: true, gridcolor: '#cccccc', gridwidth: 0.5,
+                    showline: true, linewidth: 1, mirror: true,
+                    ticks: 'outside', ticklen: 4,
+                    tickfont: { family: 'Times New Roman', size: 12 },
+                    minor: { showgrid: true, gridcolor: '#eeeeee', gridwidth: 0.5 },
+                },
+                margin: { t: 30, b: 55, l: 70, r: 160 },
+                hovermode: 'closest',
+                template: 'plotly_white',
+                annotations: [
+                    {
+                        x: xMin - xPad * 0.5,
+                        y: yMax + yPad * 0.8,
+                        text: 'Juvenile streams',
+                        showarrow: false,
+                        font: { size: 10, color: '#e67e22' },
+                        xanchor: 'left',
+                    },
+                    {
+                        x: xMax + xPad * 0.3,
+                        y: yMin - yPad * 0.6,
+                        text: 'Near equilibrium',
+                        showarrow: false,
+                        font: { size: 10, color: '#27ae60' },
+                        xanchor: 'right',
+                    },
+                ],
+            };
+
+            Plotly.react('plot-main', traces, layout, { responsive: true });
+        }
+
+        // ── Stats bar ─────────────────────────────────────────────────
+        function _updateStats(data) {
+            var results = data.results || [];
+            var n = results.length;
+            if (!n) return;
+
+            var maxcs = results.map(function (r) { return r.maxC; });
+            var dls = results.map(function (r) { return r.dL; });
+            var cons = results.map(function (r) { return r.concavity; });
+
+            var avg = function (arr) {
+                return (arr.reduce(function (a, b) { return a + b; }, 0) / arr.length).toFixed(4);
+            };
+
+            document.getElementById('stat-n').textContent = n;
+            document.getElementById('stat-maxc').textContent = avg(maxcs);
+            document.getElementById('stat-dl').textContent = avg(dls);
+            document.getElementById('stat-concav').textContent = avg(cons) + ' %';
+            document.getElementById('stat-view').textContent =
+                data.view_mode === 'profiles' ? 'Profiles' : 'Binary';
+        }
+    </script>
+</body>
+
+</html>

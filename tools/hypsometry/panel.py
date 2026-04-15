@@ -76,11 +76,6 @@ def tr(message):
 #       Switch progress_bar from indeterminate (setRange(0,0))
 #       to determinate (setRange(0, total)).
 
-# TODO(hypsometry/export-group): Export current group to CSV
-#       Add "Export current group" button next to existing CSV export.
-#       Exports only the basins in self._groups[self._active_group].
-#       Uses same _csv_headers() / _build_csv_rows() but filtered.
-
 # ─────────────────────────────────────────────────────────────────
 # TODO — medium priority
 # ─────────────────────────────────────────────────────────────────
