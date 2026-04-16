@@ -250,6 +250,8 @@
            function _profileAnnotations(r, showArrows, showBox) {
                 if (!r) return [];
 
+                if (r.maxC === null || r.dL === null) return [];
+
                 var dL = r.dL;
                 var yC = r.y_at_dL;
                 var yD = r.y_diag_at_dL;
@@ -362,7 +364,7 @@
                     automargin: false,
                     minor: {
                         showgrid: true, gridcolor: '#eeeeee',
-                        gridwidth: 0.3, dtick: 0.05
+                        gridwidth: 0.1, dtick: 0.05
                     },
                 };
                 return {
@@ -430,7 +432,7 @@
                     type: 'scatter', mode: 'markers+text',
                     marker: {
                         color: color,
-                        size: isHl ? 10 : 7,
+                        size: isHl ? 9 : 7,
                         opacity: isHl ? 1.0 : 0.3,
                         line: { color: '#fff', width: 1 }
                     },
@@ -455,7 +457,7 @@
                 y: [yMin - yPad, yMax + yPad],
                 name: xLabel + ' mean: ' + xMean.toFixed(3),
                 type: 'scatter', mode: 'lines',
-                line: { color: '#9b59b6', width: 1, dash: 'dash' },
+                line: { color: '#f10b17', width: 1, dash: 'dash' },
                 hoverinfo: 'skip',
             });
 
@@ -465,7 +467,7 @@
                 y: [yMean, yMean],
                 name: yLabel + ' mean: ' + yMean.toFixed(3),
                 type: 'scatter', mode: 'lines',
-                line: { color: '#16a085', width: 1, dash: 'dash' },
+                line: { color: '#f10b17', width: 1, dash: 'dash' },
                 hoverinfo: 'skip',
             });
 
@@ -488,7 +490,7 @@
                     showline: true, linewidth: 1, mirror: true,
                     ticks: 'outside', ticklen: 4,
                     tickfont: { family: 'Times New Roman', size: 12 },
-                    minor: { showgrid: true, gridcolor: '#eeeeee', gridwidth: 0.5 },
+                    minor: { showgrid: true, gridcolor: '#eeeeee', gridwidth: 0.2 },
                 },
                 yaxis: {
                     title: {
@@ -500,7 +502,7 @@
                     showline: true, linewidth: 1, mirror: true,
                     ticks: 'outside', ticklen: 4,
                     tickfont: { family: 'Times New Roman', size: 12 },
-                    minor: { showgrid: true, gridcolor: '#eeeeee', gridwidth: 0.5 },
+                    minor: { showgrid: true, gridcolor: '#eeeeee', gridwidth: 0.2 },
                 },
                 margin: { t: 30, b: 55, l: 70, r: 160 },
                 hovermode: 'closest',
@@ -534,7 +536,7 @@
             var n = results.length;
             if (!n) return;
 
-            var maxcs = results.map(function (r) { return r.maxC; });
+            var maxcs = results.map(function (r) { return Math.abs(r.maxC); });
             var dls = results.map(function (r) { return r.dL; });
             var cons = results.map(function (r) { return r.concavity; });
 

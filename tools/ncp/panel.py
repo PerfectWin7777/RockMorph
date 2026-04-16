@@ -435,7 +435,7 @@ class NCPPanel(BasePanel):
             ("dL mean:", self.stat_dl_label),
             ("Concavity mean:", self.stat_concav_label),
         ]:
-            stats_layout.addWidget(QLabel(lbl))
+            stats_layout.addWidget(QLabel(tr(lbl)))
             stats_layout.addWidget(widget)
             stats_layout.addStretch(1)
         results_layout.addLayout(stats_layout)
@@ -626,7 +626,8 @@ class NCPPanel(BasePanel):
         for r in self._results:
             item = QTreeWidgetItem(self.basin_tree)
             item.setText(0, r["label"])
-            item.setText(1, f"{r['maxC']:.4f}")
+            val_maxC = f"{r['maxC']:.4f}" if r['maxC'] is not None else "/"
+            item.setText(1, val_maxC)
             item.setText(2, f"{r['dL']:.4f}")
             item.setText(3, f"{r['concavity']:.2f}")
             item.setText(4, f"{r['length_km']:.2f}")
