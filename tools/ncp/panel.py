@@ -437,6 +437,7 @@ class NCPPanel(BasePanel):
         ]:
             stats_layout.addWidget(QLabel(lbl))
             stats_layout.addWidget(widget)
+            stats_layout.addStretch(1)
         results_layout.addLayout(stats_layout)
 
         root.addWidget(results_group)

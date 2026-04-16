@@ -294,13 +294,15 @@
                    });
 
                    // MaxC Heads (Top & Bottom)
+                   var yTop = Math.max(yC, yD);
+                   var yBottom = Math.min(yC, yD);
                    ann.push({
-                       x: dL, y: yC, xref: 'x', yref: 'y', showarrow: true,
+                       x: dL, y: yTop, xref: 'x', yref: 'y', showarrow: true,
                        arrowhead: 1, arrowsize: 1, arrowwidth: 1, ax: 0, ay: 5, text: ''
                    });
                    ann.push({
-                       x: dL, y: yD, xref: 'x', yref: 'y', showarrow: true,
-                       arrowhead: 1, arrowsize: 1, arrowwidth: 1, ax: 0, ay: -5, text: ''
+                       x: dL, y: yBottom, xref: 'x', yref: 'y', showarrow: true,
+                       arrowhead: 2, arrowsize: 1, arrowwidth: 1, ax: 0, ay: -5, text: ''
                    });
                    // MaxC Label
                    ann.push({
