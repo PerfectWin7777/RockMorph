@@ -183,7 +183,7 @@
                         x: r.x, y: r.y,
                         type: 'scatter', mode: 'none',
                         fill: 'tozeroy',
-                        fillcolor: hexToRgba(st.color_basal, 0.15),
+                        fillcolor: hexToRgba(st.color_basal, 0.35),
                         hoverinfo: 'skip', showlegend: false
                     });
                 }
@@ -214,7 +214,7 @@
                     line: { color: st.curve_color, width: st.curve_width },
                     // Logic: Fill back to the previous trace (The Diagonal)
                     fill: st.fill_dev ? 'tonexty' : 'none',
-                    fillcolor: hexToRgba(devFillColor, 0.25),
+                    fillcolor: hexToRgba(devFillColor, 0.35),
                     hovertemplate:
                         '<b>' + r.label + '</b><br>' +
                         'Dist norm: %{x:.3f}<br>' +
@@ -233,11 +233,9 @@
             // Add MaxC and dL annotations for the single basin
              // 2. Add Smart Annotations (only if one basin and toggle is ON)
             if (results.length === 1) {
-                layout.annotations = _profileAnnotations(
-                    results[0],
-                    data.show_arrows,
-                    data.show_info_box
-                );
+                var elements  = _profileAnnotations(results[0], data.show_arrows, data.show_info_box );
+                layout.shapes = elements.shapes;
+                layout.annotations = elements.annotations;
             }
 
 
@@ -255,83 +253,98 @@
                 var dL = r.dL;
                 var yC = r.y_at_dL;
                 var yD = r.y_diag_at_dL;
+                var shapes = [];
                 var ann = [];
                 
                 // --- GROUP 1: ARROWS & DATA LABELS ---
-               if (showArrows) {
-                    // --- 1. HORIZONTAL dL (Double-ended arrow) ---
-                    // Arrow pointing Right
-                    ann.push({
-                        x: dL, y: yC, ax: 0, ay: yC,
-                        axref: 'x', ayref: 'y', xref: 'x', yref: 'y',
-                        showarrow: true, arrowhead: 1, arrowsize: 1, arrowwidth: 1.0, arrowcolor: '#222'
-                    });
-                    // Arrow pointing Left
-                    ann.push({
-                        x: 0, y: yC, ax: dL, ay: yC,
-                        axref: 'x', ayref: 'y', xref: 'x', yref: 'y',
-                        showarrow: true, arrowhead: 1, arrowsize: 1, arrowwidth: 1.0, arrowcolor: '#222'
-                    });
-                    // Label dL (Placed ABOVE the arrow)
-                    ann.push({
-                        x: dL / 2, y: yC + 0.00, // +0.01 to move it up
-                        xref: 'x', yref: 'y',
-                        text: '<i>dL: ' + dL.toFixed(3) + '</i>',
-                        showarrow: false,
-                        font: { size: 11, color: '#000', family: 'serif' },
-                        xanchor: 'center',
-                        yanchor: 'bottom'
-                    });
+                if (showArrows) {
+                   // --- 1. THE TRUNKS (Shapes) ---
+                   // Horizontal line for dL
+                   shapes.push({
+                       type: 'line', x0: 0, y0: yC, x1: dL, y1: yC,
+                       xref: 'x', yref: 'y',
+                       line: { color: '#222', width: 1.0 }
+                   });
+                   // Vertical line for MaxC
+                   shapes.push({
+                       type: 'line', x0: dL, y0: yC, x1: dL, y1: yD,
+                       xref: 'x', yref: 'y',
+                       line: { color: '#222', width: 1.0 }
+                   });
 
-                    // --- 2. VERTICAL MaxC (Double-ended arrow) ---
-                    // Arrow pointing Up (to Diagonal)
-                    ann.push({
-                        x: dL, y: yD, ax: dL, ay: yC,
-                        axref: 'x', ayref: 'y', xref: 'x', yref: 'y',
-                        showarrow: true, arrowhead: 1, arrowsize: 1, arrowwidth: 1.0, arrowcolor: '#222'
-                    });
-                    // Arrow pointing Down (to Curve)
-                    ann.push({
-                        x: dL, y: yC, ax: dL, ay: yD,
-                        axref: 'x', ayref: 'y', xref: 'x', yref: 'y',
-                        showarrow: true, arrowhead: 1, arrowsize: 1, arrowwidth: 1.0, arrowcolor: '#222'
-                    });
-                    // Label MaxC (Placed to the right of the vertical line)
-                    ann.push({
-                        x: dL + 0.01, y: (yC + yD) / 2,
-                        xref: 'x', yref: 'y',
-                        text: '<i>MaxC: ' + Math.abs(r.maxC).toFixed(3) + '</i>',
-                        showarrow: false,
-                        font: { size: 11, color: '#000', family: 'serif' },
-                        xanchor: 'left'
-                    });
+                   // --- 2. THE HEADS & LABELS (Annotations) ---
+                   // Left Head (dL)
+                   ann.push({
+                       x: 0, y: yC, xref: 'x', yref: 'y', showarrow: true,
+                       arrowhead: 1, arrowsize: 1, arrowwidth: 1, ax: 5, ay: 0, // ax=5 creates a tiny offset for the head
+                       text: ''
+                   });
+                   // Right Head (dL)
+                   ann.push({
+                       x: dL, y: yC, xref: 'x', yref: 'y', showarrow: true,
+                       arrowhead: 1, arrowsize: 1, arrowwidth: 1, ax: -5, ay: 0,
+                       text: ''
+                   });
+                   // dL Label (Still anchored correctly)
+                   ann.push({
+                       x: dL / 2, y: yC + 0.00, xref: 'x', yref: 'y',
+                       text: '<i>dL: ' + dL.toFixed(3) + '</i>',
+                       showarrow: false, font: { size: 11, family: 'serif' },
+                       xanchor: 'center', yanchor: 'bottom'
+                   });
 
-                }
+                   // MaxC Heads (Top & Bottom)
+                   ann.push({
+                       x: dL, y: yC, xref: 'x', yref: 'y', showarrow: true,
+                       arrowhead: 1, arrowsize: 1, arrowwidth: 1, ax: 0, ay: 5, text: ''
+                   });
+                   ann.push({
+                       x: dL, y: yD, xref: 'x', yref: 'y', showarrow: true,
+                       arrowhead: 1, arrowsize: 1, arrowwidth: 1, ax: 0, ay: -5, text: ''
+                   });
+                   // MaxC Label
+                   ann.push({
+                       x: dL + 0.01, y: (yC + yD) / 2, xref: 'x', yref: 'y',
+                       text: '<i>MaxC: ' + Math.abs(r.maxC).toFixed(3) + '</i>',
+                       showarrow: false, font: { size: 11, family: 'serif' },
+                       xanchor: 'left'
+                   });
+               }
                 
                 // --- GROUP 2: TOP-RIGHT INFO BOX ---
                if (showBox) {
                     // --- 3. TOP-RIGHT INFO BOX (The "Pro" signature) ---
                     
-                    ann.push({
-                        x: 0.99, y: 0.99, // Use 0.99 to keep a tiny margin from the edge
-                        xref: 'paper', yref: 'paper', // CRITICAL: Stick to the paper, not the data
-                        xanchor: 'right', yanchor: 'top',
-                        text: '<b>' + r.label + '</b><br>' +
-                            'Concavity: ' + r.concavity.toFixed(2) + '%<br>' +
-                            'MaxC: ' + Math.abs(r.maxC).toFixed(3) + '<br>' +
-                            'dL: ' + r.dL.toFixed(3),
-                        showarrow: false,
-                        font: { family: 'serif', size: 12 },
-                        align: 'right',
-                       // bgcolor: 'rgba(255,255,255,0.9)',
-                        borderpad: 4,
-                        xshift: -10,
-                        yshift: -10,
-                        // bordercolor: '#999', borderwidth: 1
-                    });
-               }
+                    var yBase = 0.98;
+                    var lineSpacing = 0.045; // space beetween lines 
 
-                return ann;
+                    var lines = [
+                        '<b>' + r.label + '</b>',
+                        'Concavity: ' + r.concavity.toFixed(2) + '%',
+                        'MaxC: '      + Math.abs(r.maxC).toFixed(3),
+                        'dL: '         + r.dL.toFixed(3)
+                    ];
+
+                    lines.forEach(function(lineText, i) {
+                        ann.push({
+                            x: 1.0, 
+                            y: yBase - (i * lineSpacing),
+                            xref: 'x', 
+                            yref: 'y',
+                            
+                            xanchor: 'right', 
+                            yanchor: 'top',
+                            text: lineText,
+                            showarrow: false,
+                            font: { family: 'serif', size: 12 },
+                            align: 'right',
+                            xshift: -10,
+                            yshift: -10
+                        });
+                    });
+                }
+
+               return { shapes: shapes, annotations: ann };
             }
 
 
@@ -344,6 +357,7 @@
                     ticks: 'outside', ticklen: 4,
                     tickfont: { family: 'Times New Roman', size: 12 },
                     tickformat: '.2f', dtick: 0.2,
+                    automargin: false,
                     minor: {
                         showgrid: true, gridcolor: '#eeeeee',
                         gridwidth: 0.3, dtick: 0.05

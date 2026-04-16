@@ -58,13 +58,13 @@ function exportViaSvg(divId) {
     }
     Plotly.toImage(gd, {
         format: 'svg',
-        width: gd.offsetWidth || 1200,
+        width:  gd.offsetWidth  || 1200,
         height: gd.offsetHeight || 800
-    }).then(function (dataUrl) {
-        onBridgeReady(function (bridge) {
+    }).then(function(dataUrl) {
+        onBridgeReady(function(bridge) {
             bridge.receive_export(dataUrl);
         });
-    }).catch(function (err) {
+    }).catch(function(err) {
         console.error('[RockMorph] SVG export failed:', err);
     });
 }
