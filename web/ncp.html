@@ -407,7 +407,8 @@
             var yLabel = data.y_axis_label || yKey;
 
             // Compute means for reference lines
-            var xVals = results.map(function (r) { return r[xKey] || 0; });
+            
+            var xVals = results.map(function (r) { return r[xKey]; }).filter(v => v !== null);
             var yVals = results.map(function (r) { return r[yKey] || 0; });
             var xMean = xVals.reduce(function (a, b) { return a + b; }, 0) / xVals.length;
             var yMean = yVals.reduce(function (a, b) { return a + b; }, 0) / yVals.length;
@@ -429,6 +430,7 @@
                     x: [r[xKey] || 0],
                     y: [r[yKey] || 0],
                     name: r.label,
+                    customdata: [r.fid], // for click events
                     type: 'scatter', mode: 'markers+text',
                     marker: {
                         color: color,
@@ -443,8 +445,8 @@
                         '<b>' + r.label + '</b><br>' +
                         xLabel + ': %{x:.4f}<br>' +
                         yLabel + ': %{y:.4f}<br>' +
-                        'MaxC=' + r.maxC.toFixed(4) +
-                        '  dL=' + r.dL.toFixed(4) +
+                        'MaxC=' + (r.maxC !== null ? r.maxC.toFixed(4) : '/') +
+                        '  dL=' + (r.dL !== null ? r.dL.toFixed(4) : '/') +
                         '  Concavity=' + r.concavity.toFixed(2) + '%' +
                         '<extra></extra>',
                     showlegend: false,
@@ -528,6 +530,25 @@
             };
 
             Plotly.react('plot-main', traces, layout, { responsive: true });
+
+            var gd = document.getElementById('plot-main');
+
+            // remove any existing click listeners to prevent duplicates
+            gd.removeAllListeners('plotly_click');
+
+            // Add click event listener to capture clicked point's FID and send it to Python
+            gd.on('plotly_click', function(eventData){
+                var point = eventData.points[0];
+                var clickedFid = point.customdata; // FID is stored in customdata of the trace
+
+                if (clickedFid !== undefined) {
+                    // Send the clicked FID back to Python via the bridge
+                    onBridgeReady(function(bridge) {
+                        bridge.receive_click_id(clickedFid);
+                    });
+                }
+            });
+
         }
 
         // ── Stats bar ─────────────────────────────────────────────────

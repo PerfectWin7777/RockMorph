@@ -39,6 +39,12 @@ class _BaseBridge(QObject):
     @pyqtSlot(str)
     def receive_export(self, data_url: str):
         self._panel._save_export(data_url)
+    
+    @pyqtSlot(int)
+    def receive_click_id(self, fid: int):
+        # Pass clicked feature ID to panel's click handler, if it exists
+        if hasattr(self._panel, "_on_plot_click"):
+            self._panel._on_plot_click(fid)
 
 
 

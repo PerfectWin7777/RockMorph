@@ -626,12 +626,20 @@ class NCPPanel(BasePanel):
         for r in self._results:
             item = QTreeWidgetItem(self.basin_tree)
             item.setText(0, r["label"])
+            
+            # Handle Potential None values for Convex profiles
             val_maxC = f"{r['maxC']:.4f}" if r['maxC'] is not None else "/"
+            val_dL   = f"{r['dL']:.4f}"   if r['dL'] is not None else "/"
+            
             item.setText(1, val_maxC)
-            item.setText(2, f"{r['dL']:.4f}")
+            item.setText(2, val_dL) 
+            
+            # Concavity is always a float (even if negative), so no need for check
             item.setText(3, f"{r['concavity']:.2f}")
             item.setText(4, f"{r['length_km']:.2f}")
+            
             item.setData(0, Qt.UserRole, r["fid"])
+
         self.basin_tree.resizeColumnToContents(0)
         self.basin_tree.resizeColumnToContents(1)
         self.basin_tree.resizeColumnToContents(2)
@@ -752,6 +760,23 @@ class NCPPanel(BasePanel):
             for x, y in zip(result["x"], result["y"])
         ]
         self._exporter.save_csv(rows, ["dist_norm", "elev_norm"], path)
+    
+
+    def _on_plot_click(self, fid: int):
+        """Called when a point is clicked in the Plotly chart."""
+        # 1.Select the corresponding basin in the map
+        self._select_on_map(fid)
+        
+        # 2. Optionnal : also select it in the tree and scroll to it
+        for i in range(self.basin_tree.topLevelItemCount()):
+            item = self.basin_tree.topLevelItem(i)
+            if item.data(0, Qt.UserRole) == fid:
+                self.basin_tree.blockSignals(True) # Prevent recursive signal
+                self.basin_tree.clearSelection()
+                item.setSelected(True)
+                self.basin_tree.scrollToItem(item)
+                self.basin_tree.blockSignals(False)
+                break
 
     # ------------------------------------------------------------------
     # Stats bar
@@ -760,14 +785,25 @@ class NCPPanel(BasePanel):
     def _update_stats(self):
         if not self._results:
             return
-        n     = len(self._results)
-        maxcs = [r["maxC"]      for r in self._results]
-        dls   = [r["dL"]        for r in self._results]
-        cons  = [r["concavity"] for r in self._results]
-        self.stat_n_label.setText(str(n))
-        self.stat_maxc_label.setText(f"{sum(maxcs)/n:.4f}")
-        self.stat_dl_label.setText(f"{sum(dls)/n:.4f}")
-        self.stat_concav_label.setText(f"{sum(cons)/n:.2f} %")
+        
+        # Filter out None values to avoid crashes during mean calculation
+        maxcs = [r["maxC"] for r in self._results if r["maxC"] is not None]
+        dls   = [r["dL"]   for r in self._results if r["dL"] is not None]
+        cons  = [r["concavity"] for r in self._results] # Concavity is never None
+        
+        n_total = len(self._results)
+        n_concave = len(maxcs)
+
+        self.stat_n_label.setText(str(n_total))
+        
+        if n_concave > 0:
+            self.stat_maxc_label.setText(f"{sum(maxcs)/n_concave:.4f}")
+            self.stat_dl_label.setText(f"{sum(dls)/n_concave:.4f}")
+        else:
+            self.stat_maxc_label.setText("/")
+            self.stat_dl_label.setText("/")
+            
+        self.stat_concav_label.setText(f"{sum(cons)/n_total:.2f} %")
 
     # ------------------------------------------------------------------
     # Plot communication
@@ -778,9 +814,13 @@ class NCPPanel(BasePanel):
         if not self._results:
             return
 
-        n         = len(self._results)
-        mean_maxC = sum(r["maxC"] for r in self._results) / n
-        mean_dL   = sum(r["dL"]   for r in self._results) / n
+        # --- FIX: Filter None values for mean calculation ---
+        valid_maxCs = [r["maxC"] for r in self._results if r["maxC"] is not None]
+        valid_dLs   = [r["dL"]   for r in self._results if r["dL"] is not None]
+
+        mean_maxC = sum(valid_maxCs) / len(valid_maxCs) if valid_maxCs else 0.0
+        mean_dL   = sum(valid_dLs)   / len(valid_dLs)   if valid_dLs else 0.0
+        # -----------------------------------------------------
 
         # In profile view — send only the active single basin
         if self._view_mode == "profiles" and single_fid is not None:
@@ -801,7 +841,7 @@ class NCPPanel(BasePanel):
             "highlight_fids": highlight_fids or [],
             "mean_maxC":      round(mean_maxC, 4),
             "mean_dL":        round(mean_dL,   4),
-            "style":          self.style_widget.get_style_dict(),
+            "style":          st_dict,
             "show_arrows":    st_dict["show_arrows"],
             "show_info_box":  st_dict["show_info_box"],
             "x_axis":         self.x_axis_combo.currentData(),
