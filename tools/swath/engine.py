@@ -22,6 +22,21 @@ def tr(message):
     return QCoreApplication.translate("RockMorph", message)
 
 
+"""
+NOTE SWATH LOGIC :
+The Swath Profile transforms a 1D line into a 2D analytical "ribbon".
+1.Extraction: We convert the vector line into a metric coordinate sequence.
+2.Discretization: We divide the line into N equidistant stations.
+3.Perpendicularity: At each station, we compute the local tangent and rotate it by 90° to create a transversal cross-section.
+4.Half-Width: We extend this transversal by half-width to the left and half-width to the right (Total width = 2 * half-width).
+5.Sampling: We extract DEM elevations at M points along this transversal.
+6.Aggregation: For each station, we reduce the M elevation values into statistical metrics (Min, Max, Mean, etc.).
+
+See SwathSampler (core/sampling.py) for the core logic.
+
+"""
+
+
 class SwathEngine(BaseEngine):
     """
     Computes a swath profile from a DEM and a line vector layer.
