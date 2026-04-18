@@ -110,6 +110,12 @@ class SwathPanel(BasePanel):
             "More points = slower but more accurate stats."
         ))
         params_layout.addRow(tr("Transversal pts:"), self.transversal_spin)
+        
+        self.reorient_check = QCheckBox(tr("Force High-to-Low orientation"))
+        self.reorient_check.setToolTip(tr(
+            "Ensure the profile starts at the highest point (useful for river longitudinal profiles)."
+        ))
+        params_layout.addRow("", self.reorient_check)
 
         root.addWidget(params_group)
 
@@ -248,6 +254,7 @@ class SwathPanel(BasePanel):
             "n_stations":     self.stations_spin.value(),
             "width_m":        self.width_spin.value(),
             "n_transversal":  self.transversal_spin.value(),
+            "force_high_to_low": self.reorient_check.isChecked(),
             "compute_q":      self.q_check.isChecked(),
             "compute_relief": self.relief_check.isChecked(),
             "compute_hyps":   self.hyps_check.isChecked(),

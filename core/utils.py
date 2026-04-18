@@ -1,5 +1,9 @@
 # core/utils.py
 
+"""
+rockmorph/core/utils.py
+General purpose geomorphometry utilities.
+"""
 
 import numpy as np  # type: ignore
 
@@ -49,3 +53,45 @@ def smooth_data(y, window_size):
         return np.interp(np.linspace(0, 1, n), np.linspace(0, 1, len(y_smooth)), y_smooth)
         
     return y_smooth
+
+
+
+
+
+def reorient_profile_high_to_low(distances: list, profiles: dict) -> tuple:
+    """
+    Ensures that a profile sequence starts at the highest elevation.
+    Used for longitudinal river profiles or scientific swath analysis.
+    
+    Args:
+        distances: list of floats (x-axis)
+        profiles: dict where values are lists/arrays of elevations (y-axis)
+    
+    Returns:
+        tuple: (new_distances, new_profiles)
+    """
+    # Use 'mean' if available (for Swath), otherwise try 'elevations' (for NCP)
+    ref_key = 'mean' if 'mean' in profiles else 'elevations'
+    
+    # Check if the start elevation is lower than the end elevation
+    # We use valid (non-None) values for the check
+    y_vals = [v for v in profiles[ref_key] if v is not None]
+    
+    if len(y_vals) > 1 and y_vals[0] < y_vals[-1]:
+        # The profile is oriented Down-to-Up, we need to flip it
+        total_dist = distances[-1]
+        
+        # 1. Reverse and recalculate distances from 0
+        new_distances = [round(total_dist - d, 2) for d in reversed(distances)]
+        
+        # 2. Reverse all profile arrays
+        new_profiles = {}
+        for key, values in profiles.items():
+            if values is not None and isinstance(values, list):
+                new_profiles[key] = list(reversed(values))
+            else:
+                new_profiles[key] = values
+        
+        return new_distances, new_profiles
+    
+    return distances, profiles

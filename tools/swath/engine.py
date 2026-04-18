@@ -14,6 +14,7 @@ from PyQt5.QtCore import QCoreApplication # type: ignore
 from ...base.base_engine import BaseEngine
 from ...core.raster import RasterReader
 from ...core.sampling import SwathSampler
+from ...core.utils import reorient_profile_high_to_low
 import math
 
 def tr(message):
@@ -78,14 +79,15 @@ class SwathEngine(BaseEngine):
         2. Run SwathSampler
         3. Return enriched data dict
         """
-        dem_layer      = kwargs["dem_layer"]
-        line_layer     = kwargs["line_layer"]
-        n_stations     = kwargs.get("n_stations",     200)
-        width_m        = kwargs.get("width_m",        1000.0)
-        n_transversal  = kwargs.get("n_transversal",  50)
-        compute_q      = kwargs.get("compute_q",      False)
-        compute_relief = kwargs.get("compute_relief", True)
-        compute_hyps   = kwargs.get("compute_hyps",   True)
+        dem_layer         = kwargs["dem_layer"]
+        line_layer        = kwargs["line_layer"]
+        n_stations        = kwargs.get("n_stations",     200)
+        width_m           = kwargs.get("width_m",        1000.0)
+        n_transversal     = kwargs.get("n_transversal",  50)
+        force_high_to_low = kwargs.get("force_high_to_low", False)
+        compute_q         = kwargs.get("compute_q",      False)
+        compute_relief    = kwargs.get("compute_relief", True)
+        compute_hyps      = kwargs.get("compute_hyps",   True)
 
         # Step 1 — Open DEM
         try:
@@ -107,6 +109,23 @@ class SwathEngine(BaseEngine):
 
         try:
             data = sampler.sample()
+
+            # --- NEW: Reorientation logic ---
+            if force_high_to_low:
+                # We package profiles for the utility
+                profiles_to_flip = {
+                    "mean": data["mean"], "min": data["min"], "max": data["max"],
+                    "q1": data.get("q1"), "q3": data.get("q3"),
+                    "relief": data.get("relief"), "hyps": data.get("hyps")
+                }
+                new_dist, new_profs = reorient_profile_high_to_low(data["distances"], profiles_to_flip)
+                
+                # Update data dict
+                data["distances"] = new_dist
+                data.update(new_profs)
+            # --------------------------------
+
+
             # Auto tick intervals
             total_m   = data["total_length_m"]
             x_dtick   = self._nice_interval(total_m / 8)
