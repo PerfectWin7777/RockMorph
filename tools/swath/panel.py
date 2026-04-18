@@ -110,6 +110,16 @@ class SwathPanel(BasePanel):
             "More points = slower but more accurate stats."
         ))
         params_layout.addRow(tr("Transversal pts:"), self.transversal_spin)
+
+        self.smooth_spin = QSpinBox()
+        self.smooth_spin.setRange(0, 99)
+        self.smooth_spin.setValue(0)  # 0 = no smoothing
+        self.smooth_spin.setSingleStep(2)  # Step of 2 to skip more easily from odd numbers to odd numbers
+        self.smooth_spin.setToolTip(tr(
+            "Window size for Hanning smoothing (must be >= 3). Set to 0 to disable."
+        ))
+        params_layout.addRow(tr("Smoothing window:"), self.smooth_spin)
+
         
         self.reorient_check = QCheckBox(tr("Force High-to-Low orientation"))
         self.reorient_check.setToolTip(tr(
@@ -254,6 +264,7 @@ class SwathPanel(BasePanel):
             "n_stations":     self.stations_spin.value(),
             "width_m":        self.width_spin.value(),
             "n_transversal":  self.transversal_spin.value(),
+            "smooth_window":  self.smooth_spin.value(), 
             "force_high_to_low": self.reorient_check.isChecked(),
             "compute_q":      self.q_check.isChecked(),
             "compute_relief": self.relief_check.isChecked(),

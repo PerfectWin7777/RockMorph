@@ -14,8 +14,9 @@ from PyQt5.QtCore import QCoreApplication # type: ignore
 from ...base.base_engine import BaseEngine
 from ...core.raster import RasterReader
 from ...core.sampling import SwathSampler
-from ...core.utils import reorient_profile_high_to_low
+from ...core.utils import smooth_data, reorient_profile_high_to_low
 import math
+import numpy as np # type: ignore
 
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
@@ -85,6 +86,7 @@ class SwathEngine(BaseEngine):
         width_m           = kwargs.get("width_m",        1000.0)
         n_transversal     = kwargs.get("n_transversal",  50)
         force_high_to_low = kwargs.get("force_high_to_low", False)
+        smooth_win        = kwargs.get("smooth_window", 0)
         compute_q         = kwargs.get("compute_q",      False)
         compute_relief    = kwargs.get("compute_relief", True)
         compute_hyps      = kwargs.get("compute_hyps",   True)
@@ -125,6 +127,18 @@ class SwathEngine(BaseEngine):
                 data.update(new_profs)
             # --------------------------------
 
+            
+            if smooth_win >= 3:
+                # apply smoothing to all profiles that exist in the data dict
+                keys_to_smooth = ["mean", "min", "max", "q1", "q3", "relief", "hyps"]
+                
+                for key in keys_to_smooth:
+                    if data.get(key) is not None:
+                        # Convert to numpy array for smoothing, then back to list
+                        # plotly waits for lists/json, but numpy is faster for convolution operations
+                        arr = np.array(data[key], dtype=np.float32)
+                        smoothed_arr = smooth_data(arr, smooth_win)
+                        data[key] = smoothed_arr.tolist() 
 
             # Auto tick intervals
             total_m   = data["total_length_m"]
