@@ -42,8 +42,18 @@ class SwathPanel(BasePanel):
         self._engine   = SwathEngine()
         self._exporter = RockMorphExporter(iface)
         self._last_data = None
-        self._canvas_connected = False
+        # self._canvas_connected = False
         self.swath_rubber_band  = None
+    
+        # Initialize a dedicated RubberBand for the map marker (a red circle)
+        self.map_marker = QgsRubberBand(iface.mapCanvas(), QgsWkbTypes.PointGeometry)
+        self.map_marker.setIcon(QgsRubberBand.ICON_CIRCLE)
+        self.map_marker.setIconSize(10)
+        self.map_marker.setColor(QColor(231, 76, 60)) # Plotly Red
+        self.map_marker.setStrokeColor(QColor(255, 255, 255)) # White outline
+        self.map_marker.hide()
+
+         #  Call super().__init__ LAST (it triggers UI build and HTML load)
         super().__init__(iface, parent)
 
         # Ensure tracking is off on init
@@ -344,25 +354,78 @@ class SwathPanel(BasePanel):
     # ------------------------------------------------------------------
 
     def _toggle_tracking(self, state: int):
-        canvas = self.iface.mapCanvas()
-        if state == Qt.Checked:
-            canvas.xyCoordinates.connect(self._on_canvas_move)
-            self._canvas_connected = True
-            self._update_swath_rubber_band() # Optional: show swath area on canvas using rubber band
+        """
+        Controls the tracking system.
+        Note: We no longer connect to canvas.xyCoordinates.
+        """
+        is_checked = (state == Qt.Checked)
+        
+        if is_checked:
+            # Show the swath area (blue box) to give context
+            self._draw_swath_rubber_band()
         else:
-            if self._canvas_connected:
-                canvas.xyCoordinates.disconnect(self._on_canvas_move)
-                self._canvas_connected = False
-                if self.swath_rubber_band:
-                    self.swath_rubber_band.hide()
-                    self.swath_rubber_band.reset(QgsWkbTypes.PolygonGeometry)
-                    self.iface.mapCanvas().scene().removeItem(self.swath_rubber_band)
-                    self.swath_rubber_band = None
-                # Hide cursor on plot
-                self.iface.mapCanvas().refresh()
-                self.webview.page().runJavaScript("updateCursor(null)")
+            # Hide everything when unchecked
+            if self.swath_rubber_band:
+                self.swath_rubber_band.hide()
+            if self.map_marker:
+                self.map_marker.hide()
+            
+            # Reset the cursor on the Plotly chart via JavaScript
+            # self.webview.page().runJavaScript("updateCursor(null)")
 
-    def _update_swath_rubber_band(self):
+    def _on_plot_hover(self, distance):
+        """
+        Called when user hovers over the Plotly chart.
+        Only executes if the tracking checkbox is checked.
+        """
+        # --- CRITICAL CONDITION ---
+        if not self.tracking_check.isChecked():
+            return
+            
+        line_layer = self.line_combo.currentLayer()
+        dem_layer = self.dem_combo.currentLayer()
+        if not line_layer or not dem_layer: 
+            return
+
+        feature = next(line_layer.getFeatures(), None)
+        if not feature: 
+            return
+
+        # --- CRITICAL: CRS HANDLING ---
+        # 1. Get the geometries and CRS
+        geometry = feature.geometry()
+        line_crs = line_layer.crs()
+        dem_crs  = dem_layer.crs() # This one is metric (meters)
+
+        # 2. Transform the line to the DEM's metric CRS
+        # We MUST interpolate in meters to match the Plotly X-axis
+        if line_crs != dem_crs:
+            transform = QgsCoordinateTransform(line_crs, dem_crs, QgsProject.instance())
+            geometry.transform(transform)
+
+        # 3. Interpolate the point (Distance is in meters, Geometry is now in meters)
+        point_geom = geometry.interpolate(distance)
+
+        # DEBUG PRINT: Now it should NOT be None
+        # print(f"Hover dist: {distance:.2f} | Point: {point_geom.asPoint().toString() if not point_geom.isEmpty() else 'EMPTY'}")
+
+        if point_geom and not point_geom.isEmpty():
+            # 4. Set the marker
+            # We tell the RubberBand that this point is in dem_crs
+            self.map_marker.setToGeometry(point_geom, dem_crs)
+            self.map_marker.show()
+            
+            # Optional: Refresh canvas if the point doesn't appear immediately
+            # self.iface.mapCanvas().refresh()
+
+
+
+    def _on_plot_leave(self):
+        """Hides the map marker when mouse leaves the plot area."""
+        if self.map_marker:
+            self.map_marker.hide()
+
+    def _draw_swath_rubber_band(self):
         """Draws a transparent polygon on the map to visualize the swath width."""
         line_layer = self.line_combo.currentLayer()
         if not line_layer:
@@ -421,59 +484,59 @@ class SwathPanel(BasePanel):
         self.iface.mapCanvas().refresh()
 
     
-    def _on_canvas_move(self, point: QgsPointXY):
-        """
-        Handles mouse movement on map canvas. 
-        Calculates distance along line and checks proximity.
-        """
-        if self._last_data is None:
-            return
+    # def _on_canvas_move(self, point: QgsPointXY):
+    #     """
+    #     Handles mouse movement on map canvas. 
+    #     Calculates distance along line and checks proximity.
+    #     """
+    #     if self._last_data is None:
+    #         return
 
-        line_layer = self.line_combo.currentLayer()
-        dem_layer = self.dem_combo.currentLayer()
-        if not line_layer or not dem_layer:
-            return
+    #     line_layer = self.line_combo.currentLayer()
+    #     dem_layer = self.dem_combo.currentLayer()
+    #     if not line_layer or not dem_layer:
+    #         return
 
-        feature = next(line_layer.getFeatures(), None)
-        if not feature:
-            return
+    #     feature = next(line_layer.getFeatures(), None)
+    #     if not feature:
+    #         return
 
-        # 1. Coordinate Transforms
-        # We need everything in the DEM CRS (usually metric) for accurate distances
-        canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-        line_crs = line_layer.crs()
-        target_crs = dem_layer.crs()
+    #     # 1. Coordinate Transforms
+    #     # We need everything in the DEM CRS (usually metric) for accurate distances
+    #     canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+    #     line_crs = line_layer.crs()
+    #     target_crs = dem_layer.crs()
 
-        # Transform line geometry to target CRS
-        line_geom = feature.geometry()
-        if line_crs != target_crs:
-            line_xform = QgsCoordinateTransform(line_crs, target_crs, QgsProject.instance())
-            line_geom.transform(line_xform)
+    #     # Transform line geometry to target CRS
+    #     line_geom = feature.geometry()
+    #     if line_crs != target_crs:
+    #         line_xform = QgsCoordinateTransform(line_crs, target_crs, QgsProject.instance())
+    #         line_geom.transform(line_xform)
 
-        # Transform mouse point to target CRS
-        if canvas_crs != target_crs:
-            point_xform = QgsCoordinateTransform(canvas_crs, target_crs, QgsProject.instance())
-            try:
-                point = point_xform.transform(point)
-            except:
-                return
+    #     # Transform mouse point to target CRS
+    #     if canvas_crs != target_crs:
+    #         point_xform = QgsCoordinateTransform(canvas_crs, target_crs, QgsProject.instance())
+    #         try:
+    #             point = point_xform.transform(point)
+    #         except:
+    #             return
 
-        # 2. Distance and Proximity Check
-        mouse_geom = QgsGeometry.fromPointXY(point)
+    #     # 2. Distance and Proximity Check
+    #     mouse_geom = QgsGeometry.fromPointXY(point)
         
-        # Calculate perpendicular distance from mouse to the profile line
-        perpendicular_dist = line_geom.distance(mouse_geom)
+    #     # Calculate perpendicular distance from mouse to the profile line
+    #     perpendicular_dist = line_geom.distance(mouse_geom)
         
-        # Set a threshold slightly larger than the half-width for better UX
-        threshold = self.width_spin.value() * 1.1
+    #     # Set a threshold slightly larger than the half-width for better UX
+    #     threshold = self.width_spin.value() * 1.1
         
-        if perpendicular_dist > threshold:
-            # Mouse is outside the swath zone: hide the cursor
-            self.webview.page().runJavaScript("updateCursor(null)")
-        else:
-            # Mouse is inside: calculate distance from start of the line
-            dist_along_line = line_geom.lineLocatePoint(mouse_geom)
-            self.webview.page().runJavaScript(f"updateCursor({dist_along_line})")
+    #     if perpendicular_dist > threshold:
+    #         # Mouse is outside the swath zone: hide the cursor
+    #         self.webview.page().runJavaScript("updateCursor(null)")
+    #     else:
+    #         # Mouse is inside: calculate distance from start of the line
+    #         dist_along_line = line_geom.lineLocatePoint(mouse_geom)
+    #         self.webview.page().runJavaScript(f"updateCursor({dist_along_line})")
 
     def cleanup(self):
         """
@@ -481,14 +544,14 @@ class SwathPanel(BasePanel):
         Removes rubber band from canvas scene.
         """
         # Disconnect canvas tracking if active
-        if self._canvas_connected:
-            try:
-                self.iface.mapCanvas().xyCoordinates.disconnect(
-                    self._on_canvas_move
-                )
-            except:
-                pass
-            self._canvas_connected = False
+        # if self._canvas_connected:
+        #     try:
+        #         self.iface.mapCanvas().xyCoordinates.disconnect(
+        #             self._on_canvas_move
+        #         )
+        #     except:
+        #         pass
+        #     self._canvas_connected = False
 
         # Remove rubber band from canvas
         if self.swath_rubber_band:
@@ -501,6 +564,10 @@ class SwathPanel(BasePanel):
             except:
                 pass
             self.swath_rubber_band = None
+        
+        if self.map_marker:
+            self.iface.mapCanvas().scene().removeItem(self.map_marker)
+            self.map_marker = None
 
         self.iface.mapCanvas().refresh()
 

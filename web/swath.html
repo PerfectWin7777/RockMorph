@@ -323,6 +323,11 @@
             // Use a single div for both plots = Perfect Alignment + Single Export
             Plotly.react('plot-main', traces, layout, { responsive: true });
 
+            // Attach interactions ONLY ONCE
+            _attachPlotlyEvents();
+
+            // Update stats bar
+
             _updateStats(data);
         }
 
@@ -355,7 +360,40 @@
         }
 
         // ── Canvas cursor tracking ────────────────────────────────
-    /**
+
+    // Global variable to prevent duplicate listeners
+    let _eventsAttached = false;
+
+    function _attachPlotlyEvents() {
+        if (_eventsAttached) return;
+        const gd = document.getElementById('plot-main');
+
+        // Triggered when mouse moves over the plot
+        gd.on('plotly_hover', function (data) {
+            if (data.points && data.points.length > 0) {
+                // x represents the distance in meters along the profile
+                const distanceM = data.points[0].x;
+
+                // Send the distance back to Python via the QWebChannel bridge
+                if (window.bridge) {
+                    window.bridge.on_plot_hover(distanceM);
+                }
+            }
+        });
+
+        // Triggered when mouse leaves a data point
+        gd.on('plotly_unhover', function () {
+            if (window.bridge) {
+                window.bridge.on_plot_leave();
+            }
+        });
+
+        _eventsAttached = true;
+    }
+
+
+    // deprecated: we now use plotly's built-in hover events instead of tracking mouse position on the canvas.
+           /**
              * Updates a vertical reference line.
              * distanceM: distance from start of line in meters.
               * If distanceM is null, the cursor is removed.

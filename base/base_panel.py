@@ -42,11 +42,25 @@ class _BaseBridge(QObject):
     def receive_export(self, data_url: str):
         self._panel._save_export(data_url)
     
+    @pyqtSlot(float)
+    def on_plot_hover(self, distance):
+        """Receives distance from JS when user hovers over the plot."""
+        if hasattr(self._panel, "_on_plot_hover"):
+            self._panel._on_plot_hover(distance)
+
+    @pyqtSlot()
+    def on_plot_leave(self):
+        """Hides the map marker when mouse leaves the plot area."""
+        if hasattr(self._panel, "_on_plot_leave"):
+            self._panel._on_plot_leave()
+    
     @pyqtSlot(int)
     def receive_click_id(self, fid: int):
         # Pass clicked feature ID to panel's click handler, if it exists
         if hasattr(self._panel, "_on_plot_click"):
             self._panel._on_plot_click(fid)
+
+    
 
 
 
