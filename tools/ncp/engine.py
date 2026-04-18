@@ -72,12 +72,15 @@ class NCPEngine(BaseEngine):
         n_points     = kwargs.get("n_points",      200)
         snap_dist_m  = kwargs.get("snap_dist_m",   2.0)
         smooth_window = kwargs.get("smooth", 0)
+        progress_callback = kwargs.get("progress_callback")
 
         results  = []
         skipped  = []
         warnings = []
 
         # ── Step 1 : extract main rivers ─────────────────────────
+        if progress_callback:
+            progress_callback(5, tr("Extracting main river network..."))
         extractor = MainRiverExtractor(
             basin_layer  = basin_layer,
             stream_layer = stream_layer,
@@ -90,10 +93,17 @@ class NCPEngine(BaseEngine):
         skipped.extend(extraction["skipped"])
         warnings.extend(extraction["warnings"])
 
+        rivers = extraction["results"]
+        total = len(rivers)
+
         # ── Step 2 : profile + metrics per basin ─────────────────
-        for river in extraction["results"]:
+        for i, river in enumerate(rivers):
             fid   = river["fid"]
             label = river["label"]
+
+            if progress_callback:
+                    percent = 40 + int((i / total) * 60) # On commence à 40% après l'extraction
+                    progress_callback(percent, tr(f"Analyzing river: {river['label']}"))
 
             try:
                 profile = sample_river_profile(
@@ -113,6 +123,9 @@ class NCPEngine(BaseEngine):
 
                 metrics = self._compute_metrics(profile, river, label, fid, smooth_window)
                 results.append(metrics)
+
+                
+
 
             except Exception as e:
                 skipped.append((fid, str(e)))

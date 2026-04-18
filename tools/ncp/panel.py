@@ -46,7 +46,7 @@ from qgis.core import (  # type: ignore
     QgsCoordinateTransform, QgsProject,
 )
 
-from ...base.base_panel import BasePanel
+from ...base.base_panel import BasePanel, ComputeWorker
 from ...core.exporter import RockMorphExporter
 from .engine import NCPEngine
 
@@ -74,30 +74,6 @@ AXIS_OPTIONS = [
     ("Concavity %", "concavity"),
     ("Length (km)", "length_km"),
 ]
-
-
-# ---------------------------------------------------------------------------
-# Background worker
-# ---------------------------------------------------------------------------
-
-class _ComputeWorker(QThread):
-    finished = pyqtSignal(dict)
-    error    = pyqtSignal(str)
-
-    def __init__(self, engine, params):
-        super().__init__()
-        self._engine = engine
-        self._params = params
-
-    def run(self):
-        try:
-            result = self._engine.compute(**self._params)
-            self.finished.emit(result)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self.error.emit(str(e))
-
 
 
 # ---------------------------------------------------------------------------
@@ -549,7 +525,8 @@ class NCPPanel(BasePanel):
 
         self.set_loading_state(True, tr("Sampling DEM data..."))
         
-        self._worker = _ComputeWorker(self._engine, params)
+        self._worker = ComputeWorker(self._engine, params)
+        self._worker.progress.connect(self.update_progress)
         self._worker.finished.connect(self._on_compute_finished)
         self._worker.error.connect(self._on_compute_error)
         self._worker.start()

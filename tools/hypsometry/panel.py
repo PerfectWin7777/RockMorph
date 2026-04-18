@@ -35,22 +35,12 @@ from qgis.core import QgsMapLayerProxyModel, QgsWkbTypes  # type: ignore
 from qgis.core import QgsCoordinateTransform, QgsProject  # type: ignore
 
 
-from ...base.base_panel import BasePanel
+from ...base.base_panel import BasePanel,ComputeWorker
 from ...core.exporter import RockMorphExporter
 from .engine import HypsometryEngine
 from .grouper import group_results, move_to_ungrouped, _group_stats
 
-import re
 
-def _natural_sort_key(s: str):
-    """
-    Sort key for natural ordering.
-    '2' < '10' < '11' instead of '10' < '11' < '2'.
-    """
-    return [
-        int(part) if part.isdigit() else part.lower()
-        for part in re.split(r'(\d+)', s)
-    ]
 
 
 def tr(message):
@@ -100,31 +90,19 @@ def tr(message):
 #       New strings added: zoom, select, copy, export curve, etc.
 """
 
-# ---------------------------------------------------------------------------
-# Background worker — keeps UI responsive during long compute
-# ---------------------------------------------------------------------------
 
-class _ComputeWorker(QThread):
+import re
+
+def _natural_sort_key(s: str):
     """
-    Runs HypsometryEngine.compute() in a background thread.
-    Emits finished(result_dict) or error(message).
+    Sort key for natural ordering.
+    '2' < '10' < '11' instead of '10' < '11' < '2'.
     """
-    finished = pyqtSignal(dict)
-    error    = pyqtSignal(str)
+    return [
+        int(part) if part.isdigit() else part.lower()
+        for part in re.split(r'(\d+)', s)
+    ]
 
-    def __init__(self, engine, params):
-        super().__init__()
-        self._engine = engine
-        self._params = params
-
-    def run(self):
-        try:
-            result = self._engine.compute(**self._params)
-            self.finished.emit(result)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self.error.emit(str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +414,8 @@ class HypsometryPanel(BasePanel):
         self.set_loading_state(True, tr("Sampling DEM data..."))
 
         # Run in background thread
-        self._worker = _ComputeWorker(self._engine, params)
+        self._worker = ComputeWorker(self._engine, params)
+        self._worker.progress.connect(self.update_progress)
         self._worker.finished.connect(self._on_compute_finished)
         self._worker.error.connect(self._on_compute_error)
         self._worker.start()

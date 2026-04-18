@@ -58,6 +58,8 @@ class HypsometryEngine(BaseEngine):
         basin_layer:  QgsVectorLayer,
         label_field:  str  = None,
         n_points:     int  = 200,
+        progress_callback: callable = None
+
     ) -> dict:
         """
         Compute hypsometric curves for all basins.
@@ -93,10 +95,16 @@ class HypsometryEngine(BaseEngine):
             )
 
         seen_geom_hashes = set()
+        features = list(basin_layer.getFeatures())
+        total = len(features)
 
-        for feature in basin_layer.getFeatures():
+        for i, feature in enumerate(features):
             fid   = feature.id()
             label = self._get_label(feature, resolved_label, fid)
+
+            if progress_callback:
+                    percent = int((i / total) * 100)
+                    progress_callback(percent, tr(f"Processing basin: {label} ({i+1}/{total})"))
 
             # --- Geometry validation ---
             geom = feature.geometry()
