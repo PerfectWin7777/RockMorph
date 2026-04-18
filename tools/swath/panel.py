@@ -21,7 +21,7 @@ from qgis.core import (  # type: ignore
 import json
 import os
 import math
-from ...base.base_panel import BasePanel
+from ...base.base_panel import BasePanel, ComputeWorker
 from ...core.exporter import RockMorphExporter
 from ...ui.curve_style_widget import CurveStyleManager
 from .engine import SwathEngine
@@ -115,17 +115,13 @@ class SwathPanel(BasePanel):
         self.smooth_spin.setRange(0, 99)
         self.smooth_spin.setValue(0)  # 0 = no smoothing
         self.smooth_spin.setSingleStep(2)  # Step of 2 to skip more easily from odd numbers to odd numbers
+        self.smooth_spin.setSuffix(" pts")
         self.smooth_spin.setToolTip(tr(
             "Window size for Hanning smoothing (must be >= 3). Set to 0 to disable."
         ))
         params_layout.addRow(tr("Smoothing window:"), self.smooth_spin)
 
         
-        self.reorient_check = QCheckBox(tr("Force High-to-Low orientation"))
-        self.reorient_check.setToolTip(tr(
-            "Ensure the profile starts at the highest point (useful for river longitudinal profiles)."
-        ))
-        params_layout.addRow("", self.reorient_check)
 
         root.addWidget(params_group)
 
@@ -154,6 +150,13 @@ class SwathPanel(BasePanel):
             "Close to 1 = young/active relief. Close to 0 = mature relief."
         ))
         options_layout.addWidget(self.hyps_check)
+
+        
+        self.reorient_check = QCheckBox(tr("Force High-to-Low orientation"))
+        self.reorient_check.setToolTip(tr(
+            "Ensure the profile starts at the highest point (useful for river longitudinal profiles)."
+        ))
+        options_layout.addWidget(self.reorient_check)
 
         self.tracking_check = QCheckBox(tr("Canvas tracking"))
         self.tracking_check.setChecked(False)
@@ -230,6 +233,9 @@ class SwathPanel(BasePanel):
         self.compute_btn.clicked.connect(self._on_compute)
         root.addWidget(self.compute_btn)
 
+       # add a progress bar container (hidden by default, shown during computation)
+        root.addWidget(self._progress_container)
+
         # --- WebEngineView ---
         self.webview = QWebEngineView()
         self.webview.setMinimumHeight(420)
@@ -276,21 +282,38 @@ class SwathPanel(BasePanel):
                 "Please select a valid DEM layer and a line layer."
             ))
             return
-
+        
+         # Show progress bar and disable compute button during processing
+        self.set_loading_state(True, tr("Sampling DEM data..."), total=100)
         try:
-            self.compute_btn.setEnabled(False)
-            self.compute_btn.setText(tr("Computing..."))
-            data = self._engine.compute(**params)
-            data["title"] = self.title_edit.text()
-            self._on_result(data)
+            # Run computation in background thread to keep UI responsive
+            self._worker = ComputeWorker(self._engine, params)
+
+            # Connexions for progress, error, and result signals
+            self._worker.progress.connect(self.update_progress)
+            self._worker.error.connect(self._on_compute_error)
+            self._worker.finished.connect(self._on_compute_finished)
+            
+            self._worker.start()
+
         except Exception as e:
             import traceback
             traceback.print_exc()
             self.show_error(str(e))
-        finally:
-            self.compute_btn.setEnabled(True)
-            self.compute_btn.setText(tr("Compute"))
+        # finally:
+        #     # hide progress bar and re-enable button
+        #     self.set_loading_state(False)
+        #     self.compute_btn.setEnabled(True)
+        #     self.compute_btn.setText(tr("Compute"))
     
+    def _on_compute_error(self, err_msg):
+        self.set_loading_state(False)
+        self.show_error(f"Engine Error: {err_msg}")
+
+    def _on_compute_finished(self, data):
+        self.set_loading_state(False)
+        self._on_result(data)
+
     def _apply_styles(self):
         """Send updated styles to HTML without recomputing."""
         if self._last_data is None:
@@ -305,13 +328,11 @@ class SwathPanel(BasePanel):
 
     def _on_result(self, data: dict):
         self._last_data = data
+        data["title"] = self.title_edit.text()
         # Inject current styles into data
         data["styles"] = self.style_manager.get_all_styles()
-        # print("=== STYLES ===")
-        # print(data["styles"])
         json_data = json.dumps(data)
         js = f'updatePlot({json.dumps(json_data)})'
-        # print("JS call length:", len(js))
         self.webview.page().runJavaScript(
             js,
             # lambda result: print("JS result:", result)

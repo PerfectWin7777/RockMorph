@@ -266,12 +266,9 @@ class HypsometryPanel(BasePanel):
         """)
         self.compute_btn.clicked.connect(self._on_compute)
         root.addWidget(self.compute_btn)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 0)   # indeterminate
-        self.progress_bar.setFixedHeight(10)
-        self.progress_bar.setVisible(False)
-        root.addWidget(self.progress_bar)
+        
+        # add a progress bar container
+        root.addWidget(self._progress_container) 
 
         # ── Grouping ──────────────────────────────────────────
         group_group  = QGroupBox(tr("Smart grouping"))
@@ -434,8 +431,9 @@ class HypsometryPanel(BasePanel):
         # Disable UI during compute
         self.compute_btn.setEnabled(False)
         self.compute_btn.setText(tr("Computing…"))
-        self.progress_bar.setVisible(True)
         self.apply_group_btn.setEnabled(False)
+
+        self.set_loading_state(True, tr("Sampling DEM data..."))
 
         # Run in background thread
         self._worker = _ComputeWorker(self._engine, params)
@@ -447,8 +445,8 @@ class HypsometryPanel(BasePanel):
         """Called when background worker finishes."""
         self.compute_btn.setEnabled(True)
         self.compute_btn.setText(tr("Compute all basins"))
-        self.progress_bar.setVisible(False)
-
+        # hide progress bar and re-enable button
+        self.set_loading_state(False)
         self._results = result.get("results", [])
         warnings      = result.get("warnings", [])
         skipped       = result.get("skipped", [])
@@ -478,7 +476,8 @@ class HypsometryPanel(BasePanel):
     def _on_compute_error(self, message: str):
         self.compute_btn.setEnabled(True)
         self.compute_btn.setText(tr("Compute all basins"))
-        self.progress_bar.setVisible(False)
+         # hide progress bar and re-enable button
+        self.set_loading_state(False)
         self.show_error(message)
 
     # ------------------------------------------------------------------

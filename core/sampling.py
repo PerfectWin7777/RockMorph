@@ -61,6 +61,7 @@ class SwathSampler:
         compute_q:        bool  = False,
         compute_relief:   bool  = True,
         compute_hyps:     bool  = True,
+        progress_callback: callable = None
     ):
         self.reader        = reader
         self.line_layer    = line_layer
@@ -70,6 +71,8 @@ class SwathSampler:
         self.compute_q     = compute_q
         self.compute_relief = compute_relief
         self.compute_hyps  = compute_hyps
+        self.progress_callback = progress_callback
+
 
         # Use DEM CRS for distance measurement
     # because line coords are reprojected to DEM CRS before sampling
@@ -279,6 +282,12 @@ class SwathSampler:
                 hypss.append(
                     float((vmean - vmin) / denom) if denom > 1e-6 else 0.5
                 )
+            
+            # Progress callback every 10% of stations
+            if self.progress_callback and i % (max(1, n // 10)) == 0:
+                percent = 30 + int((i / n) * 60) # 30% to 90% range
+                self.progress_callback(percent, tr(f"Sampling station {i}/{n}..."))
+
 
         return {
             "mean":   means,

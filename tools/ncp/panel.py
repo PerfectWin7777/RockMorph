@@ -315,7 +315,8 @@ class NCPPanel(BasePanel):
         self.smooth_spin.setRange(0, 30)
         self.smooth_spin.setValue(5) # 0 = No smoothing
         self.smooth_spin.setSuffix(" pts")
-        self.smooth_spin.setToolTip(tr("Smooth the elevation profile using a moving window."))
+        self.smooth_spin.setToolTip(
+        tr("Smooth the elevation profile using a moving window (must be >= 3). Set to 0 to disable."))
 
         param_layout.addRow(tr("Smoothing:"), self.smooth_spin)
 
@@ -342,11 +343,8 @@ class NCPPanel(BasePanel):
         self.compute_btn.clicked.connect(self._on_compute)
         root.addWidget(self.compute_btn)
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 0)
-        self.progress_bar.setFixedHeight(10)
-        self.progress_bar.setVisible(False)
-        root.addWidget(self.progress_bar)
+         # add a progress bar container
+        root.addWidget(self._progress_container) 
 
         # ── View toggle ───────────────────────────────────────────
         view_group  = QGroupBox(tr("View"))
@@ -548,8 +546,9 @@ class NCPPanel(BasePanel):
 
         self.compute_btn.setEnabled(False)
         self.compute_btn.setText(tr("Computing…"))
-        self.progress_bar.setVisible(True)
 
+        self.set_loading_state(True, tr("Sampling DEM data..."))
+        
         self._worker = _ComputeWorker(self._engine, params)
         self._worker.finished.connect(self._on_compute_finished)
         self._worker.error.connect(self._on_compute_error)
@@ -558,7 +557,8 @@ class NCPPanel(BasePanel):
     def _on_compute_finished(self, result: dict):
         self.compute_btn.setEnabled(True)
         self.compute_btn.setText(tr("Compute all basins"))
-        self.progress_bar.setVisible(False)
+         # hide progress bar and re-enable button
+        self.set_loading_state(False)
 
         self._results = result.get("results", [])
         warnings      = result.get("warnings", [])
@@ -598,7 +598,8 @@ class NCPPanel(BasePanel):
     def _on_compute_error(self, message: str):
         self.compute_btn.setEnabled(True)
         self.compute_btn.setText(tr("Compute all basins"))
-        self.progress_bar.setVisible(False)
+         # hide progress bar and re-enable button
+        self.set_loading_state(False)
         self.show_error(message)
 
     # ------------------------------------------------------------------

@@ -5,9 +5,11 @@ import os
 
 from PyQt5.QtWebChannel import QWebChannel # type: ignore
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings  # type: ignore
-from PyQt5.QtWidgets import QWidget,QVBoxLayout,QScrollArea # type: ignore
+from PyQt5.QtWidgets import (QWidget,QFrame,# type: ignore
+    QVBoxLayout,QScrollArea,QProgressBar,QLabel
+    ) 
 from PyQt5.QtCore import (  # type: ignore
-    Qt, QUrl, QObject, pyqtSlot, QCoreApplication
+    Qt, QUrl, QObject, QThread, pyqtSignal, pyqtSlot, QCoreApplication
 )
 import sip # type: ignore
 
@@ -48,6 +50,45 @@ class _BaseBridge(QObject):
 
 
 
+
+# ---------------------------------------------------------------------------
+# Background worker — keeps UI responsive during long compute
+# ---------------------------------------------------------------------------
+
+class ComputeWorker(QThread):
+    """
+    Example
+    Runs Engine.compute() in a background thread.
+    Emits finished(result_dict) or error(message) and progress(value, message) signals.
+    """
+    finished = pyqtSignal(dict)
+    error    = pyqtSignal(str)
+    progress = pyqtSignal(int, str)
+
+    def __init__(self, engine, params:dict):
+        super().__init__()
+        self._engine = engine
+         # We copy params to avoid modifying the original dict in the UI thread
+        self._params = params.copy()
+
+    def run(self):
+        try:
+           # Inject the progress signal as a callback function.
+            # The Engine doesn't need to know about Qt or Signals, 
+            # it just calls a function: callback(int, str).
+            self._params["progress_callback"] = self.progress.emit
+            
+            # Execute the heavy computation
+            result = self._engine.compute(**self._params)
+            self.finished.emit(result)
+        except Exception as e:
+              # Catch any crash to prevent QGIS from closing abruptly
+            import traceback
+            traceback.print_exc()
+            self.error.emit(str(e))
+
+
+
 class BasePanel(QWidget, metaclass=QWidgetABCMeta):
     """
     Abstract base class for all RockMorph tool panels.
@@ -78,6 +119,8 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         super().__init__(parent)
         self._exporter = RockMorphExporter(iface)
         self.iface = iface
+
+        self._worker : ComputeWorker | None = None
     
         self._last_data: dict | None = None
         self._pending_export_path: str = ""
@@ -99,6 +142,38 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         scroll.setWidget(self._inner)
         root.addWidget(scroll)
 
+
+        # --- FEEDBACK SYSTEM (Progress Bar + Label) ---
+        # We create it here so it's ready for subclasses
+        self._progress_container = QFrame()
+        self._progress_container.setVisible(False) # Hidden by default
+        prog_layout = QVBoxLayout(self._progress_container)
+        prog_layout.setContentsMargins(0, 5, 0, 5)
+        prog_layout.setSpacing(2)
+
+        self._progress_label = QLabel(tr("Initializing..."))
+        self._progress_label.setStyleSheet("color: #2d6a9f; font-weight: bold; font-size: 11px;")
+        
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setFixedHeight(12)
+        self._progress_bar.setTextVisible(False)
+        self._progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #bbb;
+                border-radius: 6px;
+                background-color: #eee;
+            }
+            QProgressBar::chunk {
+                background-color: #3498db;
+                border-radius: 5px;
+            }
+        """)
+
+        prog_layout.addWidget(self._progress_label)
+        prog_layout.addWidget(self._progress_bar)
+
+
+
         # WebEngineView — created here so subclasses can use it in _build_ui
         self.webview = QWebEngineView()
         self._setup_webchannel()
@@ -106,6 +181,42 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         self._build_ui()
         self._load_html()
     
+     # ------------------------------------------------------------------
+    # Feedback Control Methods (The "Pro" Way)
+    # ------------------------------------------------------------------
+
+    def set_loading_state(self, loading: bool, message: str = "", total: int = 0):
+        """
+        Global toggle for the loading UI.
+        
+        :param loading: True to show progress, False to hide.
+        :param message: The text to display.
+        :param total: If > 0, sets the progress bar range. If 0, stays in 'busy' mode.
+        """
+        if loading:
+            self._progress_label.setText(message)
+            if total > 0:
+                self._progress_bar.setRange(0, total)
+                self._progress_bar.setValue(0)
+            else:
+                self._progress_bar.setRange(0, 0) # Indeterminate mode
+            
+            self._progress_container.show()
+            
+            # Optionally disable the compute button if the subclass has one
+            if hasattr(self, 'compute_btn'):
+                self.compute_btn.setEnabled(False)
+        else:
+            self._progress_container.hide()
+            if hasattr(self, 'compute_btn'):
+                self.compute_btn.setEnabled(True)
+
+    def update_progress(self, value: int, message: str = None):
+        """Update the progress bar value and optionally the message."""
+        self._progress_bar.setValue(value)
+        if message:
+            self._progress_label.setText(message)
+
 
     # ------------------------------------------------------------------
     # Hooks — subclasses must implement these

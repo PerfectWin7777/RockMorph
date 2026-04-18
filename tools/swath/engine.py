@@ -90,13 +90,18 @@ class SwathEngine(BaseEngine):
         compute_q         = kwargs.get("compute_q",      False)
         compute_relief    = kwargs.get("compute_relief", True)
         compute_hyps      = kwargs.get("compute_hyps",   True)
+        progress_callback = kwargs.get("progress_callback")
 
         # Step 1 — Open DEM
         try:
+            if progress_callback:
+               progress_callback(10, tr("Reading DEM..."))
             reader = RasterReader(dem_layer)
         except Exception as e:
             raise RuntimeError(tr(f"Failed to open DEM: {e}"))
-
+        
+        if progress_callback:
+            progress_callback(30, tr("Sampling stations..."))
         # Step 2 — Run sampler
         sampler = SwathSampler(
             reader        = reader,
@@ -107,10 +112,15 @@ class SwathEngine(BaseEngine):
             compute_q     = compute_q,
             compute_relief= compute_relief,
             compute_hyps  = compute_hyps,
+            progress_callback = progress_callback 
+        
         )
 
         try:
             data = sampler.sample()
+
+            if progress_callback:
+                progress_callback(90, tr("Finalizing results..."))
 
             # --- NEW: Reorientation logic ---
             if force_high_to_low:
