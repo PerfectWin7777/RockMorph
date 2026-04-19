@@ -145,6 +145,7 @@
                 plot_bgcolor:  '#ffffff',
                 polar: {
                     bgcolor: '#ffffff',   // ← blanc pur
+                    bargap: 0, 
                     angularaxis: {
                         tickcolor: '#363535',
                         linecolor: '#797878',
@@ -166,6 +167,7 @@
                         ticks: data.show_labels ? 'outside' : '',
                         tickscolor: data.show_labels ? '#313131' : '#f4efef',
                         tickwidth: 0.5,
+                        ticksuffix: data.mode === "frequency" ? "%" : "",
                         gridwidth: 0.1
                     }
                 },

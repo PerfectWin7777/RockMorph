@@ -54,12 +54,34 @@ class RosePanel(BasePanel):
         root.setSpacing(6)
 
         # --- Input group ---
-        input_group = QGroupBox(tr("Input"))
+        input_group = QGroupBox(tr("Input & Analysis"))
         input_layout = QFormLayout(input_group)
 
         self.layer_combo = QgsMapLayerComboBox()
         self.layer_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
         input_layout.addRow(tr("Line layer:"), self.layer_combo)
+
+        # NEW: Densification (The secret for "rich" roses)
+        self.densify_spin = QDoubleSpinBox()
+        self.densify_spin.setRange(0.0, 10000.0)
+        self.densify_spin.setValue(10.0) # 0 = Off
+        self.densify_spin.setSuffix(" m")
+        self.densify_spin.setToolTip(tr("Split long lines into equal segments. 0 to disable."))
+        input_layout.addRow(tr("Densify step:"), self.densify_spin)
+
+        # NEW: Min Length Filter (Noise reduction)
+        self.min_length_spin = QDoubleSpinBox()
+        self.min_length_spin.setRange(0.0, 1000.0)
+        self.min_length_spin.setValue(0.0)
+        self.min_length_spin.setSuffix(" m")
+        input_layout.addRow(tr("Min segment length:"), self.min_length_spin)
+
+        root.addWidget(input_group)
+
+        # --- 2. Directional Options ---
+        dir_group = QGroupBox(tr("Directional Logic"))
+        dir_layout = QFormLayout(dir_group)
+
 
         self.sectors_spin = QSpinBox()
         self.sectors_spin.setRange(8, 72)
@@ -67,16 +89,23 @@ class RosePanel(BasePanel):
         self.sectors_spin.setToolTip(tr(
             "Number of sectors — more sectors = finer angular resolution"
         ))
-        input_layout.addRow(tr("Sectors:"), self.sectors_spin)
+        dir_layout.addRow(tr("Sectors:"), self.sectors_spin)
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItems([tr("Count"), tr("Length"), tr("Frequency %")])
         self.mode_combo.setCurrentIndex(1)
-        input_layout.addRow(tr("Mode:"), self.mode_combo)
+        dir_layout.addRow(tr("Mode:"), self.mode_combo)
 
         self.half_rose_check = QCheckBox(tr("Half rose (0–180°)"))
         self.half_rose_check.setChecked(False)
-        input_layout.addRow("", self.half_rose_check)
+        dir_layout.addRow("", self.half_rose_check)
+
+        # NEW: Axial Symmetry (Mirroring)
+        self.sym_check = QCheckBox(tr("Axial symmetry (Mirror 180°)"))
+        self.sym_check.setChecked(True) # Often True by default in Geology
+        self.sym_check.setToolTip(tr("Mirrors every direction to the opposite side. Essential for fractures/lineaments."))
+        dir_layout.addRow("", self.sym_check)
+
 
         self.rectitude_spin = QDoubleSpinBox()
         self.rectitude_spin.setRange(0.0, 1.0)
@@ -87,9 +116,11 @@ class RosePanel(BasePanel):
             "Rectitude filter — 0 = no filter, 0.85 = only straight features\n"
             "Applied at feature level before segment extraction."
         ))
-        input_layout.addRow(tr("Min rectitude:"), self.rectitude_spin)
+        dir_layout.addRow(tr("Min rectitude:"), self.rectitude_spin)
 
-        root.addWidget(input_group)
+        root.addWidget(dir_group)
+
+        
 
         # --- Style group ---
         style_group = QGroupBox(tr("Style"))
@@ -186,6 +217,9 @@ class RosePanel(BasePanel):
             "show_labels":  self.lbl_inside.isChecked(),
             "title":        self.title_edit.text(),
             "min_rectitude": self.rectitude_spin.value(),
+            "axial_symmetry": self.sym_check.isChecked(),
+            "densify_dist": self.densify_spin.value(),
+            "min_length": self.min_length_spin.value()
         }
 
         if not self._engine.validate(**params):

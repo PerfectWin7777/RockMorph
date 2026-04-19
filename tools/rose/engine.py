@@ -1,10 +1,10 @@
 # tools/rose/engine.py
 
 from qgis.PyQt.QtCore import QCoreApplication # type: ignore
-from qgis.core import QgsWkbTypes # type: ignore
+from qgis.core import QgsWkbTypes,QgsGeometry  # type: ignore
 import numpy as np # type: ignore
 from ...base.base_engine import BaseEngine
-
+import math
 
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
@@ -42,6 +42,9 @@ class RoseEngine(BaseEngine):
         n_sectors = kwargs.get("n_sectors", 36)
         mode      = kwargs.get("mode", "length")
         half_rose = kwargs.get("half_rose", False)
+        axial_sym     = kwargs.get("axial_symmetry", True) # Default to True for Geology
+        densify_dist  = kwargs.get("densify_dist", 0.0)    # Distance in meters
+        min_length    = kwargs.get("min_length", 0.0)      # Filter small segments
         color     = kwargs.get("color", "#4a9eff")
         opacity   = kwargs.get("opacity", 0.85)
         show_grid = kwargs.get("show_grid", True)
@@ -49,27 +52,40 @@ class RoseEngine(BaseEngine):
         title     = kwargs.get("title", "Rose Diagram")
         min_rectitude = kwargs.get("min_rectitude", 0.0)
 
-        azimuths, lengths = self._extract_segments(layer, min_rectitude)
+        # 1. Extraction with Densification and Filtering
+        azimuths, lengths = self._extract_segments(layer, densify_dist, min_length, min_rectitude)
 
         if len(azimuths) == 0:
             raise ValueError(tr("No valid segments found in layer."))
 
         # Fold to 0-180° for half rose
+        # 2. Axial Symmetry (The "Butterfly" effect)
+        # We add 180° to every measurement to treat lines as axes, not vectors
+        if axial_sym and not half_rose:
+            sym_azimuths = (azimuths + 180.0) % 360.0
+            azimuths = np.concatenate([azimuths, sym_azimuths])
+            lengths = np.concatenate([lengths, lengths])
+
+        # 3. Binning
         if half_rose:
             azimuths = azimuths % 180.0
+            max_angle = 180.0
+        else:
+            max_angle = 360.0
 
-        sector_width = 180.0 / n_sectors if half_rose else 360.0 / n_sectors
-        bins = np.arange(0, (180.0 if half_rose else 360.0) + sector_width, sector_width)
-
+        sector_width = max_angle / n_sectors
+        bins = np.arange(0, max_angle + sector_width, sector_width)
+        
         values = self._bin_values(azimuths, lengths, bins, mode)
         bin_centers = bins[:-1] + sector_width / 2.0
 
+        # 4. Statistics
         stats = self._compute_stats(azimuths, lengths, bin_centers, values)
 
         return {
             "azimuths":     bin_centers.tolist(),
             "values":       values.tolist(),
-            "sector_width": sector_width,
+            "sector_width": [sector_width] * len(values),
             "color":        color,
             "opacity":      opacity,
             "show_grid":    show_grid,
@@ -83,7 +99,7 @@ class RoseEngine(BaseEngine):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _extract_segments(self, layer, min_rectitude: float = 0.0) -> tuple:
+    def _extract_segments(self, layer, densify_dist: float, min_length: float, min_rectitude: float) -> tuple:
         """
         Iterates over all features and extracts segment azimuths and lengths.
         Filters by rectitude at feature level, then extracts
@@ -98,69 +114,82 @@ class RoseEngine(BaseEngine):
             if geom is None or geom.isEmpty():
                 continue
 
-            for part in geom.constParts():
-                vertices = list(part.vertices())
-                if len(vertices) < 2:
+            # Rectitude filter at feature level
+            if min_rectitude > 0.0:
+                if self._calculate_rectitude(geom ) < min_rectitude:
                     continue
 
-                # Rectitude filter at feature level
-                if min_rectitude > 0.0:
-                    coords = [(v.x(), v.y()) for v in vertices]
-                    if self._rectitude(coords) < min_rectitude:
-                        continue
+                # Process each part of the geometry
+            for part in geom.constParts():
+                nodes = list(part.vertices())
+                if len(nodes) < 2:
+                    continue
+                for i in range(len(nodes) - 1):
+                    p1, p2 = nodes[i], nodes[i+1]
+                    dx, dy = p2.x() - p1.x(), p2.y() - p1.y()
+                    seg_len = math.sqrt(dx**2 + dy**2)
 
-                # Vertex-by-vertex segmentation
-                for i in range(len(vertices) - 1):
-                    x1, y1 = vertices[i].x(),   vertices[i].y()
-                    x2, y2 = vertices[i+1].x(), vertices[i+1].y()
-                    dx = x2 - x1
-                    dy = y2 - y1
-                    length = np.hypot(dx, dy)
-                    if length < 1e-10:
-                        continue
-                    azimuth = np.degrees(np.arctan2(dx, dy)) % 360.0
-                    azimuths.append(azimuth)
-                    lengths.append(length)
+                    if seg_len < min_length: continue
+
+                    az = math.degrees(math.atan2(dx, dy)) % 360.0
+
+                    # DENSIFICATION LOGIC
+                    # If line is 1000m and step is 100m, we create 10 virtual segments
+                    if densify_dist > 0 and seg_len > densify_dist:
+                        num_sub = int(seg_len / densify_dist)
+                        sub_len = seg_len / num_sub
+                        for _ in range(num_sub):
+                            azimuths.append(az)
+                            lengths.append(sub_len)
+                    else:
+                        azimuths.append(az)
+                        lengths.append(seg_len)
 
         return np.array(azimuths), np.array(lengths)
 
-    def _rectitude(self, coords: list) -> float:
+    def _calculate_rectitude(self, geom: QgsGeometry) -> float:
         """
         Ratio straight_length / real_length.
         1.0 = perfectly straight. 0.0 = very sinuous.
         """
-        total = 0.0
-        for i in range(len(coords) - 1):
-            dx = coords[i+1][0] - coords[i][0]
-            dy = coords[i+1][1] - coords[i][1]
-            total += np.hypot(dx, dy)
-        if total == 0:
-            return 0.0
-        dx = coords[-1][0] - coords[0][0]
-        dy = coords[-1][1] - coords[0][1]
-        straight = np.hypot(dx, dy)
-        return straight / total
+        total_len = geom.length()
+        if total_len == 0: return 0.0
+        # Distance between first and last point
+        pts = list(geom.vertices())
+        straight_len = math.sqrt((pts[-1].x()-pts[0].x())**2 + (pts[-1].y()-pts[0].y())**2)
+        return straight_len / total_len
 
-    def _bin_values(self, azimuths, lengths, bins, mode) -> np.ndarray:
+    def _bin_values(self, azimuths: np.ndarray, lengths: np.ndarray, bins: np.ndarray, mode: str) -> np.ndarray:
         """
         Bins azimuths into sectors according to the selected mode.
+        Ultra-fast vectorized binning. 
+        Zero loops on data points.
         """
-        n = len(bins) - 1
-        values = np.zeros(n)
+        # 1. Determine which bin index each azimuth belongs to
+        # np.digitize returns an array of indices (e.g., [0, 5, 22, 0...])
+        bin_indices = np.digitize(azimuths, bins) - 1
 
-        for i in range(n):
-            mask = (azimuths >= bins[i]) & (azimuths < bins[i + 1])
-            if not mask.any():
-                continue
+        # 2. Handle the edge case where azimuth is exactly the max bin value
+        # (e.g., exactly 360.0° must go into the last bin, not create a new one)
+        num_bins = len(bins) - 1
+        bin_indices = np.clip(bin_indices, 0, num_bins - 1)
 
-            if mode == "count":
-                values[i] = mask.sum()
-            elif mode == "length":
-                values[i] = lengths[mask].sum()
-            elif mode == "frequency":
-                values[i] = lengths[mask].sum() / lengths.sum() * 100.0
-
-        return values
+        # 3. Aggregate values based on the selected mode
+        if mode == "count":
+            # np.bincount is a NumPy ninja trick: it counts occurrences of each index
+            return np.bincount(bin_indices, minlength=num_bins).astype(float)
+        
+        else:
+            # For "length" and "frequency", we sum the 'lengths' array 
+            # grouped by the 'bin_indices' labels.
+            weighted_sums = np.bincount(bin_indices, weights=lengths, minlength=num_bins)
+            
+            if mode == "frequency":
+                total_len = weighted_sums.sum()
+                return (weighted_sums / total_len * 100.0) if total_len > 0 else weighted_sums
+            
+            return weighted_sums
+        
 
     def _compute_stats(self, azimuths, lengths, bin_centers, values) -> dict:
         """
@@ -189,7 +218,7 @@ class RoseEngine(BaseEngine):
         # Concentration R (0 = isotropic, 1 = perfectly aligned)
         R = float(np.hypot(sin_mean, cos_mean))
 
-        # Anisotropy (Sovereign method — max bin / total)
+        # Anisotropy ( max bin / total)
         total = float(np.sum(values))
         anisotropy = float(np.max(values) / total) if total > 0 else 0.0
 
