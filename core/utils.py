@@ -7,9 +7,64 @@ General purpose geomorphometry utilities.
 
 import numpy as np  # type: ignore
 
+# --- Soft Import for SciPy ---
+# Standard in most QGIS distributions, but we provide a fallback
+# to ensure the plugin never crashes on import.
+try:
+    from scipy.signal import savgol_filter  # type: ignore
+    HAS_SCIPY = True
+    print("SciPy detected: Savitzky-Golay smoothing enabled.")
+except ImportError:
+    HAS_SCIPY = False
+
+
+def smooth_data(y: np.ndarray, window_size: int) -> np.ndarray:
+    """
+    Smooth a 1D signal using the best available method.
+    
+    If SciPy is available, uses Savitzky-Golay (better for preserving 
+    knickpoints/edges). Otherwise, falls back to Hanning window convolution.
+
+    Args:
+        y: Input elevation array.
+        window_size: Width of the smoothing window (must be odd and > 2).
+
+    Returns:
+        Smoothed numpy array of the same length as y.
+    """
+
+    n = len(y)
+    if n < 3 or window_size < 3:
+        return y
+
+    # ---  Smoothing execution ---
+    if HAS_SCIPY:
+        try:
+            # ---  Adaptive window size & Parity  ---
+            # Cap window at n // 2 and ensure it is odd
+            if window_size >= n:
+                window_size = n // 2
+            
+            if window_size % 2 == 0:
+                window_size -= 1
+                
+            if window_size < 3:
+                return y
+    
+            # SciPy Savitzky-Golay
+            # polyorder=2 is stable for topography. 
+            # 'nearest' mode is the SciPy equivalent to NumPy 'edge' padding.
+            return savgol_filter(y, window_size, polyorder=2, mode='nearest')
+        except Exception:
+            # If SciPy fails for any reason, fallback to Hanning
+            return _smooth_hanning(y, window_size)
+    else:
+        return _smooth_hanning(y, window_size)
+
+
 
 # Pure NumPy smoothing function
-def smooth_data(y, window_size):
+def _smooth_hanning(y, window_size):
     """
     Smooth the data using a Hanning window convolution.
     y: 1D array (elevations)
