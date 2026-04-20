@@ -10,6 +10,7 @@ from ..tools.rose.panel import RosePanel
 from ..tools.swath.panel import SwathPanel
 from ..tools.hypsometry.panel import HypsometryPanel
 from ..tools.ncp.panel import NCPPanel
+from ..tools.fluvial.panel import FluvialPanel
 
 
 def tr(message):
@@ -21,7 +22,8 @@ TOOLS = [
     ("Rose Diagram",   RosePanel),
     ("Swath Profile",  SwathPanel),
     ("Hypsometry",      HypsometryPanel),
-    ("Norm. Channel Profile", NCPPanel),
+    ("Normalized Channel Profile", NCPPanel),
+    ("Fluvial Toolbox", FluvialPanel)
 ]
 
 
@@ -90,7 +92,8 @@ class RockMorphDock(QDockWidget):
         self.setWidget(container)
 
         # Load first tool
-        self._switch_tool(3)
+        self.tool_combo.setCurrentIndex(4)
+        self._switch_tool(4)
 
     def _switch_tool(self, index: int):
         """

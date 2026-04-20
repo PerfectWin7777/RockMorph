@@ -523,3 +523,393 @@ def sample_river_profile(
         "total_length_m":  total_length_m,
         "n_points":        len(elevations),
     }
+
+
+
+
+def sample_river_hydraulics(
+    river_geom:  QgsGeometry,
+    dem_layer:   QgsRasterLayer,
+    fac_layer:   QgsRasterLayer,
+    stream_crs,
+    n_points:    int = 200,
+) -> dict:
+    """
+    Extends sample_river_profile() with hydraulic attributes
+    required for SL, SLk, k_sn, and chi computation.
+
+    Calls sample_river_profile() internally — never duplicates logic.
+
+    Parameters
+    ----------
+    river_geom  : oriented polyline, source → mouth (from MainRiverExtractor)
+    dem_layer   : QgsRasterLayer — DEM
+    fac_layer   : QgsRasterLayer — flow accumulation (cells count)
+    stream_crs  : QgsCoordinateReferenceSystem
+    n_points    : number of sample points
+
+    Returns
+    -------
+    dict — everything from sample_river_profile(), plus:
+        area_m2      : np.ndarray  — drainage area at each point (m²)
+        slope_local  : np.ndarray  — local slope dz/dl (m/m), centred diff
+        fac_valid    : bool        — False if FAC sampling failed for >50% pts
+    """
+    # ── Step 1 : delegate to existing function ────────────────────────
+    base = sample_river_profile(
+        river_geom  = river_geom,
+        dem_layer   = dem_layer,
+        stream_crs  = stream_crs,
+        n_points    = n_points,
+    )
+
+    if not base["valid"]:
+        return {**base, "fac_valid": False}
+
+    distances_m = base["distances_m"]
+    elevations  = base["elevations"]
+    n           = len(distances_m)
+
+    # ── Step 2 : sample FAC along the same points ─────────────────────
+    # We rebuild the interpolated points from distances — same logic as
+    # sample_river_profile, but we only need the XY coordinates here.
+    sample_pts = _interpolate_river_points(river_geom, distances_m, stream_crs)
+
+    # FAC CRS transform
+    fac_crs   = fac_layer.crs()
+    t_to_fac  = None
+    if stream_crs != fac_crs:
+        t_to_fac = QgsCoordinateTransform(
+            stream_crs, fac_crs, QgsProject.instance()
+        )
+
+    # Pixel area in m² — needed to convert cell count → drainage area
+    pixel_size_m = _pixel_size_metres(fac_layer)
+    cell_area_m2 = pixel_size_m ** 2
+
+    raw_fac = []
+    for pt in sample_pts:
+        pt_fac = t_to_fac.transform(pt) if t_to_fac else pt
+        val, ok = fac_layer.dataProvider().sample(pt_fac, 1)
+        raw_fac.append(float(val) if (ok and not math.isnan(val)) else np.nan)
+
+    area_m2 = np.array(raw_fac, dtype=np.float64) * cell_area_m2
+
+    # Guard: if >50% NaN, FAC sampling is unusable
+    fac_valid = np.sum(~np.isnan(area_m2)) >= (n * 0.5)
+
+    # Replace NaN with forward-fill then backward-fill — avoids gaps
+    # in the middle of the profile breaking chi integral
+    area_m2 = _fill_nan(area_m2)
+
+    # Clamp to minimum 1 m² — log10(0) would crash chi computation
+    area_m2 = np.where(area_m2 > 0, area_m2, cell_area_m2)
+
+    # ── Step 3 : local slope — centred finite differences ─────────────
+    # S[i] = |dz/dl| using neighbours i-1 and i+1
+    # Edges use one-sided differences
+    slope_local = np.empty(n, dtype=np.float64)
+
+    # Interior points — centred
+    dz = elevations[2:] - elevations[:-2]
+    dl = distances_m[2:] - distances_m[:-2]
+    slope_local[1:-1] = np.where(dl > 1e-6, np.abs(dz / dl), np.nan)
+
+    # Edges — one-sided
+    if distances_m[1] - distances_m[0] > 1e-6:
+        slope_local[0] = abs(elevations[1] - elevations[0]) / (
+            distances_m[1] - distances_m[0]
+        )
+    else:
+        slope_local[0] = np.nan
+
+    if distances_m[-1] - distances_m[-2] > 1e-6:
+        slope_local[-1] = abs(elevations[-1] - elevations[-2]) / (
+            distances_m[-1] - distances_m[-2]
+        )
+    else:
+        slope_local[-1] = np.nan
+
+    # Clamp zero slope to tiny value — log10(0) guard for k_sn
+    slope_local = np.where(slope_local > 1e-8, slope_local, 1e-8)
+
+    return {
+        **base,                        # distances_m, elevations, total_length_m …
+        "area_m2":      area_m2,
+        "slope_local":  slope_local,
+        "fac_valid":    fac_valid,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Private helpers — used only by sample_river_hydraulics
+# ---------------------------------------------------------------------------
+
+def _interpolate_river_points(
+    river_geom: QgsGeometry,
+    distances_m: np.ndarray,
+    stream_crs,
+) -> list:
+    """
+    Re-interpolates QgsPointXY positions at given cumulative distances
+    along river_geom. Mirrors the logic inside sample_river_profile
+    so the returned XY coordinates match the elevation samples exactly.
+
+    Returns list of QgsPointXY (in stream_crs).
+    """
+    da = QgsDistanceArea()
+    da.setSourceCrs(stream_crs, QgsProject.instance().transformContext())
+    da.setEllipsoid('WGS84')
+
+    vertices  = [QgsPointXY(v) for v in river_geom.vertices()]
+    cum_dist  = [0.0]
+    for i in range(1, len(vertices)):
+        d = da.measureLine(vertices[i - 1], vertices[i])
+        cum_dist.append(cum_dist[-1] + max(d, 0.0))
+
+    sample_pts = []
+    for td in distances_m:
+        for i in range(1, len(cum_dist)):
+            if cum_dist[i] >= td or i == len(cum_dist) - 1:
+                seg_len = cum_dist[i] - cum_dist[i - 1]
+                if seg_len < 1e-10:
+                    pt = vertices[i]
+                else:
+                    t  = (td - cum_dist[i - 1]) / seg_len
+                    pt = QgsPointXY(
+                        vertices[i-1].x() + t * (vertices[i].x() - vertices[i-1].x()),
+                        vertices[i-1].y() + t * (vertices[i].y() - vertices[i-1].y()),
+                    )
+                sample_pts.append(pt)
+                break
+    return sample_pts
+
+
+def _pixel_size_metres(raster_layer: QgsRasterLayer) -> float:
+    """
+    Returns the pixel size in metres.
+    Handles both projected (metres) and geographic (degrees) CRS.
+    For geographic CRS, approximates using the centre latitude.
+    """
+    crs = raster_layer.crs()
+    ext = raster_layer.extent()
+    px  = raster_layer.rasterUnitsPerPixelX()
+
+    if not crs.isGeographic():
+        return abs(px)
+
+    # Geographic CRS — convert degrees to metres at centre latitude
+    centre_lat = (ext.yMinimum() + ext.yMaximum()) / 2.0
+    metres_per_degree = (
+        math.pi / 180.0
+        * 6_371_000
+        * math.cos(math.radians(centre_lat))
+    )
+    return abs(px) * metres_per_degree
+
+
+def _fill_nan(arr: np.ndarray) -> np.ndarray:
+    """
+    Forward-fill then backward-fill NaN values in a 1-D array.
+    Avoids gaps that would break cumulative integrals.
+    """
+    out = arr.copy()
+    # Forward fill
+    last = np.nan
+    for i in range(len(out)):
+        if not np.isnan(out[i]):
+            last = out[i]
+        elif not np.isnan(last):
+            out[i] = last
+    # Backward fill (handles leading NaNs)
+    last = np.nan
+    for i in range(len(out) - 1, -1, -1):
+        if not np.isnan(out[i]):
+            last = out[i]
+        elif not np.isnan(last):
+            out[i] = last
+    return out
+
+
+
+def sample_river_native_pixels(
+    river_geom:  QgsGeometry,
+    dem_layer:   QgsRasterLayer,
+    fac_layer:   QgsRasterLayer,
+    stream_crs,
+) -> dict:
+    """
+    Replaces sample_river_hydraulics() for SL/SLk computation.
+
+    Instead of resampling N equidistant points (which smooths the signal),
+    this function reads the NATIVE DEM pixels whose centres fall within
+    half a pixel-width of the river centreline — exactly as researchers
+    do manually in ArcGIS/Excel.
+
+    No interpolation. No smoothing. Raw pixel values in source→mouth order.
+
+    Returns the same dict structure as sample_river_hydraulics() so the
+    engine can use it as a drop-in replacement.
+    """
+    from .raster import RasterReader
+
+    # ── Step 1 : read DEM as numpy array ─────────────────────────────
+    reader     = RasterReader(dem_layer)
+    dem_crs    = dem_layer.crs()
+    pixel_size = reader.pixel_size_x   # metres (or degrees — handled below)
+
+    # CRS transforms
+    t_stream_to_dem = None
+    if stream_crs != dem_crs:
+        t_stream_to_dem = QgsCoordinateTransform(
+            stream_crs, dem_crs, QgsProject.instance()
+        )
+
+    fac_crs     = fac_layer.crs()
+    t_stream_to_fac = None
+    if stream_crs != fac_crs:
+        t_stream_to_fac = QgsCoordinateTransform(
+            stream_crs, fac_crs, QgsProject.instance()
+        )
+
+    # ── Step 2 : walk river vertices, collect pixel centres ──────────
+    da = QgsDistanceArea()
+    da.setSourceCrs(stream_crs, QgsProject.instance().transformContext())
+    da.setEllipsoid('WGS84')
+
+    vertices = [QgsPointXY(v) for v in river_geom.vertices()]
+    if len(vertices) < 2:
+        return {"valid": False, "fac_valid": False}
+
+    # Convert pixel_size to metres for the snap threshold
+    snap_m = _pixel_size_metres(dem_layer) * 0.5
+
+    # Walk along the polyline segment by segment
+    # At each step advance by ~pixel_size along the segment
+    # and snap to the nearest DEM pixel centre
+    collected = []          # list of (cum_dist_m, pt_stream_crs)
+    cum_dist  = 0.0
+    prev_col  = None
+    prev_row  = None
+
+    for seg_i in range(len(vertices) - 1):
+        pt_a = vertices[seg_i]
+        pt_b = vertices[seg_i + 1]
+        seg_len = da.measureLine(pt_a, pt_b)
+
+        if seg_len < 1e-6:
+            continue
+
+        # Number of steps along this segment
+        n_steps = max(1, int(math.ceil(seg_len / snap_m)))
+
+        for step in range(n_steps):
+            t  = step / n_steps
+            pt = QgsPointXY(
+                pt_a.x() + t * (pt_b.x() - pt_a.x()),
+                pt_a.y() + t * (pt_b.y() - pt_a.y()),
+            )
+
+            # Snap to DEM pixel centre
+            pt_dem = t_stream_to_dem.transform(pt) \
+                if t_stream_to_dem else pt
+            col, row = reader.world_to_pixel(pt_dem.x(), pt_dem.y())
+
+            if col == -1:
+                continue
+
+            # Skip duplicate pixel — same pixel as previous step
+            if col == prev_col and row == prev_row:
+                continue
+
+            prev_col = col
+            prev_row = row
+
+            # Cumulative distance — measure from previous vertex
+            step_dist = da.measureLine(pt_a, pt) if step > 0 else 0.0
+            if collected:
+                # distance from last collected point
+                last_pt = collected[-1][1]
+                step_dist = cum_dist + da.measureLine(last_pt, pt)
+            else:
+                step_dist = 0.0
+
+            collected.append((step_dist, pt))
+            cum_dist = step_dist
+
+    # Recalculate cumulative distances properly
+    # (the above is approximate — recalc from collected points)
+    if len(collected) < MIN_RIVER_POINTS:
+        return {"valid": False, "fac_valid": False}
+
+    pts_stream = [c[1] for c in collected]
+    cum_dists  = [0.0]
+    for i in range(1, len(pts_stream)):
+        d = da.measureLine(pts_stream[i - 1], pts_stream[i])
+        cum_dists.append(cum_dists[-1] + max(d, 0.0))
+
+    total_length_m = cum_dists[-1]
+
+    # ── Step 3 : sample DEM elevation at each pixel centre ───────────
+    elevations = []
+    for pt in pts_stream:
+        pt_dem = t_stream_to_dem.transform(pt) \
+            if t_stream_to_dem else pt
+        val = reader.sample_at(pt_dem.x(), pt_dem.y())
+        elevations.append(val)
+
+    # ── Step 4 : sample FAC ──────────────────────────────────────────
+    pixel_area_m2 = _pixel_size_metres(fac_layer) ** 2
+    raw_fac       = []
+    for pt in pts_stream:
+        pt_fac = t_stream_to_fac.transform(pt) \
+            if t_stream_to_fac else pt
+        val, ok = fac_layer.dataProvider().sample(pt_fac, 1)
+        raw_fac.append(float(val) if (ok and not math.isnan(val)) else np.nan)
+
+    area_m2   = np.array(raw_fac, dtype=np.float64) * pixel_area_m2
+    fac_valid = np.sum(~np.isnan(area_m2)) >= (len(area_m2) * 0.5)
+    area_m2   = _fill_nan(area_m2)
+    area_m2   = np.where(area_m2 > 0, area_m2, pixel_area_m2)
+
+    # ── Step 5 : convert to numpy, remove NaN elevation ──────────────
+    distances_m = np.array(cum_dists,  dtype=np.float64)
+    elevations  = np.array(elevations, dtype=np.float64)
+
+    valid_mask  = ~np.isnan(elevations)
+    distances_m = distances_m[valid_mask]
+    elevations  = elevations[valid_mask]
+    area_m2     = area_m2[valid_mask]
+
+    if len(elevations) < MIN_RIVER_POINTS:
+        return {"valid": False, "fac_valid": False}
+
+    # ── Step 6 : local slope — centred differences on NATIVE pixels ──
+    n     = len(elevations)
+    slope = np.empty(n, dtype=np.float64)
+
+    dz = elevations[2:] - elevations[:-2]
+    dl = distances_m[2:] - distances_m[:-2]
+    slope[1:-1] = np.where(dl > 1e-6, np.abs(dz / dl), 1e-8)
+
+    dl0 = distances_m[1] - distances_m[0]
+    slope[0] = abs(elevations[1] - elevations[0]) / dl0 \
+        if dl0 > 1e-6 else 1e-8
+
+    dl1 = distances_m[-1] - distances_m[-2]
+    slope[-1] = abs(elevations[-1] - elevations[-2]) / dl1 \
+        if dl1 > 1e-6 else 1e-8
+
+    slope = np.where(slope > 1e-8, slope, 1e-8)
+
+    return {
+        # Mirror of sample_river_hydraulics() output
+        "valid":          True,
+        "fac_valid":      fac_valid,
+        "distances_m":    distances_m,
+        "elevations":     elevations,
+        "area_m2":        area_m2,
+        "slope_local":    slope,
+        "total_length_m": total_length_m,
+        "n_points":       len(elevations),
+    }
