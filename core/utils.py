@@ -64,7 +64,7 @@ def smooth_data(y: np.ndarray, window_size: int) -> np.ndarray:
 
 
 # Pure NumPy smoothing function
-def _smooth_hanning(y, window_size):
+def _smooth_hanning(y: np.ndarray, window_size: int) -> np.ndarray:
     """
     Smooth the data using a Hanning window convolution.
     y: 1D array (elevations)
