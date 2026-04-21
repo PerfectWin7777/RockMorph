@@ -293,7 +293,7 @@ class RockMorphExporter:
         """Write rows to CSV at path (no dialog)."""
         try:
             with open(path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=headers)
+                writer = csv.DictWriter(f, fieldnames=headers, delimiter=';') # use ; for excel 
                 writer.writeheader()
                 writer.writerows(rows)
             self._info(tr(f"CSV → {os.path.basename(path)}"))

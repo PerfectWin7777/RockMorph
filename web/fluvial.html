@@ -249,19 +249,6 @@
             // sl_mode === 'none' → sl_data reste null → rien n'est ajouté
 
             if (sl_data !== null) {
-                // Fill area from zero
-                traces.push({
-                    x: dist_km,
-                    y: sl_data,
-                    type: 'scatter',
-                    mode: 'none',
-                    fill: 'tozeroy',
-                    fillcolor: _hexToRgba(sl_color, 0.35),
-                    yaxis: 'y2',
-                    showlegend: false,
-                    hoverinfo: 'skip',
-                });
-                // Line on top
                 traces.push({
                     x: dist_km,
                     y: sl_data,

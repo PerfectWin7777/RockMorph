@@ -878,14 +878,14 @@ class FluvialPanel(BasePanel):
             return
         rows = [
             {
-                "dist_m":  round(d, 1),
-                "elev_m":  round(e, 2),
-                "area_m2": round(a, 1),
-                "slope":   round(s, 6),
-                "sl":      round(sl, 2),
-                "slk":     round(slk, 4),
-                "chi":     round(c, 4),
-                "ksn":     round(k, 2),
+                "dist_m":  self.safe_round(d, 1),
+                "elev_m":  self.safe_round(e, 2),
+                "area_m2": self.safe_round(a, 1),
+                "slope":   self.safe_round(s, 6),
+                "sl":      self.safe_round(sl, 2),
+                "slk":     self.safe_round(slk, 4),
+                "chi":     self.safe_round(c, 4),
+                "ksn":     self.safe_round(k, 2),
             }
             for d, e, a, s, sl, slk, c, k in zip(
                 r["distances_m"], r["elevations"], r["area_m2"],
@@ -994,6 +994,14 @@ class FluvialPanel(BasePanel):
             if r["fid"] == fid:
                 return r
         return None
+    
+    def safe_round(self, val, ndigits=2):
+        if val is None:
+            return None
+        try:
+            return round(val, ndigits)
+        except Exception:
+            return None
 
     def cleanup(self):
         """Called on plugin unload."""

@@ -258,23 +258,22 @@ class FluvialEngine(BaseEngine):
             slope = np.flip(slope) 
         # ------------------------------------------------------
 
-
-        # Optional smoothing on elevation only
-        if smooth_win > 2:
-            elev = smooth_data(elev, smooth_win)
-            # Recompute slope after smoothing — centred differences
-            slope = self._recompute_slope(elev, dist)
-
         total_length_m = profile["total_length_m"]
 
         # ── SL and SLk ───────────────────────────────────────────────
         sl, slk = self._compute_sl_slk(dist, elev, total_length_m, sl_window_m)
 
+        # Optional smoothing on elevation only but after 
+        if smooth_win > 2:
+            elev = smooth_data(elev, smooth_win)
+            # Recompute slope after smoothing — centred differences
+            slope = self._recompute_slope(elev, dist)
+
         # ── Chi transformation ───────────────────────────────────────
         chi = self._compute_chi(dist, area, theta_ref, a0)
 
         # ── k_sn via log S / log A (Kirby & Whipple 2001) ────────────
-        ksn_profile, theta_local = self._compute_ksn_loglog(
+        ksn_profile, theta_local = self._compute_ksn_loglog_V2(
             slope, area, theta_ref
         )
 
@@ -372,9 +371,9 @@ class FluvialEngine(BaseEngine):
         # ── Step 2 : local slope — centred finite differences ────────────
         sl = np.zeros(n, dtype=np.float64)
 
-        for i in range(1, n - 1):
-            dz = elev[i - 1] - elev[i + 1]   # drop = positive for normal river
-            dl = dist[i + 1]   - dist[i - 1]
+        for i in range(n - 1):
+            dz = elev[i] - elev[i + 1]   # drop = positive for normal river
+            dl = dist[i + 1]   - dist[i]
 
             if dl < 1e-6:
                 continue
@@ -447,7 +446,7 @@ class FluvialEngine(BaseEngine):
     # k_sn via log S / log A  (Kirby & Whipple 2001)
     # ------------------------------------------------------------------
 
-    def _compute_ksn_loglogSSSSS(
+    def _compute_ksn_loglog_V1(
         self,
         slope:     np.ndarray,
         area_m2:   np.ndarray,
@@ -521,7 +520,7 @@ class FluvialEngine(BaseEngine):
         return ksn_profile, theta_local
     
 
-    def _compute_ksn_loglog(
+    def _compute_ksn_loglog_V2(
         self,
         slope: np.ndarray,
         area_m2: np.ndarray,
@@ -551,6 +550,12 @@ class FluvialEngine(BaseEngine):
         # Define window size: ~10% of profile, forced to be odd for symmetry
         half_win = max(MIN_SEGMENT_PTS, n_total // 20)
         window_size = 2 * half_win + 1
+
+        # --- SECURITY : RIVER TOO SHORT ---
+        if n_total < window_size:
+            # return NaN arrays of the same length to maintain consistency
+            return np.full(n_total, np.nan), np.full(n_total, np.nan)
+        
 
         # 1. Prepare log-transformed data
         # Avoid log10(0) by using a tiny floor
