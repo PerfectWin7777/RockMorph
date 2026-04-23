@@ -312,10 +312,18 @@ class FluvialPanel(BasePanel):
 
         self.basin_tree = QTreeWidget()
         self.basin_tree.setHeaderLabels([
-            tr("Basin"), tr("SLk max"), tr("χ max"),
-            tr("ksn mean"), tr("ksn max"), tr("Knickpts"),
+            tr("Basin"), 
+            tr("Length (km)"), 
+            tr("SLk max"), 
+            tr("χ max"),
+            tr("ksn mean"), 
+            tr("ksn max"), 
+            tr("θ local"),     
+            tr("Knickpts"),
+            tr("N points"),
         ])
         self.basin_tree.setFixedHeight(160)
+        self.basin_tree.setSortingEnabled(True)
         self.basin_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.basin_tree.itemSelectionChanged.connect(self._on_selection_changed)
         self.basin_tree.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -630,13 +638,17 @@ class FluvialPanel(BasePanel):
         for r in self._results:
             item = QTreeWidgetItem(self.basin_tree)
             item.setText(0, r["label"])
-            item.setText(1, f"{r['slk_max']:.3f}")
-            item.setText(2, f"{r['chi_max']:.3f}")
-            item.setText(3, f"{r['ksn_mean']:.1f}")
-            item.setText(4, f"{r['ksn_max']:.1f}")
-            item.setText(5, str(len(r.get("knickpoints", []))))
+            item.setText(1, f"{r['length_km']:.3f}")        
+            item.setText(2, f"{r['slk_max']:.3f}")
+            item.setText(3, f"{r['chi_max']:.3f}")
+            item.setText(4, f"{r['ksn_mean']:.3f}")
+            item.setText(5, f"{r['ksn_max']:.3f}")
+            item.setText(6, f"{r['theta_local']:.3f}")      
+            item.setText(7, str(len(r.get("knickpoints", []))))
+            item.setText(8, f"Points:     {r['n_points']}")
+
             item.setData(0, Qt.UserRole, r["fid"])
-        for col in range(6):
+        for col in range(9):
             self.basin_tree.resizeColumnToContents(col)
 
     def _on_selection_changed(self):
