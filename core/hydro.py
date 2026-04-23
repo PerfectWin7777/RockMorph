@@ -782,7 +782,7 @@ def sample_river_native_pixels(
         return {"valid": False, "fac_valid": False}
 
     # Convert pixel_size to metres for the snap threshold
-    snap_m = _pixel_size_metres(dem_layer) * 0.5
+    snap_m = _pixel_size_metres(dem_layer) * 0.3
 
     # Walk along the polyline segment by segment
     # At each step advance by ~pixel_size along the segment
@@ -819,8 +819,8 @@ def sample_river_native_pixels(
                 continue
 
             # Skip duplicate pixel — same pixel as previous step
-            if col == prev_col and row == prev_row:
-                continue
+            # if col == prev_col and row == prev_row:
+            #     continue
 
             prev_col = col
             prev_row = row

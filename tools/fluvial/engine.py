@@ -380,8 +380,9 @@ class FluvialEngine(BaseEngine):
 
             slope = dz / dl
             val   = slope * dist[i]
-            sl[i] = val
-            # sl[i] = max(val, 0.0)   # negative = counter-slope → 0, not filtered
+            sl[i] = max(val, 0.0)   # negative = counter-slope → 0, not filtered
+
+        
 
         # Edges — one-sided
         if dist[1] - dist[0] > 1e-6:

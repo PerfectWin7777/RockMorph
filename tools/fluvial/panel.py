@@ -186,7 +186,7 @@ class FluvialPanel(BasePanel):
 
         self.sl_window_spin = QDoubleSpinBox()
         self.sl_window_spin.setRange(50, 5000)
-        self.sl_window_spin.setValue(500.0)
+        self.sl_window_spin.setValue(50.0)
         self.sl_window_spin.setDecimals(0)
         self.sl_window_spin.setSuffix(" m")
         self.sl_window_spin.setToolTip(
