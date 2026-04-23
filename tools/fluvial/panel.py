@@ -33,7 +33,7 @@ from PyQt5.QtWidgets import (  # type: ignore
     QSizePolicy, QAbstractItemView,
     QButtonGroup, QRadioButton,
     QMenu, QApplication, QFileDialog,
-    QCheckBox, QSlider, QWidget,
+    QCheckBox, QSlider, QWidget, QFrame
 )
 from PyQt5.QtCore import Qt, QCoreApplication  # type: ignore
 from PyQt5.QtGui import QColor  # type: ignore
@@ -232,81 +232,99 @@ class FluvialPanel(BasePanel):
         root.addWidget(self._progress_container)
 
         # ── View toggle ───────────────────────────────────────────────
-        view_group  = QGroupBox(tr("View"))
-        view_layout = QHBoxLayout(view_group)
+        # ── Display & Layers Group ────────────────────────────────────
+        display_group = QGroupBox(tr("Display & Layers"))
+        display_layout = QVBoxLayout(display_group)
+        display_layout.setSpacing(10)
 
+        # 1. View Toggle (Top of the group)
+        view_toggle_layout = QHBoxLayout()
         self.btn_longitudinal = QRadioButton(tr("Longitudinal"))
         self.btn_chi          = QRadioButton(tr("Chi-plot"))
         self.btn_longitudinal.setChecked(True)
-        self.btn_longitudinal.toggled.connect(self._on_view_toggled)
-
+        
         self._view_btn_group = QButtonGroup()
         self._view_btn_group.addButton(self.btn_longitudinal, 0)
         self._view_btn_group.addButton(self.btn_chi,          1)
-
-        view_layout.addWidget(self.btn_longitudinal)
-        view_layout.addWidget(self.btn_chi)
-        root.addWidget(view_group)
-
-        # ── Layer checkboxes ──────────────────────────────────────────
-        layers_group  = QGroupBox(tr("Layers"))
-        layers_layout = QVBoxLayout(layers_group)
-
-        # Longitudinal layers
-        self._long_group = QGroupBox(tr("Longitudinal view"))
-        lg = QVBoxLayout(self._long_group)
-        self.chk_equil      = QCheckBox(tr("Equilibrium profile (Hack)"))
-        # Radio SL vs SLk
         
-        self._sl_btn_group = QButtonGroup()
-        self.btn_sl_none = QRadioButton(tr("None"))
-        self.btn_sl_raw  = QRadioButton(tr("SL (raw)"))
-        self.btn_slk     = QRadioButton(tr("SLk (normalized)"))
-        self.btn_sl_raw.setChecked(True)   # defaut
+        view_toggle_layout.addWidget(self.btn_longitudinal)
+        view_toggle_layout.addWidget(self.btn_chi)
+        display_layout.addLayout(view_toggle_layout)
 
+        # Small horizontal separator line
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        display_layout.addWidget(line)
+
+        # 2. Longitudinal Specific Layers
+        self._long_group = QWidget() # On utilise un QWidget simple pour grouper
+        lg = QVBoxLayout(self._long_group)
+        lg.setContentsMargins(0, 0, 0, 0)
+
+        self.chk_equil = QCheckBox(tr("Equilibrium profile (Hack)"))
+        self.chk_equil.setChecked(True)
+        lg.addWidget(self.chk_equil)
+
+        # SL / SLk selection sub-layout
+        sl_box = QGroupBox(tr("SL Index Display"))
+        sl_layout = QVBoxLayout(sl_box)
+        
+        self.chk_sl_invert = QCheckBox(tr("Invert Y2 axis"))
+        self.chk_sl_invert.setChecked(True)
+        self.btn_sl_none = QRadioButton(tr("Hide SL"))
+        self.btn_sl_raw  = QRadioButton(tr("Show SL (raw)"))
+        self.btn_slk     = QRadioButton(tr("Show SLk (normalized)"))
+        self.btn_sl_raw.setChecked(True)
+
+        self._sl_btn_group = QButtonGroup()
         self._sl_btn_group.addButton(self.btn_sl_none, 0)
         self._sl_btn_group.addButton(self.btn_sl_raw,  1)
         self._sl_btn_group.addButton(self.btn_slk,     2)
-        
-        lg.addWidget(QLabel(tr("SL index:")))
-        # Checkbox invert Y2
-        self.chk_sl_invert = QCheckBox(tr("Invert SL axis (Y2)"))
-        self.chk_sl_invert.setChecked(False)
-        lg.addWidget(self.chk_sl_invert)
 
-        for btn in (self.btn_sl_none, self.btn_sl_raw, self.btn_slk):
-            btn.toggled.connect(self._on_layer_toggled)
-            lg.addWidget(btn)
-    
-        self.chk_knick_long = QCheckBox(tr("Knickpoints"))
-        self.chk_equil.setChecked(True)
+        sl_layout.addWidget(self.chk_sl_invert)
+        sl_layout.addWidget(self.btn_sl_none)
+        sl_layout.addWidget(self.btn_sl_raw)
+        sl_layout.addWidget(self.btn_slk)
+        lg.addWidget(sl_box)
+
+        self.chk_knick_long = QCheckBox(tr("Show Knickpoints"))
         self.chk_knick_long.setChecked(True)
+        lg.addWidget(self.chk_knick_long)
 
-        for chk in (self.chk_sl_invert, self.chk_equil, 
-                   self.chk_knick_long):
-            chk.stateChanged.connect(self._on_layer_toggled)
-            lg.addWidget(chk)
-        layers_layout.addWidget(self._long_group)
+        display_layout.addWidget(self._long_group)
 
-        # Chi-plot layers
-        self._chi_group = QGroupBox(tr("Chi-plot view"))
+        # 3. Chi-plot Specific Layers
+        self._chi_group = QWidget()
         cg = QVBoxLayout(self._chi_group)
-        self.chk_ksn_profile = QCheckBox(tr("k_sn profile (continuous)"))
-        self.chk_ksn_segs    = QCheckBox(tr("k_sn segments"))
-        self.chk_equil_chi   = QCheckBox(tr("Equilibrium line"))
-        self.chk_knick_chi   = QCheckBox(tr("Knickpoints"))
-        self.chk_ksn_profile.setChecked(True)
-        self.chk_ksn_segs.setChecked(True)
-        self.chk_equil_chi.setChecked(True)
-        self.chk_knick_chi.setChecked(True)
-        for chk in (self.chk_ksn_profile, self.chk_ksn_segs,
-                    self.chk_equil_chi, self.chk_knick_chi):
-            chk.stateChanged.connect(self._on_layer_toggled)
-            cg.addWidget(chk)
-        layers_layout.addWidget(self._chi_group)
+        cg.setContentsMargins(0, 0, 0, 0)
 
-        self._chi_group.setVisible(False)
-        root.addWidget(layers_group)
+        self.chk_ksn_profile = QCheckBox(tr("k_sn profile (continuous)"))
+        self.chk_ksn_segs    = QCheckBox(tr("k_sn segments (bars)"))
+        self.chk_equil_chi   = QCheckBox(tr("Equilibrium line (mean k_sn)"))
+        self.chk_knick_chi   = QCheckBox(tr("Knickpoints"))
+        
+        for chk in (self.chk_ksn_profile, self.chk_ksn_segs, 
+                    self.chk_equil_chi, self.chk_knick_chi):
+            chk.setChecked(True)
+            cg.addWidget(chk)
+
+        display_layout.addWidget(self._chi_group)
+        self._chi_group.setVisible(False) # Hidden by default
+
+        root.addWidget(display_group)
+
+        # --- Connections ---
+        self.btn_longitudinal.toggled.connect(self._on_view_toggled)
+        # Connect all checkboxes/radios to a single refresh slot
+        for chk in (self.chk_equil, self.chk_knick_long, self.chk_sl_invert,
+                    self.btn_sl_none, self.btn_sl_raw, self.btn_slk,
+                    self.chk_ksn_profile, self.chk_ksn_segs, 
+                    self.chk_equil_chi, self.chk_knick_chi):
+            if isinstance(chk, QCheckBox):
+                chk.stateChanged.connect(self._on_layer_toggled)
+            else:
+                chk.toggled.connect(self._on_layer_toggled)
 
         # ── Basin tree ────────────────────────────────────────────────
         results_group  = QGroupBox(tr("Results"))
