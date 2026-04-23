@@ -30,8 +30,8 @@ import math
 import numpy as np  # type: ignore
 from numpy.lib.stride_tricks import sliding_window_view  # type: ignore
 from qgis.core import (  # type: ignore
-    QgsVectorLayer, QgsRasterLayer, QgsWkbTypes,
-    QgsRasterLayer, QgsProject,
+     QgsRasterLayer, QgsWkbTypes,
+    QgsRasterLayer, 
 )
 from PyQt5.QtCore import QCoreApplication  # type: ignore
 
@@ -118,6 +118,8 @@ class FluvialEngine(BaseEngine):
         n_knick      = kwargs.get("n_knickpoints",  3)
         smooth_win   = kwargs.get("smooth",         0)
         progress_cb  = kwargs.get("progress_callback")
+        method       = kwargs.get("method", "chi_slope")
+
 
         results  = []
         skipped  = []
@@ -202,6 +204,8 @@ class FluvialEngine(BaseEngine):
                     sl_window_m  = sl_window_m,
                     n_knick      = n_knick,
                     smooth_win   = smooth_win,
+                    method       = method,
+
                 )
                 results.append(metrics)
 
@@ -236,12 +240,15 @@ class FluvialEngine(BaseEngine):
         sl_window_m: float,
         n_knick:     int,
         smooth_win:  int,
+        method:      str = "chi_slope",
     ) -> dict:
 
         dist  = profile["distances_m"].copy()
         elev  = profile["elevations"].copy()
         area  = profile["area_m2"].copy()
         slope = profile["slope_local"].copy()
+
+        
 
 
         # --- CRITICAL STEP: FORCE SOURCE-TO-MOUTH DIRECTION ---
@@ -259,6 +266,23 @@ class FluvialEngine(BaseEngine):
         # ------------------------------------------------------
 
         total_length_m = profile["total_length_m"]
+        
+
+        # ROBUST COMPUTE OF window_size 
+        # We want a window that is ~125m in real space, but we only have the number of points and total length.
+        # compute the average spacing between points and derive the window size from that.
+        avg_spacing = total_length_m / len(dist) if len(dist) > 0 else 1
+
+        #  Conversion from metres to number of points in the profile, 
+        # with a minimum threshold to ensure statistical validity of the regression.
+        n_points = int(125 / avg_spacing)
+
+        # force odd number for symmetry around the central point
+        if n_points % 2 == 0:
+            n_points += 1
+
+        # Ensure window size does not exceed profile length and has a minimum number of points
+        window_size = max(MIN_SEGMENT_PTS, n_points)
 
         # ── SL and SLk ───────────────────────────────────────────────
         sl, slk = self._compute_sl_slk(dist, elev, total_length_m, sl_window_m)
@@ -273,8 +297,8 @@ class FluvialEngine(BaseEngine):
         chi = self._compute_chi(dist, area, theta_ref, a0)
 
         # ── k_sn via log S / log A (Kirby & Whipple 2001) ────────────
-        ksn_profile, theta_local = self._compute_ksn_loglog_V2(
-            slope, area, theta_ref, total_length_m
+        ksn_profile, theta_local = self._compute_ksn_loglog_V3(
+            slope, area, theta_ref, window_size
         )
 
         # ── Knickpoint detection — segmented regression on chi-plot ──
@@ -282,7 +306,7 @@ class FluvialEngine(BaseEngine):
 
         # ── k_sn per segment (between knickpoints) ───────────────────
         ksn_segments = self._compute_ksn_segments(
-            chi, elev, slope, area, theta_ref, knickpoints
+            chi, elev, slope, area, theta_ref, knickpoints, method
         )
 
         # ── Equilibrium profile (Hack 1973 / Mvondo Owono 2010) ──────
@@ -522,7 +546,7 @@ class FluvialEngine(BaseEngine):
         return ksn_profile, theta_local
     
 
-    def _compute_ksn_loglog_segment(
+    def _compute_ksn_loglog_V2(
         self,
         slope: np.ndarray,
         area_m2: np.ndarray,
@@ -623,30 +647,87 @@ class FluvialEngine(BaseEngine):
 
         return ksn_profile, theta_profile
 
-    def _compute_ksn_loglog_V2(
+    def _compute_ksn_loglog_V3(
         self,
         slope: np.ndarray,
         area_m2: np.ndarray,
         theta_ref: float,
-        total_length_m: int
+        window_size: int 
     ) -> tuple:
         """
-        Standard Point-wise ksn estimation (Violet Line).
-        Matches the scale of publication plots.
+        Computes a continuous, point-wise Normalized Steepness Index (k_sn) profile.
+        
+        METHODOLOGY CHOICE:
+        Unlike the segmented regression which solves for both Ks and Theta, this 
+        function uses the Analytical Direct formula: ksn = S * (A^theta_ref).
+        
+        Why this method for the continuous profile?
+        1. STABILITY: OLS regression intercepts (Ks) are hyper-sensitive to the 
+        staircase effect of native DEM pixels. Direct calculation is much smoother.
+        2. VISUAL COHERENCE: It produces the curve chi vs ksn that geomorphologists expect, 
+        where peaks correspond exactly to local slope breaks.
+        3. STANDARDIZATION: It forces a constant concavity (theta_ref), ensuring 
+        the profile is comparable across different basins.
+
+        Args:
+            slope: Local channel slope array (m/m).
+            area_m2: Drainage area array (m^2).
+            theta_ref: Reference concavity index (e.g., 0.45).
+            window_size: Moving window size for theta_local approximation.
+
+        Returns:
+            tuple: (ksn_profile, theta_local_profile)
         """
-        # 1. Formule directe (Stable pour le profil continu)
-        # ksn = S * A^0.45
+        n = len(slope)
+
+        # --- 1. CORE KSN CALCULATION ---
+        # Formula: ksn = S / A^-theta_ref  =>  S * A^theta_ref
+        # This is the analytical solution for a normalized profile.
         ksn_profile = slope * (area_m2 ** theta_ref)
 
-        # 2. On calcule quand même la concavité locale (pour info)
-        # mais on ne l'utilise pas pour 'corriger' le ksn du profil
-        # car cela crée du bruit inutile.
-        theta_local = np.full(len(slope), theta_ref)
+        # --- 2. THETA LOCAL APPROXIMATION ---
+        # To provide scientific context, we approximate the "real" local concavity 
+        # using a sliding log-log regression window. We don't use this for ksn, 
+        # only for the 'theta_local' metadata.
+        theta_local = np.full(n, theta_ref)
+        
+        if n > window_size:
+            
+            # Log-transform for regression
+            log_A = np.log10(np.where(area_m2 > 1e-6, area_m2, 1e-6))
+            log_S = np.log10(np.where(slope > 1e-10, slope, 1e-10))
+            
+            # Create sliding windows
+            win_A = sliding_window_view(log_A, window_size)
+            win_S = sliding_window_view(log_S, window_size)
+            
+            # Vectorized OLS Slope (theta = -regression_slope)
+            # Using simple Slope = Cov(x,y) / Var(x)
+            x_mean = np.mean(win_A, axis=1)[:, None]
+            y_mean = np.mean(win_S, axis=1)[:, None]
+            
+            num = np.sum((win_A - x_mean) * (win_S - y_mean), axis=1)
+            den = np.sum((win_A - x_mean)**2, axis=1)
+            
+            # Valid windows only (avoid division by zero)
+            valid = den > 1e-6
+            m = np.zeros(len(win_A))
+            m[valid] = num[valid] / den[valid]
+            
+            # Local concavity is the absolute value of the slope
+            th_win = np.abs(m)
+            
+            # Re-align with original array (padding edges)
+            half = window_size // 2
+            theta_local[half : n - (window_size - 1 - half)] = th_win
 
-        # 3. Nettoyage des valeurs aberrantes
-        ksn_profile = np.where((ksn_profile > 0) & (ksn_profile < 1000), ksn_profile, np.nan)
+        # --- 3. SIGNAL CLEANING ---
+        # Remove mathematical artifacts from extreme DEM noise (negative slopes or outliers)
+        ksn_profile = np.where((ksn_profile > 0) & (ksn_profile < 1500), ksn_profile, np.nan)
 
         return ksn_profile, theta_local
+
+
     # ------------------------------------------------------------------
     # Knickpoint detection — segmented regression on chi-plot
     # ------------------------------------------------------------------
@@ -752,79 +833,121 @@ class FluvialEngine(BaseEngine):
     # ------------------------------------------------------------------
     # k_sn per segment (between knickpoints)
     # ------------------------------------------------------------------
-
+    
     def _compute_ksn_segments(
         self,
         chi:         np.ndarray,
         elev:        np.ndarray,
-        slope:       np.ndarray,
-        area_m2:     np.ndarray,
+        slope:       np.ndarray, 
+        area_m2:     np.ndarray, 
         theta_ref:   float,
         knickpoints: list,
+        method:      str = "chi_slope"
     ) -> list:
         """
-        Computes one k_sn value per segment defined by knickpoints.
-        Uses log S / log A regression on each segment.
+        Computes a single k_sn value for each river segment defined by knickpoints.
+        
+        This function offers two distinct methodologies:
+        1. 'chi_slope' (Geometric): Calculates the slope of the Z vs Chi profile. 
+        Extremely robust against DEM pixel noise and "staircase" effects.
+        2. 'regression' (Analytical): Performs a Log(S) vs Log(A) linear regression.
+        Calculates local concavity (theta) for each segment. Follows Wobus (2006).
 
-        Returns list of dicts:
-            {chi_start, chi_end, ksn, theta_local, label}
+        Args:
+            chi: Cumulative Chi coordinate array.
+            elev: Elevation array (meters).
+            slope: Local slope array (m/m).
+            area_m2: Drainage area array (m^2).
+            theta_ref: Reference concavity index (usually 0.45).
+            knickpoints: List of dicts containing 'idx' for each breakpoint.
+            method: Calculation strategy ("chi_slope" or "regression").
+
+        Returns:
+            List of dictionaries containing segment metrics for visualization.
         """
         n = len(chi)
-
-        # Build segment boundaries from knickpoint indices
+    
+        # 1. Define segment boundaries: Source (0) -> Knickpoints -> Mouth (n-1)
         boundaries = [0] + [kp["idx"] for kp in knickpoints] + [n - 1]
-        boundaries = sorted(set(boundaries))
+        boundaries = sorted(list(set(boundaries))) # Ensure order and uniqueness
 
         segments = []
+        
         for j in range(len(boundaries) - 1):
-            i0 = boundaries[j]
-            i1 = boundaries[j + 1]
+            i0, i1 = boundaries[j], boundaries[j + 1]
+            
+            # Check if segment has enough data points for statistical validity
             if i1 - i0 < MIN_SEGMENT_PTS:
                 continue
-
-            # Extraction des données du segment
-            s_slope = slope[i0:i1]
-            s_area  = area_m2[i0:i1]
             
-            # --- ÉTAPE CRITIQUE : NETTOYAGE DES PIXELS PLAT ---
-            # On ne garde que les points où la pente est réelle (> 0)
-            mask = s_slope > 1e-6
-            if np.sum(mask) < MIN_SEGMENT_PTS:
-                continue
+            # Coordinates for the segment edges
+            z_start, z_end = elev[i0], elev[i1]
+            chi_start, chi_end = chi[i0], chi[i1]
+
+            if method == "chi_slope":
+                # --- METHOD A: GEOMETRIC INTEGRAL (Chi-Slope) ---
+                # Standard: ksn is the slope of the line in Chi-Elevation space.
+                # Insensitive to internal pixel-level fluctuations.
+                dz = abs(z_start - z_end)
+                dchi = abs(chi_start - chi_end)
                 
-            clean_s = s_slope[mask]
-            clean_a = s_area[mask]
+                ksn_seg = dz / dchi if dchi > 1e-6 else 0.0
+                # approximation of local concavity by the slope/regression of the segment in chi-elev space (just for info/statistics, not used to correct ksn)
+                s_seg = slope[i0:i1]
+                a_seg = area_m2[i0:i1]
+                mask = s_seg > 1e-6
+                
+                if np.sum(mask) > MIN_SEGMENT_PTS:
+                   # Local concavity (theta) can be approximated by the slope of log S vs log A in the segment, but only if there are enough valid points
+                    th_local = abs(np.polyfit(np.log10(a_seg[mask]), np.log10(s_seg[mask]), 1)[0])
+                else:
+                    th_local = theta_ref
 
-            # Passage en Log-Log pour la régression (Équation 7)
-            log_A = np.log10(clean_a)
-            log_S = np.log10(clean_s)
+            else:
+                # --- METHOD B: ANALYTICAL REGRESSION (Log S / Log A) ---
+                # Standard: Solve log(S) = log(Ks) - theta * log(A).
+                # Requires cleaning points where slope is zero (DEM steps).
+                s_seg = slope[i0:i1]
+                a_seg = area_m2[i0:i1]
+                
+                mask = s_seg > 1e-6 # Mask out horizontal pixels (steps)
+                if np.sum(mask) < MIN_SEGMENT_PTS:
+                    continue
+                    
+                log_A = np.log10(a_seg[mask])
+                log_S = np.log10(s_seg[mask])
 
-            # Vérification de la variation (si Aire ne change pas, pas de régression possible)
-            if np.ptp(log_A) < 0.01:
-                continue
+                # Regression is only valid if there is sufficient variation in Drainage Area
+                if np.ptp(log_A) < 0.01:
+                    continue
 
-            try:
-                coeffs   = np.polyfit(log_A, log_S, 1)
-                th_local = abs(coeffs[0])
-                Ks       = 10 ** coeffs[1]
-                log_A_max = np.max(log_A)
-                log_A_min = np.min(log_A)
-                A_cent = 10**((log_A_max + log_A_min) / 2.0)
+                try:
+                    # OLS Regression: returns [slope, intercept]
+                    # polyfit returns slope = -theta_local (negative in theory), intercept = log(Ks)
+                    coeffs   = np.polyfit(log_A, log_S, 1)
+                    slope = coeffs[0]
+                    intercept = coeffs[1]
+                    th_local = abs(slope)     # Local concavity (positive value)
+                    Ks       = 10 ** intercept # Geomorphic steepness index for the segment (intercept = log(Ks) then ks = 10^intercept)
+                    log_A_max = np.max(log_A)
+                    log_A_min = np.min(log_A)
+                    A_cent = 10**((log_A_max + log_A_min) / 2.0)
 
-                ksn_seg = Ks * (A_cent ** (theta_ref - th_local))
-            except (np.linalg.LinAlgError, ValueError):
-                continue
+                    ksn_seg = Ks * (A_cent ** (theta_ref - th_local))
+                except (np.linalg.LinAlgError, ValueError):
+                    continue
 
             segments.append({
-                "chi_start":   round(float(chi[i0]),  4),
-                "chi_end":     round(float(chi[i1]),  4),
-                "elev_start":  round(float(elev[i0]), 2),
-                "elev_end":    round(float(elev[i1]), 2),
-                "ksn":         round(float(ksn_seg),  2),
-                "theta_local": round(float(th_local), 4),
+                "chi_start":   round(float(chi_start), 4),
+                "chi_end":     round(float(chi_end),   4),
+                "elev_start":  round(float(z_start),   2),
+                "elev_end":    round(float(z_end),     2),
+                "ksn":         round(float(ksn_seg),   2),
+                "theta_local": round(float(th_local),  4),
             })
 
         return segments
+
 
     # ------------------------------------------------------------------
     # Equilibrium profile  (Hack 1973 / Mvondo Owono 2010)
