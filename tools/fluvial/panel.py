@@ -172,27 +172,12 @@ class FluvialPanel(BasePanel):
         self.a0_spin.setToolTip(tr("Reference drainage area A₀ (standard = 1 m²)."))
         param_layout.addRow(tr("A₀ reference:"), self.a0_spin)
 
-        self.n_points_spin = QSpinBox()
-        self.n_points_spin.setRange(50, 1000)
-        self.n_points_spin.setValue(200)
-        param_layout.addRow(tr("Profile points:"), self.n_points_spin)
-
         self.snap_spin = QDoubleSpinBox()
         self.snap_spin.setRange(0.1, 100.0)
         self.snap_spin.setValue(2.0)
         self.snap_spin.setDecimals(1)
         self.snap_spin.setSuffix(" m")
         param_layout.addRow(tr("Snap tolerance:"), self.snap_spin)
-
-        self.sl_window_spin = QDoubleSpinBox()
-        self.sl_window_spin.setRange(50, 5000)
-        self.sl_window_spin.setValue(50.0)
-        self.sl_window_spin.setDecimals(0)
-        self.sl_window_spin.setSuffix(" m")
-        self.sl_window_spin.setToolTip(
-            tr("Moving window for SL / SLk computation (metres).")
-        )
-        param_layout.addRow(tr("SL window:"), self.sl_window_spin)
 
         self.n_knick_spin = QSpinBox()
         self.n_knick_spin.setRange(0, 5)
@@ -497,11 +482,9 @@ class FluvialPanel(BasePanel):
             "stream_layer":  stream_layer,
             "fac_layer":     fac_layer if (fac_layer and fac_layer.isValid()) else None,
             "label_field":   self.label_combo.currentData(),
-            "n_points":      self.n_points_spin.value(),
             "snap_dist_m":   self.snap_spin.value(),
             "theta_ref":     self.theta_slider.value() / 100.0,
             "a0":            self.a0_spin.value(),
-            "sl_window_m":   self.sl_window_spin.value(),
             "n_knickpoints": self.n_knick_spin.value(),
             "smooth":        self.smooth_spin.value(),
         }
