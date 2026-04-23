@@ -321,11 +321,11 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         js_dir    = os.path.join(web_dir, "js").replace("\\", "/")
 
         with open(html_path, "r", encoding="utf-8") as f:
-            html = f.read()
+            html_content = f.read()
 
         # Patch relative JS src → absolute file:/// paths
         for script in ("qwebchannel.js", "plotly.min.js", "bridge.js"):
-            html = html.replace(
+            html_content = html_content.replace(
                 f'src="js/{script}"',
                 f'src="file:///{js_dir}/{script}"'
             )
@@ -336,7 +336,8 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         # with open(temp_path, "w", encoding="utf-8") as f:
         #     f.write(html)
 
-        self.webview.load(QUrl.fromLocalFile(html_path))
+        # self.webview.load(QUrl.fromLocalFile(html_path))
+        self.webview.setHtml(html_content, QUrl.fromLocalFile(html_path))
 
 
     def _csv_headers(self) -> list:

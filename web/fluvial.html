@@ -119,6 +119,7 @@
     <script src="js/qwebchannel.js"></script>
     <script src="js/plotly.min.js"></script>
     <script src="js/bridge.js"></script>
+    
 
     <script>
         /**
@@ -290,7 +291,14 @@
                 });
             }
 
-            Plotly.react('plot-main', traces, layout, { responsive: true });
+            Plotly.react('plot-main', traces, layout, {
+                responsive: true,
+                mathjax: 'local'
+            }).then(() => {
+                if (window.MathJax) {
+                    MathJax.typesetPromise();
+                }
+            });
         }
 
         function _longitudinalLayout(r, data) {  // 
@@ -367,6 +375,7 @@
                         standoff: 10,
                     },
                     overlaying: 'y',
+                    rangemode: 'tozero', 
                     autorange: data.invert_sl ? 'reversed' : true,
                     side: 'right',
                     showgrid: false,
@@ -607,12 +616,13 @@
                 },
                 yaxis2: {
                     title: {
-                        text: '<i>k<sub>sn</sub></i> (m<sup>0.9</sup>)', 
+                        text: 'kₛₙ (m⁰·⁹)',
                         font: { family: 'Times New Roman', size: 14 },
                         standoff: 10,
                     },
                     overlaying: 'y',
-                    autorange: data.invert_sl ? 'reversed' : true,
+                    rangemode: 'tozero',
+                    autorange: true,
                     side: 'right',
                     showgrid: false,
                     showline: true,

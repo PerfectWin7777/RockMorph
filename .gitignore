@@ -40,4 +40,8 @@ venv/
 tests/output/
 tests/data/temp/
 
+
+web/js/tex-mml-chtml.js
+
+
 command.txt

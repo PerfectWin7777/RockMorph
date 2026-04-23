@@ -119,10 +119,17 @@ class FluvialPanel(BasePanel):
         self.fac_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
         self.fac_combo.setAllowEmptyLayer(True)
         self.fac_combo.setCurrentIndex(0)  # empty = auto
+        self.fac_combo.setToolTip(tr(
+            "<b>Flow Accumulation (FAC):</b><br>"
+            "Raster representing the upstream drainage area (pixel count).<br><br>"
+            "• <b>Auto:</b> If left empty, RockMorph will compute it automatically via GRASS r.watershed.<br>"
+            "• <b>User-defined:</b> Providing a pre-conditioned FAC raster (e.g., from Whitebox or SAGA) "
+            "is recommended for professional research."
+        ))
 
         self._fac_auto_label = QLabel(tr("auto"))
         self._fac_auto_label.setStyleSheet(
-            "color: #2980b9; font-size: 10px; font-style: italic;"
+            "color: #2980b9; font-size: 13px; font-style: italic;"
         )
         self.fac_combo.layerChanged.connect(self._on_fac_changed)
 
@@ -151,10 +158,13 @@ class FluvialPanel(BasePanel):
         self.theta_slider.setRange(10, 90)     # 0.10 → 0.90
         self.theta_slider.setValue(45)         # default 0.45
         self.theta_slider.setTickInterval(5)
-        self.theta_slider.setToolTip(
-            tr("Reference concavity index m/n (θref). "
-               "Move to update chi and k_sn instantly.")
-        )
+        self.theta_slider.setToolTip(tr(
+            "<b>Reference Concavity Index (θref):</b><br>"
+            "The m/n ratio used to linearize the river profile (Chi-plot).<br><br>"
+            "• <b>Standard value:</b> 0.45 (Whipple, 2004).<br>"
+            "• <b>Live Update:</b> Moving this slider instantly recomputes the Chi-coordinates "
+            "and ksn values for all basins, allowing for sensitivity analysis."
+        ))
         self._theta_label = QLabel("0.45")
         self._theta_label.setFixedWidth(32)
         self._theta_label.setStyleSheet("font-weight: bold; color: #2d6a9f;")
@@ -169,7 +179,12 @@ class FluvialPanel(BasePanel):
         self.a0_spin.setValue(1.0)
         self.a0_spin.setDecimals(1)
         self.a0_spin.setSuffix(" m²")
-        self.a0_spin.setToolTip(tr("Reference drainage area A₀ (standard = 1 m²)."))
+        self.a0_spin.setToolTip(tr(
+            "<b>Reference Drainage Area (A₀):</b><br>"
+            "A scaling constant used in the Chi-transformation formula.<br><br>"
+            "Standard practice is to set this to 1.0 m² to maintain a normalized "
+            "dimensionless Chi-axis."
+        ))
         param_layout.addRow(tr("A₀ reference:"), self.a0_spin)
 
         # --- ksn Method Selection ---
@@ -194,6 +209,12 @@ class FluvialPanel(BasePanel):
         self.snap_spin.setValue(2.0)
         self.snap_spin.setDecimals(1)
         self.snap_spin.setSuffix(" m")
+        self.snap_spin.setToolTip(tr(
+            "<b>Snap Tolerance:</b><br>"
+            "Maximum distance used to connect disconnected stream segments into a "
+            "topologically continuous network. Increase this value if your stream "
+            "layer has digitization gaps or small connectivity offsets."
+        ))
         param_layout.addRow(tr("Snap tolerance:"), self.snap_spin)
 
         self.n_knick_spin = QSpinBox()
@@ -208,9 +229,14 @@ class FluvialPanel(BasePanel):
         self.smooth_spin.setRange(0, 30)
         self.smooth_spin.setValue(0)
         self.smooth_spin.setSuffix(" pts")
-        self.smooth_spin.setToolTip(
-            tr("Hanning smoothing window on elevation profile (0 = off).")
-        )
+        self.smooth_spin.setToolTip(tr(
+            "<b>Elevation Profile Smoothing:</b><br>"
+            "Applies a Savitzky-Golay or Hanning filter to the elevation data.<br><br>"
+            "• <b>Purpose:</b> Removes the 'staircase' effect caused by discrete DEM pixels.<br>"
+            "• <b>Impact:</b> Improves the precision of local slope calculation and "
+            "stabilizes knickpoint detection.<br>"
+            "• <b>0:</b> Uses raw native pixels (Best for SL-index spikes)."
+        ))
         param_layout.addRow(tr("Smoothing:"), self.smooth_spin)
 
         root.addWidget(param_group)
@@ -306,8 +332,9 @@ class FluvialPanel(BasePanel):
         
         for chk in (self.chk_ksn_profile, self.chk_ksn_segs, 
                     self.chk_equil_chi, self.chk_knick_chi):
-            chk.setChecked(True)
             cg.addWidget(chk)
+            if chk != self.chk_equil_chi:
+               chk.setChecked(True)
 
         display_layout.addWidget(self._chi_group)
         self._chi_group.setVisible(False) # Hidden by default
