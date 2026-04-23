@@ -172,6 +172,23 @@ class FluvialPanel(BasePanel):
         self.a0_spin.setToolTip(tr("Reference drainage area A₀ (standard = 1 m²)."))
         param_layout.addRow(tr("A₀ reference:"), self.a0_spin)
 
+        # --- ksn Method Selection ---
+        self.ksn_method_combo = QComboBox()
+        # "chi_slope" is the default and recommended method for more stable ksn segmentation, especially on noisy DEMs. 
+        self.ksn_method_combo.addItem(tr("Integral (Chi-Slope) - Recommended"), "chi_slope")
+        self.ksn_method_combo.addItem(tr("Regression (Log S vs Log A)"), "regression")
+
+        # rich explanation to user 
+        self.ksn_method_combo.setToolTip(tr(
+            "<b>Choose the calculation strategy for segments:</b><br><br>"
+            "<b>1. Integral (Chi-Slope):</b> Most stable. Calculates ksn from the elevation "
+            "difference over the Chi range. Best for noisy DEMs or 'staircase' profiles.<br><br>"
+            "<b>2. Regression (Log S vs Log A):</b> Traditional method. Fits a line to "
+            "slope/area data. Allows calculating real concavity (θ) but very sensitive to DEM noise."
+        ))
+
+        param_layout.addRow(tr("k_sn Method:"), self.ksn_method_combo)
+
         self.snap_spin = QDoubleSpinBox()
         self.snap_spin.setRange(0.1, 100.0)
         self.snap_spin.setValue(2.0)
@@ -423,6 +440,7 @@ class FluvialPanel(BasePanel):
         """
 
         a0 = self.a0_spin.value()
+        ksn_method = self.ksn_method_combo.currentData()
 
         for r in self._results:
             dist  = np.array(r["distances_m"])
@@ -435,8 +453,8 @@ class FluvialPanel(BasePanel):
             r["chi_max"] = round(float(np.nanmax(chi)), 4)
 
             # Recompute ksn profile
-            ksn_prof, th_local = self._engine._compute_ksn_loglog(
-                slope, area, theta_ref
+            ksn_prof, th_local = self._engine._compute_ksn_loglog_V3(
+                slope, area, theta_ref, window_size=None
             )
             r["ksn_profile"] = np.nan_to_num(ksn_prof, nan=0.0).tolist()
             r["ksn_mean"]    = round(float(np.nanmean(ksn_prof)), 2)
@@ -448,7 +466,7 @@ class FluvialPanel(BasePanel):
             knickpoints = r.get("knickpoints", [])
             r["ksn_segments"] = self._engine._compute_ksn_segments(
                 chi, np.array(r["elevations"]),
-                slope, area, theta_ref, knickpoints
+                slope, area, theta_ref, knickpoints, ksn_method
             )
 
         self._refresh_tree()
@@ -487,6 +505,7 @@ class FluvialPanel(BasePanel):
             "a0":            self.a0_spin.value(),
             "n_knickpoints": self.n_knick_spin.value(),
             "smooth":        self.smooth_spin.value(),
+            "ksn_method":    self.ksn_method_combo.currentData(),
         }
 
         self.compute_btn.setEnabled(False)

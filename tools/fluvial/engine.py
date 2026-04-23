@@ -324,7 +324,7 @@ class FluvialEngine(BaseEngine):
         n_knick      = kwargs.get("n_knickpoints",  3)
         smooth_win   = kwargs.get("smooth",         0)
         progress_cb  = kwargs.get("progress_callback")
-        method       = kwargs.get("method", "chi_slope")
+        ksn_method       = kwargs.get("ksn_method", "chi_slope")
 
 
         results  = []
@@ -409,7 +409,7 @@ class FluvialEngine(BaseEngine):
                     a0           = a0,
                     n_knick      = n_knick,
                     smooth_win   = smooth_win,
-                    method       = method,
+                    ksn_method       = ksn_method,
 
                 )
                 results.append(metrics)
@@ -444,7 +444,7 @@ class FluvialEngine(BaseEngine):
         a0:          float,
         n_knick:     int,
         smooth_win:  int,
-        method:      str = "chi_slope",
+        ksn_method:  str = "chi_slope",
     ) -> dict:
         """
         Computes all geomorphologic metrics for a single river basin.
@@ -485,7 +485,7 @@ class FluvialEngine(BaseEngine):
         smooth_win : int
             Elevation smoothing window (0 = none).
 
-        method : str
+        ksn_method : str
             Segmented k_sn calculation method ("chi_slope" or "regression").
 
         COMPUTATION SEQUENCE
@@ -679,7 +679,7 @@ class FluvialEngine(BaseEngine):
 
         # ── k_sn per segment (between knickpoints) ───────────────────
         ksn_segments = self._compute_ksn_segments(
-            chi, elev, slope, area, theta_ref, knickpoints, method
+            chi, elev, slope, area, theta_ref, knickpoints, ksn_method
         )
 
         # ── Equilibrium profile (Hack 1973 / Mvondo Owono 2010) ──────
@@ -1229,7 +1229,7 @@ class FluvialEngine(BaseEngine):
         slope: np.ndarray,
         area_m2: np.ndarray,
         theta_ref: float,
-        window_size: int 
+        window_size: int = None
     ) -> tuple:
         r"""
         Computes a continuous, point-wise Normalized Steepness Index (k_sn)
@@ -1415,7 +1415,7 @@ class FluvialEngine(BaseEngine):
         # only for the 'theta_local' metadata.
         theta_local = np.full(n, theta_ref)
         
-        if n > window_size:
+        if n > window_size or not window_size :
             
             # Log-transform for regression
             log_A = np.log10(np.where(area_m2 > 1e-6, area_m2, 1e-6))
@@ -1837,7 +1837,7 @@ class FluvialEngine(BaseEngine):
         area_m2:     np.ndarray, 
         theta_ref:   float,
         knickpoints: list,
-        method:      str = "chi_slope"
+        ksn_method:      str = "chi_slope"
     ) -> list:
         r"""
         Computes k_sn value for each river SEGMENT (section between knickpoints).
@@ -2048,7 +2048,7 @@ class FluvialEngine(BaseEngine):
             knickpoints (list)
                 List of dicts with 'idx' key (array indices).
 
-            method (str)
+            ksn_method (str)
                 "chi_slope" (default) or "regression".
 
         Returns:
@@ -2075,7 +2075,7 @@ class FluvialEngine(BaseEngine):
             z_start, z_end = elev[i0], elev[i1]
             chi_start, chi_end = chi[i0], chi[i1]
 
-            if method == "chi_slope":
+            if ksn_method == "chi_slope":
                 # --- METHOD A: GEOMETRIC INTEGRAL (Chi-Slope) ---
                 # Standard: ksn is the slope of the line in Chi-Elevation space.
                 # Insensitive to internal pixel-level fluctuations.
