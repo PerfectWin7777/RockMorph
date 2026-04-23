@@ -247,7 +247,7 @@ class FluvialEngine(BaseEngine):
         # --- CRITICAL STEP: FORCE SOURCE-TO-MOUTH DIRECTION ---
         # In geomorphology, index 0 MUST be the Source (Highest point)
         if elev[0] < elev[-1]:
-            print("flipping profile to ensure source-to-mouth order")
+            # print("flipping profile to ensure source-to-mouth order")
             # The profile is currently Mouth -> Source, we must flip it
             elev  = np.flip(elev)
             area  = np.flip(area)
@@ -274,7 +274,7 @@ class FluvialEngine(BaseEngine):
 
         # ── k_sn via log S / log A (Kirby & Whipple 2001) ────────────
         ksn_profile, theta_local = self._compute_ksn_loglog_V2(
-            slope, area, theta_ref
+            slope, area, theta_ref, total_length_m
         )
 
         # ── Knickpoint detection — segmented regression on chi-plot ──
@@ -452,6 +452,7 @@ class FluvialEngine(BaseEngine):
         slope:     np.ndarray,
         area_m2:   np.ndarray,
         theta_ref: float,
+        total_length_m : int
     ) -> tuple:
         """
         Point-wise k_sn estimate using a sliding window in log S / log A space.
@@ -521,11 +522,12 @@ class FluvialEngine(BaseEngine):
         return ksn_profile, theta_local
     
 
-    def _compute_ksn_loglog_V2(
+    def _compute_ksn_loglog_segment(
         self,
         slope: np.ndarray,
         area_m2: np.ndarray,
         theta_ref: float,
+        total_length_m: int
     ) -> tuple:
         """
         Vectorized point-wise k_sn estimation using OLS regression on log S / log A.
@@ -549,7 +551,10 @@ class FluvialEngine(BaseEngine):
         """
         n_total = len(slope)
         # Define window size: ~10% of profile, forced to be odd for symmetry
-        half_win = max(MIN_SEGMENT_PTS, n_total // 20)
+        # use actual profile length to determine window size, with a minimum threshold
+        avg_dist = total_length_m / n_total
+        half_win = max(MIN_SEGMENT_PTS, int(125 / avg_dist))
+        # half_win = max(MIN_SEGMENT_PTS, n // 20)
         window_size = 2 * half_win + 1
 
         # --- SECURITY : RIVER TOO SHORT ---
@@ -618,7 +623,30 @@ class FluvialEngine(BaseEngine):
 
         return ksn_profile, theta_profile
 
+    def _compute_ksn_loglog_V2(
+        self,
+        slope: np.ndarray,
+        area_m2: np.ndarray,
+        theta_ref: float,
+        total_length_m: int
+    ) -> tuple:
+        """
+        Standard Point-wise ksn estimation (Violet Line).
+        Matches the scale of publication plots.
+        """
+        # 1. Formule directe (Stable pour le profil continu)
+        # ksn = S * A^0.45
+        ksn_profile = slope * (area_m2 ** theta_ref)
 
+        # 2. On calcule quand même la concavité locale (pour info)
+        # mais on ne l'utilise pas pour 'corriger' le ksn du profil
+        # car cela crée du bruit inutile.
+        theta_local = np.full(len(slope), theta_ref)
+
+        # 3. Nettoyage des valeurs aberrantes
+        ksn_profile = np.where((ksn_profile > 0) & (ksn_profile < 1000), ksn_profile, np.nan)
+
+        return ksn_profile, theta_local
     # ------------------------------------------------------------------
     # Knickpoint detection — segmented regression on chi-plot
     # ------------------------------------------------------------------
@@ -754,24 +782,35 @@ class FluvialEngine(BaseEngine):
             if i1 - i0 < MIN_SEGMENT_PTS:
                 continue
 
-            sl  = slope[i0:i1]
-            ar  = area_m2[i0:i1]
+            # Extraction des données du segment
+            s_slope = slope[i0:i1]
+            s_area  = area_m2[i0:i1]
+            
+            # --- ÉTAPE CRITIQUE : NETTOYAGE DES PIXELS PLAT ---
+            # On ne garde que les points où la pente est réelle (> 0)
+            mask = s_slope > 1e-6
+            if np.sum(mask) < MIN_SEGMENT_PTS:
+                continue
+                
+            clean_s = s_slope[mask]
+            clean_a = s_area[mask]
 
-            log_A = np.log10(np.where(ar  > 0,    ar,   1e-6))
-            log_S = np.log10(np.where(sl  > 1e-8, sl,  1e-10))
+            # Passage en Log-Log pour la régression (Équation 7)
+            log_A = np.log10(clean_a)
+            log_S = np.log10(clean_s)
 
-            if np.ptp(log_A) < 0.1:
+            # Vérification de la variation (si Aire ne change pas, pas de régression possible)
+            if np.ptp(log_A) < 0.01:
                 continue
 
             try:
                 coeffs   = np.polyfit(log_A, log_S, 1)
                 th_local = abs(coeffs[0])
                 Ks       = 10 ** coeffs[1]
-                A_max    = ar.max()
-                A_min    = max(ar.min(), 1e-6)
-                A_cent   = 10 ** (
-                    (math.log10(A_max) + math.log10(A_min)) / 2.0
-                )
+                log_A_max = np.max(log_A)
+                log_A_min = np.min(log_A)
+                A_cent = 10**((log_A_max + log_A_min) / 2.0)
+
                 ksn_seg = Ks * (A_cent ** (theta_ref - th_local))
             except (np.linalg.LinAlgError, ValueError):
                 continue
