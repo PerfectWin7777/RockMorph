@@ -206,7 +206,11 @@
                 name: r.label + ' — Z',
                 type: 'scatter',
                 mode: 'lines',
-                line: { color: COLORS.z_profile, width: 2 },
+                line: {
+                    color: data.style.z_profile.color,
+                    width: data.style.z_profile.width,
+                    dash: data.style.z_profile.shape
+                },
                 yaxis: 'y',
                 hovertemplate:
                     '<b>' + r.label + '</b><br>' +
@@ -223,9 +227,9 @@
                     type: 'scatter',
                     mode: 'lines',
                     line: {
-                        color: COLORS.equil,
-                        width: 1.5,
-                        dash: 'dash',
+                        color: data.style.equil.color,
+                        width: data.style.equil.width,
+                        dash: data.style.equil.shape,
                     },
                     yaxis: 'y',
                     hovertemplate:
@@ -240,11 +244,11 @@
 
             if (data.sl_mode === 'sl' && r.sl && r.sl.length) {
                 sl_data = r.sl;
-                sl_color = COLORS.sl;
+                sl_color = data.style.sl_index.color;
                 sl_name = 'SL index';
             } else if (data.sl_mode === 'slk' && r.slk && r.slk.length) {
                 sl_data = r.slk;
-                sl_color = COLORS.slk;
+                sl_color = data.style.sl_index.color;
                 sl_name = 'SLk (normalised)';
             }
             // sl_mode === 'none' → sl_data reste null → rien n'est ajouté
@@ -256,7 +260,11 @@
                     name: sl_name,
                     type: 'scatter',
                     mode: 'lines',
-                    line: { color: sl_color, width: 1 },
+                    line: {
+                        color: sl_color,
+                        width: data.style.sl_index.width,
+                        dash: data.style.sl_index.shape
+                    },
                     yaxis: 'y2',
                     hovertemplate: sl_name + ': %{y:.2f}<extra></extra>',
                 });
@@ -278,10 +286,10 @@
                     type: 'scatter',
                     mode: 'markers',
                     marker: {
-                        color: COLORS.knickpoint,
-                        size: 10,
+                        color: data.style.knickpoint.color,
+                        size: data.style.knickpoint.width,
                         symbol: 'circle',
-                        line: { color: '#fff', width: 1.5 },
+                        line: { color: '#fff', width: 1.0 },
                     },
                     yaxis: 'y',
                     hovertemplate:
@@ -335,7 +343,7 @@
                         font: { family: 'Times New Roman', size: 12 },
                         standoff: 12,
                     },
-                    showgrid: true,
+                    showgrid: data.style.layout.x_grid,
                     gridcolor: '#dddddd',
                     gridwidth: 0.5,
                     showline: true,
@@ -345,7 +353,7 @@
                     ticklen: 4,
                     tickfont: { family: 'Times New Roman', size: 11 },
                     minor: {
-                        showgrid: true,
+                        showgrid: data.style.layout.x_grid,
                         gridcolor: '#eeeeee',
                         gridwidth: 0.2,
                     },
@@ -357,7 +365,7 @@
                         font: { family: 'Times New Roman', size: 12 },
                         standoff: 10,
                     },
-                    showgrid: true,
+                    showgrid: data.style.layout.y_grid,
                     gridcolor: '#dddddd',
                     gridwidth: 0.5,
                     showline: true,
@@ -366,6 +374,11 @@
                     ticks: 'outside',
                     ticklen: 4,
                     tickfont: { family: 'Times New Roman', size: 11 },
+                    minor: {
+                        showgrid: data.style.layout.y_grid,
+                        gridcolor: '#eeeeee',
+                        gridwidth: 0.2,
+                    },
                     zeroline: false,
                 },
                 yaxis2: {
@@ -415,8 +428,9 @@
                     type: 'scatter',
                     mode: 'lines',
                     line: {
-                        color: COLORS.chi_curve,
-                        width: isHighlighted ? 2 : 1,
+                        color: data.style.chi_curve.color,
+                        width: isHighlighted ? data.style.chi_curve.width : data.style.chi_curve.width * 0.75,
+                        dash: data.style.chi_curve.shape
                     },
                     opacity: opacity,
                     yaxis: 'y',
@@ -435,8 +449,9 @@
                         type: 'scatter',
                         mode: 'lines',
                         line: {
-                            color: COLORS.ksn_profile,
-                            width: 1,
+                            color: data.style.ksn_profile.color,
+                            width: data.style.ksn_profile.width,
+                            dash: data.style.ksn_profile.shape
                         },
                         opacity: opacity * 0.7,
                         yaxis: 'y2',
@@ -456,8 +471,9 @@
                             type: 'scatter',
                             mode: 'lines',
                             line: {
-                                color: COLORS.ksn_seg,
-                                width: 3,
+                                color: data.style.ksn_seg.color,
+                                width: data.style.ksn_seg.width,
+                                dash: data.style.ksn_seg.shape
                             },
                             opacity: opacity,
                             yaxis: 'y2',
@@ -483,7 +499,7 @@
                             font: {
                                 family: 'Times New Roman',
                                 size: 10,
-                                color: COLORS.ksn_seg,
+                                color: data.style.ksn_seg.color,
                             },
                             xanchor: 'center',
                             yanchor: 'bottom',
@@ -511,9 +527,9 @@
                         type: 'scatter',
                         mode: 'lines',
                         line: {
-                            color: COLORS.equil_chi,
-                            width: 1.5,
-                            dash: 'dash',
+                            color: data.style.equil_chi.color,
+                            width: data.style.equil_chi.width,
+                            dash: data.style.equil_chi.shape,
                         },
                         opacity: opacity,
                         yaxis: 'y',
@@ -539,10 +555,10 @@
                         type: 'scatter',
                         mode: 'markers',
                         marker: {
-                            color: COLORS.knickpoint,
-                            size: 10,
+                            color: data.style.knickpoint.color,
+                            size: data.style.knickpoint.width,
                             symbol: 'circle',
-                            line: { color: '#fff', width: 1.5 },
+                            line: { color: '#fff', width: 1.0 },
                         },
                         opacity: opacity,
                         yaxis: 'y',
@@ -581,7 +597,7 @@
                         standoff: 12,
                     },
                     autorange: true,
-                    showgrid: true,
+                    showgrid: data.style.layout.x_grid,
                     gridcolor: '#dddddd',
                     gridwidth: 0.5,
                     showline: true,
@@ -591,7 +607,7 @@
                     ticklen: 4,
                     tickfont: { family: 'Times New Roman', size: 11 },
                     minor: {
-                        showgrid: true,
+                        showgrid: data.style.layout.x_grid,
                         gridcolor: '#eeeeee',
                         gridwidth: 0.2,
                     },
@@ -603,7 +619,7 @@
                         font: { family: 'Times New Roman', size: 12 },
                         standoff: 10,
                     },
-                    showgrid: true,
+                    showgrid: data.style.layout.y_grid,
                     gridcolor: '#dddddd',
                     gridwidth: 0.5,
                     showline: true,
@@ -612,6 +628,11 @@
                     ticks: 'outside',
                     ticklen: 4,
                     tickfont: { family: 'Times New Roman', size: 11 },
+                    minor: {
+                        showgrid: data.style.layout.y_grid,
+                        gridcolor: '#eeeeee',
+                        gridwidth: 0.2,
+                    },
                     zeroline: false,
                 },
                 yaxis2: {
