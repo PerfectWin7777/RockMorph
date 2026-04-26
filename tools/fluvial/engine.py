@@ -698,6 +698,7 @@ class FluvialEngine(BaseEngine):
             kp["chi"]      = float(chi_plot[kp["idx_plot"]])
 
         return {
+             "geom":          river["geom"],
             # Identity
             "label":         label,
             "fid":           fid,
@@ -2129,6 +2130,8 @@ class FluvialEngine(BaseEngine):
                     continue
 
             segments.append({
+                 "idx_start":   i0, 
+                 "idx_end":     i1,
                 "chi_start":   round(float(chi_start), 4),
                 "chi_end":     round(float(chi_end),   4),
                 "elev_start":  round(float(z_start),   2),

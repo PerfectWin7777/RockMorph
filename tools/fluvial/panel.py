@@ -34,7 +34,8 @@ from PyQt5.QtWidgets import (  # type: ignore
     QSizePolicy, QAbstractItemView,
     QButtonGroup, QRadioButton,
     QMenu, QApplication, QFileDialog,
-    QCheckBox, QSlider, QWidget, QFrame
+    QCheckBox, QSlider, QWidget, QFrame,
+    QMessageBox
 )
 from PyQt5.QtCore import Qt, QCoreApplication, pyqtSignal    # type: ignore
 from PyQt5.QtGui import QColor  # type: ignore
@@ -571,9 +572,16 @@ class FluvialPanel(BasePanel):
         export_layout = QHBoxLayout(export_group)
         for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
             btn = QPushButton(fmt)
-            btn.setFixedHeight(28)
+            btn.setFixedHeight(20)
             btn.clicked.connect(lambda checked, f=fmt: self._on_export(f))
             export_layout.addWidget(btn)
+        
+
+        self.btn_gpkg = QPushButton(tr("GeoPackage"))
+        self.btn_gpkg.setToolTip(tr("Export all results as spatial layers (Lines and Points) for GIS analysis."))
+        self.btn_gpkg.clicked.connect(self._on_export_geopackage)
+        export_layout.addWidget(self.btn_gpkg)
+
         root.addWidget(export_group)
 
         # ── Warnings ──────────────────────────────────────────────────
@@ -923,9 +931,17 @@ class FluvialPanel(BasePanel):
         else:
             sl_mode = "slk"
 
+        # create a clean copy of display without geometry for JSON serialization
+        clean_display = []
+        for r in display:
+            r_clean = r.copy()
+            if "geom" in r_clean:
+                del r_clean["geom"] # delete geometry to reduce payload size
+            clean_display.append(r_clean)
+
         payload = {
             "view_mode":       self._view_mode,
-            "results":         display,
+            "results":         clean_display,
             "highlight_fids":  highlight_fids or [],
 
             # Layer toggles — longitudinal
@@ -1185,6 +1201,125 @@ class FluvialPanel(BasePanel):
             }
             for r in self._results
         ]
+    
+
+    def _on_export_geopackage(self):
+        if not self._results:
+            self.show_error(tr("No data to export. Compute first."))
+            return
+
+        # 1. Demander le chemin
+        path = self._exporter._ask_path("gpkg", self)
+        if not path: return
+
+        crs = self.dem_combo.currentLayer().crs()
+        layers_dict = {}
+
+        # ---------------------------------------------------------
+        # Layer 1: MAIN RIVERS (Single blocks)
+        # ---------------------------------------------------------
+        f_main = QgsFields()
+        f_main.append(QgsField("basin", QVariant.String))
+        f_main.append(QgsField("len_km", QVariant.Double))
+        f_main.append(QgsField("ksn_avg", QVariant.Double))
+        f_main.append(QgsField("n_knk", QVariant.Int))
+        
+        feats_main = []
+        for r in self._results:
+            feat = QgsFeature(f_main)
+            feat.setGeometry(r["geom"]) 
+            feat.setAttributes([r["label"], r["length_km"], r["ksn_mean"], len(r["knickpoints"])])
+            feats_main.append(feat)
+        layers_dict["main_rivers"] = {"fields": f_main, "features": feats_main, "crs": crs, "geom_type": QgsWkbTypes.LineString}
+
+        # ---------------------------------------------------------
+        # Layer 2: KSN SEGMENTS (Sliced lines for mapping)
+        # ---------------------------------------------------------
+        f_reach = QgsFields()
+        f_reach.append(QgsField("basin", QVariant.String))
+        f_reach.append(QgsField("ksn_seg", QVariant.Double))
+        f_reach.append(QgsField("theta", QVariant.Double))
+        f_reach.append(QgsField("z_drop", QVariant.Double))
+
+        feats_reach = []
+        for r in self._results:
+            geom = r["geom"]
+            dists = r["distances_m"]
+            for seg in r["ksn_segments"]:
+                # On coupe la géométrie entre la distance i0 et i1
+                d_start = dists[seg["idx_start"]]
+                d_end   = dists[seg["idx_end"]]
+                sub_geom = QgsGeometry(geom.constGet().curveSubstring(d_start, d_end))
+                
+                feat = QgsFeature(f_reach)
+                feat.setGeometry(sub_geom)
+                z_drop = abs(seg["elev_start"] - seg["elev_end"])
+                feat.setAttributes([r["label"], seg["ksn"], seg["theta_local"], z_drop])
+                feats_reach.append(feat)
+        layers_dict["ksn_segments"] = {"fields": f_reach, "features": feats_reach, "crs": crs, "geom_type": QgsWkbTypes.LineString}
+
+        # ---------------------------------------------------------
+        # Layer 3: KNICKPOINTS (Points)
+        # ---------------------------------------------------------
+        f_knk = QgsFields()
+        f_knk.append(QgsField("basin", QVariant.String))
+        f_knk.append(QgsField("z_m", QVariant.Double))
+        f_knk.append(QgsField("dist_m", QVariant.Double))
+        f_knk.append(QgsField("chi", QVariant.Double))
+
+        feats_knk = []
+        for r in self._results:
+            geom = r["geom"]
+            for kp in r["knickpoints"]:
+                # Interpoler la position géographique à partir de la distance
+                pt_geom = geom.interpolate(kp["dist_m"])
+                feat = QgsFeature(f_knk)
+                feat.setGeometry(pt_geom)
+                feat.setAttributes([r["label"], kp["elev_m"], kp["dist_m"], kp["chi"]])
+                feats_knk.append(feat)
+        layers_dict["knickpoints"] = {"fields": f_knk, "features": feats_knk, "crs": crs, "geom_type": QgsWkbTypes.Point}
+
+        # ---------------------------------------------------------
+        # Layer 4: PROFILE POINTS (Raw data points)
+        # ---------------------------------------------------------
+        f_pts = QgsFields()
+        f_pts.append(QgsField("basin", QVariant.String))
+        f_pts.append(QgsField("dist", QVariant.Double))
+        f_pts.append(QgsField("z", QVariant.Double))
+        f_pts.append(QgsField("ksn_raw", QVariant.Double))
+        f_pts.append(QgsField("sl_idx", QVariant.Double))
+
+        feats_pts = []
+        for r in self._results:
+            geom = r["geom"]
+            for i in range(len(r["distances_m"])):
+                pt_geom = geom.interpolate(r["distances_m"][i])
+                feat = QgsFeature(f_pts)
+                feat.setGeometry(pt_geom)
+                feat.setAttributes([r["label"], r["distances_m"][i], r["elevations"][i], 
+                                    r["ksn_profile"][i], r["sl"][i]])
+                feats_pts.append(feat)
+        layers_dict["profile_points"] = {"fields": f_pts, "features": feats_pts, "crs": crs, "geom_type": QgsWkbTypes.Point}
+
+        # --- EXECUTE EXPORT ---
+        success = self._exporter.save_geopackage(path, layers_dict)
+        
+        if success:
+            res = QMessageBox.question(self, tr("Export Successful"), 
+                                     tr("Would you like to add the exported layers to your map?"),
+                                     QMessageBox.Yes | QMessageBox.No)
+            if res == QMessageBox.Yes:
+                self._load_gpkg_to_canvas(path, layers_dict.keys())
+
+    def _load_gpkg_to_canvas(self, path, layer_names):
+        """Loads the specific tables from the GPKG into QGIS."""
+        for name in layer_names:
+            # Format source: path_to_gpkg|layername=table_name
+            uri = f"{path}|layername={name}"
+            sub_layer = QgsVectorLayer(uri, f"RM_{name}", "ogr")
+            if sub_layer.isValid():
+                QgsProject.instance().addMapLayer(sub_layer)
+
 
     # ------------------------------------------------------------------
     # Helpers

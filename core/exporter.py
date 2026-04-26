@@ -50,7 +50,10 @@ from PyQt5.QtCore import QCoreApplication, Qt, QByteArray,QSizeF  # type: ignore
 from PyQt5.QtGui import QFont, QImage, QPainter            # type: ignore
 from PyQt5.QtSvg import QSvgRenderer                       # type: ignore
 from PyQt5.QtPrintSupport import QPrinter  # type: ignore
-            
+from qgis.core import (  # type: ignore
+    QgsFields, QgsVectorFileWriter, QgsFeature, 
+    QgsProject, QgsVectorLayer, QgsWkbTypes
+)       
 
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
@@ -443,7 +446,61 @@ class RockMorphExporter:
         return unquote(payload).encode('utf-8')
     
     
-  
+    
+    # ------------------------------------------------------------------
+    # GEOPACKAGE export
+    # ------------------------------------------------------------------
+    
+
+    def save_geopackage(self, path: str, layers_data: dict) -> bool:
+        """
+        Generic multi-layer GeoPackage exporter.
+        
+        Args:
+            path: Destination file path (.gpkg).
+            layers_data: Dictionary structured as:
+                { 
+                  "layer_name": {
+                      "fields": QgsFields,
+                      "features": list[QgsFeature],
+                      "crs": QgsCoordinateReferenceSystem,
+                      "geom_type": QgsWkbTypes.GeometryType
+                  }
+                }
+        """
+        try:
+            options = QgsVectorFileWriter.SaveVectorOptions()
+            options.driverName = "GPKG"
+            
+            for name, data in layers_data.items():
+                options.layerName = name
+                # For the first layer, we create the file. For others, we append.
+                if os.path.exists(path):
+                    options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+                
+                writer = QgsVectorFileWriter.create(
+                    path, 
+                    data["fields"], 
+                    data["geom_type"], 
+                    data["crs"], 
+                    QgsProject.instance().transformContext(), 
+                    options
+                )
+                
+                if writer.hasError():
+                    self._error(tr(f"Error creating layer {name}: {writer.errorMessage()}"))
+                    return False
+                
+                writer.addFeatures(data["features"])
+                del writer # Flush to disk
+                
+            self._info(tr(f"GeoPackage created: {os.path.basename(path)}"))
+            return True
+            
+        except Exception as e:
+            self._error(tr(f"GPKG Export failed: {e}"))
+            return False
+        
 
     # ------------------------------------------------------------------
     # Internal — QGIS message bar
