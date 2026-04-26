@@ -11,6 +11,7 @@ from ..tools.swath.panel import SwathPanel
 from ..tools.hypsometry.panel import HypsometryPanel
 from ..tools.ncp.panel import NCPPanel
 from ..tools.fluvial.panel import FluvialPanel
+from ..tools.watershed.panel import WatershedPanel
 
 
 def tr(message):
@@ -23,7 +24,8 @@ TOOLS = [
     ("Swath Profile",  SwathPanel),
     ("Hypsometry",      HypsometryPanel),
     ("Normalized Channel Profile", NCPPanel),
-    ("Fluvial Toolbox", FluvialPanel)
+    ("Fluvial Toolbox", FluvialPanel),
+    ("Watershed", WatershedPanel),
 ]
 
 
@@ -92,8 +94,8 @@ class RockMorphDock(QDockWidget):
         self.setWidget(container)
 
         # Load first tool
-        self.tool_combo.setCurrentIndex(4)
-        self._switch_tool(4)
+        self.tool_combo.setCurrentIndex(5)
+        self._switch_tool(5)
 
     def _switch_tool(self, index: int):
         """
