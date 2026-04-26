@@ -37,6 +37,7 @@ import os
 import csv
 import base64
 import math
+import locale
 import json as json_module
 from urllib.parse import unquote
 
@@ -292,14 +293,27 @@ class RockMorphExporter:
             return
         self.save_csv(rows, headers, path)
 
-    def save_csv(self, rows: list, headers: list, path: str) -> None:
-        """Write rows to CSV at path (no dialog)."""
+    def save_csv(self, rows: list, headers: list, path: str, delimiter: str = None) -> None:
+        """Write rows to CSV with automatic Excel delimiter detection. (no dialog)."""
         try:
-            with open(path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=headers, delimiter=';') # use ; for excel 
+             # 1. automatic delimiter detection for Excel compatibility
+            if delimiter is None:
+                # we check the user's locale decimal separator: 
+                # if it's a comma(ex : in france), we use semicolon as delimiter; otherwise we use comma(ex : Uk,USA ect...). 
+                # This ensures that Excel will correctly parse the CSV on import, regardless of the user's regional settings.
+                decimal_point = locale.localeconv()['decimal_point']
+                delimiter = ';' if decimal_point == ',' else ','
+
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                # write first line with separator info for Excel (only if using non-standard delimiter)
+                f.write(f"sep={delimiter}\n")
+                
+                
+                writer = csv.DictWriter(f, fieldnames=headers, delimiter=delimiter)
                 writer.writeheader()
                 writer.writerows(rows)
-            self._info(tr(f"CSV → {os.path.basename(path)}"))
+                
+            self._info(tr(f"CSV exported using '{delimiter}' → {os.path.basename(path)}"))
         except Exception as e:
             self._error(tr(f"CSV export failed: {e}"))
 
