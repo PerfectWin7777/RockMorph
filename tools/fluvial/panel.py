@@ -1181,7 +1181,7 @@ class FluvialPanel(BasePanel):
         )
 
     def _csv_headers(self) -> list:
-        return ["label", "fid", "slk_max", "chi_max",
+        return ["label", "fid", "sl_index max", "slk_index (normalized) max", "chi_max",
                 "ksn_mean", "ksn_max", "theta_local",
                 "theta_ref", "n_knickpoints", "length_km"]
 
@@ -1190,7 +1190,8 @@ class FluvialPanel(BasePanel):
             {
                 "label":         r["label"],
                 "fid":           r["fid"],
-                "slk_max":       r["slk_max"],
+                "sl_index max":  r["sl_max"],
+                "slk_index (normalized) max": r["slk_max"],
                 "chi_max":       r["chi_max"],
                 "ksn_mean":      r["ksn_mean"],
                 "ksn_max":       r["ksn_max"],
@@ -1220,15 +1221,16 @@ class FluvialPanel(BasePanel):
         # ---------------------------------------------------------
         f_main = QgsFields()
         f_main.append(QgsField("basin", QVariant.String))
-        f_main.append(QgsField("len_km", QVariant.Double))
-        f_main.append(QgsField("ksn_avg", QVariant.Double))
-        f_main.append(QgsField("n_knk", QVariant.Int))
+        f_main.append(QgsField("length_km", QVariant.Double))
+        f_main.append(QgsField("ksn_mean", QVariant.Double))
+        f_main.append(QgsField("chi_max", QVariant.Double)) 
+        f_main.append(QgsField("n_knickpoints", QVariant.Int))
         
         feats_main = []
         for r in self._results:
             feat = QgsFeature(f_main)
             feat.setGeometry(r["geom"]) 
-            feat.setAttributes([r["label"], r["length_km"], r["ksn_mean"], len(r["knickpoints"])])
+            feat.setAttributes([r["label"], r["length_km"], r["ksn_mean"], r["chi_max"], len(r["knickpoints"])])
             feats_main.append(feat)
         layers_dict["main_rivers"] = {"fields": f_main, "features": feats_main, "crs": crs, "geom_type": QgsWkbTypes.LineString}
 
@@ -1237,9 +1239,12 @@ class FluvialPanel(BasePanel):
         # ---------------------------------------------------------
         f_reach = QgsFields()
         f_reach.append(QgsField("basin", QVariant.String))
-        f_reach.append(QgsField("ksn_seg", QVariant.Double))
-        f_reach.append(QgsField("theta", QVariant.Double))
-        f_reach.append(QgsField("z_drop", QVariant.Double))
+        f_reach.append(QgsField("ksn", QVariant.Double))
+        f_reach.append(QgsField("theta_local", QVariant.Double))
+        f_reach.append(QgsField("Elevation_drop_m", QVariant.Double))
+        f_reach.append(QgsField("Elevation_start_m", QVariant.Double)) 
+        f_reach.append(QgsField("length_m", QVariant.Double))   
+
 
         feats_reach = []
         for r in self._results:
@@ -1253,8 +1258,10 @@ class FluvialPanel(BasePanel):
                 
                 feat = QgsFeature(f_reach)
                 feat.setGeometry(sub_geom)
-                z_drop = abs(seg["elev_start"] - seg["elev_end"])
-                feat.setAttributes([r["label"], seg["ksn"], seg["theta_local"], z_drop])
+                z_start = r["elevations"][seg["idx_start"]]
+                z_drop  = abs(z_start - r["elevations"][seg["idx_end"]])
+                length_m = abs(d_end - d_start)
+                feat.setAttributes([r["label"], seg["ksn"], seg["theta_local"], z_drop, z_start, length_m])
                 feats_reach.append(feat)
         layers_dict["ksn_segments"] = {"fields": f_reach, "features": feats_reach, "crs": crs, "geom_type": QgsWkbTypes.LineString}
 
@@ -1263,8 +1270,8 @@ class FluvialPanel(BasePanel):
         # ---------------------------------------------------------
         f_knk = QgsFields()
         f_knk.append(QgsField("basin", QVariant.String))
-        f_knk.append(QgsField("z_m", QVariant.Double))
-        f_knk.append(QgsField("dist_m", QVariant.Double))
+        f_knk.append(QgsField("Elevation_m", QVariant.Double))
+        f_knk.append(QgsField("distance_m", QVariant.Double))
         f_knk.append(QgsField("chi", QVariant.Double))
 
         feats_knk = []
@@ -1284,10 +1291,12 @@ class FluvialPanel(BasePanel):
         # ---------------------------------------------------------
         f_pts = QgsFields()
         f_pts.append(QgsField("basin", QVariant.String))
-        f_pts.append(QgsField("dist", QVariant.Double))
-        f_pts.append(QgsField("z", QVariant.Double))
-        f_pts.append(QgsField("ksn_raw", QVariant.Double))
-        f_pts.append(QgsField("sl_idx", QVariant.Double))
+        f_pts.append(QgsField("distance_m", QVariant.Double))
+        f_pts.append(QgsField("Elevation_m", QVariant.Double))
+        f_pts.append(QgsField("chi", QVariant.Double))     
+        f_pts.append(QgsField("ksn", QVariant.Double))
+        f_pts.append(QgsField("sl_index", QVariant.Double))
+        f_pts.append(QgsField("slk_index", QVariant.Double))
 
         feats_pts = []
         for r in self._results:
@@ -1297,7 +1306,7 @@ class FluvialPanel(BasePanel):
                 feat = QgsFeature(f_pts)
                 feat.setGeometry(pt_geom)
                 feat.setAttributes([r["label"], r["distances_m"][i], r["elevations"][i], 
-                                    r["ksn_profile"][i], r["sl"][i]])
+                                 r["chi"][i], r["ksn_profile"][i], r["sl"][i], r["slk"][i]])
                 feats_pts.append(feat)
         layers_dict["profile_points"] = {"fields": f_pts, "features": feats_pts, "crs": crs, "geom_type": QgsWkbTypes.Point}
 
