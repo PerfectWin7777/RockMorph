@@ -222,8 +222,8 @@ class WatershedPanel(BasePanel):
 
         # N sub-basins
         self.n_spin = QSpinBox()
-        self.n_spin.setRange(2, 20)
-        self.n_spin.setValue(5)
+        self.n_spin.setRange(2, 200)
+        self.n_spin.setValue(15)
         self.n_spin.setToolTip(tr(
             "<b>Number of Sub-basins (N):</b><br>"
             "The engine selects the N−1 confluences with the largest upstream "
@@ -262,6 +262,19 @@ class WatershedPanel(BasePanel):
             "• <b>GDAL</b>: Handles holes and multi-part basins correctly."
         ))
         param_layout.addRow(tr("Polygon method:"), self.poly_combo)
+
+
+        # NOUVEAU : Option de segmentation du fleuve
+        self.chk_segment_main = QCheckBox(tr("Segment main river stems"))
+        self.chk_segment_main.setChecked(True) # Option 2 par défaut
+        self.chk_segment_main.setToolTip(tr(
+            "<b>Segment Main Stems:</b><br>"
+            "If checked, main rivers will be split into segments at major confluences.<br>"
+            "If unchecked, the main trunk will remain a single continuous sub-basin."
+        ))
+        param_layout.addRow("", self.chk_segment_main)
+
+        root.addWidget(param_group)
 
         root.addWidget(param_group)
 
@@ -409,16 +422,15 @@ class WatershedPanel(BasePanel):
         mode = "n" if self.btn_mode_n.isChecked() else "area"
 
         params = {
-            "fdir_layer":     fdir_layer,
-            "facc_layer":     facc_layer,
-            "outlet_layer":   outlet_layer if (
-                outlet_layer and outlet_layer.isValid()
-            ) else None,
-            "encoding":       self.encoding_combo.currentData(),
-            "mode":           mode,
-            "n_subbasins":    self.n_spin.value(),
-            "min_area_km2":   self.area_spin.value(),
-            "polygon_method": self.poly_combo.currentData(),
+            "fdir_layer":        fdir_layer,
+            "facc_layer":        facc_layer,
+            "outlet_layer":      outlet_layer if (outlet_layer and outlet_layer.isValid()) else None,
+            "encoding":          self.encoding_combo.currentData(),
+            "mode":              mode,
+            "n_subbasins":       self.n_spin.value(),
+            "min_area_km2":      self.area_spin.value(),
+            "polygon_method":    self.poly_combo.currentData(),
+            "segment_main_stem": self.chk_segment_main.isChecked(), 
         }
 
         self.compute_btn.setEnabled(False)

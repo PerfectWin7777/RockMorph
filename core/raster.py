@@ -78,7 +78,7 @@ class RasterReader:
     @property
     def nodata_value(self) -> float:
         """NoData value or None."""
-        return self._nodata
+        return self.nodata
 
     @property
     def pixel_size_x(self) -> float:
@@ -175,7 +175,7 @@ class RasterReader:
         self._gt = self._ds.GetGeoTransform()
 
         band = self._ds.GetRasterBand(self._band)
-        self._nodata = band.GetNoDataValue()
+        self.nodata = band.GetNoDataValue()
 
         # Read using struct — avoids gdal_array entirely
         import struct
@@ -207,8 +207,8 @@ class RasterReader:
                 .reshape((ysize, xsize))\
                 .astype(np.float32)
 
-        if self._nodata is not None:
-            raw[raw == self._nodata] = np.nan
+        if self.nodata is not None:
+            raw[raw == self.nodata] = np.nan
 
         self._array = raw
         self._ds = None
