@@ -52,6 +52,7 @@ from qgis.core import (                         # type: ignore
     QgsProject,
     QgsPointXY,
     QgsMarkerSymbol,
+    QgsCoordinateTransform,
     QgsCategorizedSymbolRenderer,
     QgsRendererCategory,
     QgsFillSymbol,
@@ -493,11 +494,20 @@ class WatershedPanel(BasePanel):
         self._add_layer_to_map()
 
         # Zoom to result
-        if self.chk_zoom.isChecked() and self._map_layer:
-            self.iface.mapCanvas().setExtent(
-                self._map_layer.extent()
-            )
-            self.iface.mapCanvas().refresh()
+        if self.chk_zoom.isChecked() and self._map_layer and self._map_layer.isValid():
+            canvas = self.iface.mapCanvas()
+            layer_extent = self._map_layer.extent()
+            layer_crs = self._map_layer.crs()
+            canvas_crs = canvas.mapSettings().destinationCrs()
+            
+            # Transformation de l'emprise vers le canevas global
+            if layer_crs != canvas_crs:
+                xform = QgsCoordinateTransform(layer_crs, canvas_crs, QgsProject.instance())
+                layer_extent = xform.transformBoundingBox(layer_extent)
+                
+            layer_extent.scale(1.05)  # Petite marge de 5% pour que ça respire
+            canvas.setExtent(layer_extent)
+            canvas.refresh()
 
         msg = tr(
             f"{len(subbasins)} sub-basins delineated "
@@ -540,21 +550,49 @@ class WatershedPanel(BasePanel):
     def _on_result_selected(self):
         """Zooms the canvas to the selected sub-basin extent."""
         selected = self.result_tree.selectedItems()
-        if not selected or self._map_layer is None:
+
+        # Sécurité : vérifier que la couche existe toujours dans QGIS
+        if not self._map_layer or not self._map_layer.isValid():
+            return
+
+        # Si l'utilisateur désélectionne dans l'arbre, on efface la sélection sur la carte
+        if not selected:
+            self._map_layer.removeSelection()
             return
 
         rank = selected[0].data(0, Qt.UserRole)
         if rank is None:
             return
 
-        # Find the feature with matching rank attribute
+        # 1. Trouver l'ID de la feature (fid) et son emprise
+        feature_ids =[]
+        target_extent = None
         for feat in self._map_layer.getFeatures():
             if feat["rank"] == rank:
-                extent = feat.geometry().boundingBox()
-                extent.scale(1.15)
-                self.iface.mapCanvas().setExtent(extent)
-                self.iface.mapCanvas().refresh()
+                feature_ids.append(feat.id())
+                target_extent = feat.geometry().boundingBox()
                 break
+
+        if not feature_ids:
+            return
+
+        # 2. SELECTION QGIS NATIVE (Highlight jaune)
+        self._map_layer.selectByIds(feature_ids)
+
+        # 3. ZOOM SÉCURISÉ (Fix CRS mismatch)
+        if target_extent is not None:
+            canvas = self.iface.mapCanvas()
+            layer_crs = self._map_layer.crs()
+            canvas_crs = canvas.mapSettings().destinationCrs()
+            
+            # Reprojection à la volée si nécessaire
+            if layer_crs != canvas_crs:
+                xform = QgsCoordinateTransform(layer_crs, canvas_crs, QgsProject.instance())
+                target_extent = xform.transformBoundingBox(target_extent)
+                
+            target_extent.scale(1.15)  # Marge de 15% pour voir les bords
+            canvas.setExtent(target_extent)
+            canvas.refresh()
 
     # ------------------------------------------------------------------
     # Map layer management
