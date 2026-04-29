@@ -243,105 +243,165 @@ def build_downstream(fdir_array: np.ndarray, encoding: str) -> np.ndarray:
 # 3. find_outlets (Rewritten with 'True Confluences' Geomorphology)
 # ===========================================================================
 
+
+
+MIN_OUTLET_SPACING_PX = 20
+
 def find_outlets(
-    facc_array:  np.ndarray,
-    downstream:  np.ndarray,
-    shape:       tuple[int, int],
-    px_area_m2:  float,
-    mode:        str,            # "n" or "area"
-    n_target:    int  = 10,
-    min_area_m2: float = 10_000_000.0,
-    segment_main_stem: bool = True,
-) -> list[dict]:
+    facc_array:          np.ndarray,
+    downstream:          np.ndarray,
+    shape:               tuple,
+    px_area_m2:          float,
+    mode:                str,
+    n_target:            int   = 10,
+    min_area_m2:         float = 10_000_000.0,
+    segment_main_stem:   bool  = True,
+    extract_edge_basins: bool  = True,
+) -> list:
     """
-    Identify geomorphologically correct tributary mouths to serve as sub-basin outlets.
+    Identify geomorphologically correct tributary mouths as sub-basin outlets.
 
-    Algorithm (True Confluences)
-    ----------------------------
-    1. Group all valid flow connections by their destination pixel.
-    2. Sort the incoming source pixels for each destination by their FACC (descending).
-    3. The incoming pixel with the largest FACC is the "Main Stem".
-    4. Any OTHER incoming pixels (2nd largest, 3rd largest, etc.) are "Affluents".
-    5. We collect all Affluent mouths across the entire DEM and sort them globally
-       by their FACC to find the most significant tributaries.
-    6. We yield these Affluent mouths as the sub-basin seeds.
+    Two-phase strategy
+    ------------------
+    PHASE 1 — Edge basins
+        Self-loop pixels (downstream[i]==i) represent independent catchments
+        draining off the raster boundary. They are selected first.
+        Budget: at most n_target // 3 + 1 slots (never monopolises total).
 
-    Why this works: By seeding the tributary JUST UPSTREAM of the confluence, the
-    BFS will exclusively climb the tributary branch. The main stem remains separate 
-    and becomes part of the downstream residual basin.
+    PHASE 2 — Internal tributaries + optional main-stem segmentation
+        At each confluence, the incoming branch with the LOWER FAC is the
+        tributary (affluent). We seed it just upstream of the junction.
+        If segment_main_stem=True, we also seed the main-stem branch at
+        the same junction so the trunk river gets segmented too.
 
-    Performance: 100% vectorized NumPy (O(N log N)), 0 Python loops for the search.
+        Key fix vs previous version: the main-stem seed is exempted from
+        the MIN_OUTLET_SPACING_PX check against its own sibling affluent
+        (they share the same junction and must be allowed close together).
+        It is still checked against ALL other previously selected outlets.
+
+    Budget: total = n_target - 1 (hard ceiling, both phases included).
     """
     rows, cols = shape
     flat_size  = rows * cols
     flat_facc  = facc_array.ravel()
-
-    # ── Step 1 : Identify valid flow connections
     src_all    = np.arange(flat_size, dtype=np.int32)
-    not_sink   = (downstream != src_all)
+
+    total_budget = max(1, n_target - 1)
+    selected: list = []
+
+    # =================================================================
+    # PHASE 1 — Edge basins (independent watersheds at raster boundary)
+    # =================================================================
+    is_sink  = (downstream == src_all)
+    sink_idx = src_all[is_sink]
+    sink_fac = np.where(np.isnan(flat_facc[sink_idx]), 0.0, flat_facc[sink_idx])
+
+    if extract_edge_basins and sink_idx.size > 0:
+        # Edge budget: at most 1/3 of total, minimum 1
+        # This prevents edge basins from consuming all slots when the raster
+        # has many small independent catchments on its border.
+        edge_budget = max(1, total_budget // 3)
+
+        edge_order = np.argsort(sink_fac)[::-1]
+        sink_idx_s = sink_idx[edge_order]
+        sink_fac_s = sink_fac[edge_order]
+
+        edge_count = 0
+        for idx, fac in zip(sink_idx_s.tolist(), sink_fac_s.tolist()):
+
+            if mode == "n" and edge_count >= edge_budget:
+                break
+            if mode == "area" and float(fac) * px_area_m2 < min_area_m2:
+                break
+
+            area = float(fac) * px_area_m2
+            r, c = int(idx) // cols, int(idx) % cols
+
+            too_close = any(
+                abs(r - s["row"]) < MIN_OUTLET_SPACING_PX and
+                abs(c - s["col"]) < MIN_OUTLET_SPACING_PX
+                for s in selected
+            )
+            if too_close:
+                continue
+
+            selected.append({
+                "idx":     int(idx),
+                "row":     r,
+                "col":     c,
+                "area_m2": area,
+                "type":    "edge",
+                "dst_idx": int(idx),
+            })
+            edge_count += 1
+
+    # =================================================================
+    # PHASE 2 — Internal tributaries at major confluences
+    # =================================================================
+    not_sink   = ~is_sink
     valid_src  = src_all[not_sink]
     valid_dst  = downstream[not_sink]
-    
-    valid_facc = flat_facc[valid_src]
-    valid_facc = np.where(np.isnan(valid_facc), 0.0, valid_facc)
+    valid_facc = np.where(np.isnan(flat_facc[valid_src]), 0.0, flat_facc[valid_src])
 
     if valid_src.size == 0:
-        return[]
+        return selected
 
-    # ── Step 2 : Sort sources grouped by destination
+    # Group sources by destination, sorted by FAC descending within each group.
+    # np.lexsort: primary = valid_dst (asc), secondary = -valid_facc (desc)
+    # → inside each destination group, the main stem (highest FAC) comes first.
     order       = np.lexsort((-valid_facc, valid_dst))
     sorted_dst  = valid_dst[order]
     sorted_src  = valid_src[order]
     sorted_facc = valid_facc[order]
 
-    # ── Step 3 : Find group boundaries
-    changes = np.concatenate(([True], sorted_dst[1:] != sorted_dst[:-1]))
-    starts  = np.where(changes)[0]
-    lengths = np.diff(np.append(starts, len(sorted_dst)))
+    # Group boundaries
+    changes  = np.concatenate(([True], sorted_dst[1:] != sorted_dst[:-1]))
+    starts   = np.where(changes)[0]
+    lengths  = np.diff(np.append(starts, len(sorted_dst)))
 
-    # ── Step 4 : Isolate True Affluents (Tributaries)
-    conf_mask = (lengths >= 2)
+    # True confluence = destination that receives 2+ distinct source pixels
+    conf_mask     = (lengths >= 2)
     in_confluence = np.repeat(conf_mask, lengths)
-    
-    is_main_stem = np.zeros(len(sorted_dst), dtype=bool)
-    is_main_stem[starts] = True
-    
+
+    # Within each group, index 0 = main stem (highest FAC), rest = affluents
+    is_main_stem          = np.zeros(len(sorted_dst), dtype=bool)
+    is_main_stem[starts]  = True
+
     is_affluent = in_confluence & (~is_main_stem)
     aff_src = sorted_src[is_affluent]
     aff_dst = sorted_dst[is_affluent]
     aff_fac = sorted_facc[is_affluent]
 
     if aff_src.size == 0:
-        return[]
+        return selected
 
-    # Fast O(N) lookup : On sauvegarde qui est le Main Stem de chaque carrefour
+    # O(1) lookup: for each confluence destination → main stem pixel + FAC
     dst_to_main_src = np.full(flat_size, -1, dtype=np.int32)
     dst_to_main_fac = np.zeros(flat_size, dtype=np.float64)
     dst_to_main_src[sorted_dst[starts]] = sorted_src[starts]
     dst_to_main_fac[sorted_dst[starts]] = sorted_facc[starts]
 
-    # ── Step 5 : Sort Affluents Globally
+    # Sort all affluents globally by FAC descending
     global_order = np.argsort(aff_fac)[::-1]
-    best_aff_src = aff_src[global_order]
-    best_aff_dst = aff_dst[global_order]
-    best_aff_fac = aff_fac[global_order]
+    best_src = aff_src[global_order]
+    best_dst = aff_dst[global_order]
+    best_fac = aff_fac[global_order]
 
-    # ── Step 6 : Filter and Select at Major Junctions
-    n_outlets = max(1, n_target - 1)
-    selected: list[dict] =[]
+    # Remaining budget after edge basins
+    internal_budget = total_budget - len(selected)
+    internal_count  = 0
 
-    for src, dst, fac in zip(best_aff_src, best_aff_dst, best_aff_fac):
-        
-        if len(selected) >= n_outlets:
+    for src, dst, fac in zip(best_src.tolist(), best_dst.tolist(), best_fac.tolist()):
+
+        if mode == "n" and internal_count >= internal_budget:
+            break
+        if mode == "area" and float(fac) * px_area_m2 < min_area_m2:
             break
 
         area = float(fac) * px_area_m2
-        if mode == "area" and area < min_area_m2:
-            break
+        r, c  = int(src) // cols, int(src) % cols
 
-        r, c = int(src) // cols, int(src) % cols
-
-        # Spatial spacing (on évite de sélectionner des affluents de la même zone)
+        # Standard spatial filter against ALL existing outlets
         too_close = any(
             abs(r - s["row"]) < MIN_OUTLET_SPACING_PX and
             abs(c - s["col"]) < MIN_OUTLET_SPACING_PX
@@ -350,29 +410,53 @@ def find_outlets(
         if too_close:
             continue
 
-        # 1. On accepte l'affluent comme sous-bassin !
+        # Accept this tributary mouth
         selected.append({
-            "idx": int(src),
-            "row": r,
-            "col": c,
+            "idx":     int(src),
+            "dst_idx": int(dst),
+            "row":     r,
+            "col":     c,
             "area_m2": area,
+            "type":    "internal",
         })
+        internal_count += 1
 
-        # 2. LE COUP DE GÉNIE : Si on segmente le fleuve principal,
-        #    on ajoute aussi la branche principale qui se jette dans CE MEME carrefour.
-        if segment_main_stem:
+        # --- segment_main_stem fix ---
+        # Seed the main-stem branch at the same junction so the trunk river
+        # is split into segments. The main-stem pixel is physically adjacent
+        # to the affluent (same confluence), so we SKIP the spatial check
+        # against its own sibling and only check against the other outlets.
+        if segment_main_stem and internal_count < internal_budget:
             m_src = int(dst_to_main_src[dst])
-            if m_src != -1:
-                m_area = float(dst_to_main_fac[dst]) * px_area_m2
-                
-                selected.append({
-                    "idx": m_src,
-                    "row": m_src // cols,
-                    "col": m_src % cols,
-                    "area_m2": m_area,
-                })
+            if m_src == -1:
+                continue
+
+            m_r, m_c = m_src // cols, m_src % cols
+            m_area   = float(dst_to_main_fac[dst]) * px_area_m2
+
+            # Check against all outlets EXCEPT the sibling affluent we just added
+            # (which shares the same confluence and will always be "too close")
+            too_close_main = any(
+                s["idx"] != int(src) and          # skip own sibling
+                abs(m_r - s["row"]) < MIN_OUTLET_SPACING_PX and
+                abs(m_c - s["col"]) < MIN_OUTLET_SPACING_PX
+                for s in selected
+            )
+            if too_close_main:
+                continue
+
+            selected.append({
+                "idx":     m_src,
+                "dst_idx": int(dst),
+                "row":     m_r,
+                "col":     m_c,
+                "area_m2": m_area,
+                "type":    "main_stem",
+            })
+            internal_count += 1
 
     return selected
+
 
 
 # ===========================================================================

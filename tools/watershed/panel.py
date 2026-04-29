@@ -273,8 +273,17 @@ class WatershedPanel(BasePanel):
             "If unchecked, the main trunk will remain a single continuous sub-basin."
         ))
         param_layout.addRow("", self.chk_segment_main)
+        
+        self.chk_edge_basins = QCheckBox(tr("Extract edge basins"))
+        self.chk_edge_basins.setChecked(True)
+        self.chk_edge_basins.setToolTip(tr(
+            "<b>Extract Edge Basins:</b><br>"
+            "If checked, the algorithm will also extract independent catchments "
+            "draining off the map boundary.<br>"
+            "Allocates at most 1/3 of the total requested sub-basins to borders."
+        ))
+        param_layout.addRow("", self.chk_edge_basins)
 
-        root.addWidget(param_group)
 
         root.addWidget(param_group)
 
@@ -431,6 +440,7 @@ class WatershedPanel(BasePanel):
             "min_area_km2":      self.area_spin.value(),
             "polygon_method":    self.poly_combo.currentData(),
             "segment_main_stem": self.chk_segment_main.isChecked(), 
+            "extract_edge_basins": self.chk_edge_basins.isChecked(),
         }
 
         self.compute_btn.setEnabled(False)

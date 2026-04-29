@@ -164,6 +164,7 @@ class WatershedEngine(BaseEngine):
         polygon_method  = kwargs.get("polygon_method",  DEFAULT_POLYGON_METHOD)
         progress_cb     = kwargs.get("progress_callback")
         segment_main_stem = kwargs.get("segment_main_stem", True)
+        extract_edge_basins = kwargs.get("extract_edge_basins", True)
  
         warnings: list[str] = []
         skipped:  list[str] = []
@@ -223,6 +224,7 @@ class WatershedEngine(BaseEngine):
             n_target    = n_subbasins,
             min_area_m2 = min_area_m2,
             segment_main_stem = segment_main_stem,
+            extract_edge_basins = extract_edge_basins,
         )
  
         if not outlets:
