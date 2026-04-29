@@ -72,24 +72,24 @@ def tr(message: str) -> str:
 # Color palette for sub-basins (up to 10 ranks)
 # ---------------------------------------------------------------------------
 
-_SUBBASIN_COLORS: list[str] = [
-    "#2980b9",   # rank 1 — blue
-    "#27ae60",   # rank 2 — green
-    "#e67e22",   # rank 3 — orange
-    "#8e44ad",   # rank 4 — purple
-    "#c0392b",   # rank 5 — red
-    "#16a085",   # rank 6 — teal
-    "#f39c12",   # rank 7 — amber
-    "#2c3e50",   # rank 8 — dark blue
-    "#d35400",   # rank 9 — burnt orange
-    "#7f8c8d",   # rank 10+ — grey
-]
-
-
 def _rank_color(rank: int) -> str:
-    """Returns a hex color string for a given sub-basin rank (1-indexed)."""
-    idx = min(rank - 1, len(_SUBBASIN_COLORS) - 1)
-    return _SUBBASIN_COLORS[idx]
+    """
+    Generates a unique, visually distinct hex color for any rank.
+    Uses the Golden Ratio progression over the HSV color wheel to ensure
+    infinite distinct categorical colors without clustering.
+    """
+    # constant of golden ratio conjugate (~0.618) to space colors evenly on the hue wheel
+    golden_ratio_conjugate = 0.618033988749895
+    
+    # we add a small offset (0.1) to the hue to avoid starting at pure red, which can be too harsh for the first few ranks
+    hue = (rank * golden_ratio_conjugate + 0.1) % 1.0
+    
+    # saturation and value are fixed to produce bright, pastel-like colors that are easily distinguishable
+    # saturation (0.65): nice-looking colors, not too intense
+    # value (0.90): bright but not pure white, ensuring good visibility on both light and dark backgrounds
+    color = QColor.fromHsvF(hue, 0.65, 0.90)
+    
+    return color.name()
 
 
 # ===========================================================================
@@ -265,7 +265,6 @@ class WatershedPanel(BasePanel):
         param_layout.addRow(tr("Polygon method:"), self.poly_combo)
 
 
-        # NOUVEAU : Option de segmentation du fleuve
         self.chk_segment_main = QCheckBox(tr("Segment main river stems"))
         self.chk_segment_main.setChecked(True) # Option 2 par défaut
         self.chk_segment_main.setToolTip(tr(
