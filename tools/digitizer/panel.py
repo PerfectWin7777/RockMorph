@@ -58,9 +58,30 @@ class DigitizerPanel(BasePanel):
         self.raster_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
         input_layout.addRow(tr("Geological Map (Raster):"), self.raster_combo)
 
+        area_row = QWidget()
+        area_layout = QHBoxLayout(area_row)
+        area_layout.setContentsMargins(0, 0, 0, 0)
+        area_layout.setSpacing(4)
+
         self.poly_combo = QgsMapLayerComboBox()
-        self.poly_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
-        input_layout.addRow(tr("Study Area (Polygon):"), self.poly_combo)
+
+        self.poly_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer | QgsMapLayerProxyModel.LineLayer)
+        self.poly_combo.setAllowEmptyLayer(True)
+        self.poly_combo.setCurrentIndex(0)  # Vide par défaut
+        self.poly_combo.setToolTip(tr(
+            "<b>Study Area Boundary (Optional):</b><br>"
+            "A Polygon or Line layer defining the area to digitize.<br>"
+            "If a Line is provided, it will be automatically closed into a perimeter.<br>"
+            "If left empty, the entire raster extent will be digitized."
+        ))
+
+        self._area_auto_label = QLabel(tr("full extent"))
+        self._area_auto_label.setStyleSheet("color: #27ae60; font-size: 12px; font-style: italic;")
+        self.poly_combo.layerChanged.connect(self._on_area_changed)
+
+        area_layout.addWidget(self.poly_combo, stretch=1)
+        area_layout.addWidget(self._area_auto_label)
+        input_layout.addRow(tr("Study Area (Poly/Line):"), area_row)
 
         root.addWidget(input_group)
 
@@ -138,6 +159,10 @@ class DigitizerPanel(BasePanel):
 
         root.addWidget(out_group)
         root.addStretch()
+    
+    def _on_area_changed(self, layer):
+        is_auto = (layer is None or not layer.isValid())
+        self._area_auto_label.setVisible(is_auto)
 
     # ------------------------------------------------------------------
     # Compute Logic
@@ -149,10 +174,11 @@ class DigitizerPanel(BasePanel):
         ):
             self.show_error(tr("Please select a valid raster and polygon layer."))
             return
-
+        
+        poly_layer = self.poly_combo.currentLayer()
         params = {
             "raster_layer": self.raster_combo.currentLayer(),
-            "polygon_layer": self.poly_combo.currentLayer(),
+            "polygon_layer": poly_layer if (poly_layer and poly_layer.isValid()) else None,
             "n_clusters": self.spin_clusters.value(),
             "smooth_size": self.spin_smooth.value(),
             "sieve_threshold": self.spin_sieve.value()

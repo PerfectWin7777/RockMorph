@@ -45,9 +45,14 @@ class DigitizerEngine(BaseEngine):
         
         if not isinstance(raster, QgsRasterLayer) or not raster.isValid():
             return False
-        if not isinstance(poly, QgsVectorLayer) or not poly.isValid() or poly.geometryType() != 2: 
-            # 2 = Polygon geometry
-            return False
+        # layer polygon_layer is optional — if user doesn't provide one, we process the whole raster extent
+        if poly is not None:
+            if not isinstance(poly, QgsVectorLayer) or not poly.isValid():
+                return False
+            # accept line and polygone
+            if poly.geometryType() not in [1, 2]: 
+                return False
+                
         return True
 
     def compute(self, **kwargs) -> dict:
@@ -68,11 +73,15 @@ class DigitizerEngine(BaseEngine):
         _progress(10, tr("Extracting study area..."))
         
         # Reproject polygon to raster CRS to ensure exact clipping
-        poly_geom = self._get_first_polygon_geometry(poly_layer, raster_layer.crs())
-        if not poly_geom:
-            raise ValueError(tr("The polygon layer has no valid geometry."))
-            
-        bbox = poly_geom.boundingBox()
+        if poly_layer is not None:
+            mask_geom = self._get_mask_geometry(poly_layer, raster_layer.crs())
+            if not mask_geom:
+                raise ValueError(tr("The boundary layer has no valid geometry."))
+            bbox = mask_geom.boundingBox()
+        else:
+            # Full extent mode
+            bbox = raster_layer.extent()
+            mask_geom = QgsGeometry.fromRect(bbox)
         
         # ── Step 2: Read Raster inside Bounding Box ─────────────────────
         _progress(20, tr("Reading raster pixels..."))
@@ -166,7 +175,7 @@ class DigitizerEngine(BaseEngine):
         new_gt[0] = gt[0] + x_off * gt[1]
         new_gt[3] = gt[3] + y_off * gt[5]
         
-        polygons = self._polygonize_labels(labels, tuple(new_gt), poly_geom, sieve_size)
+        polygons = self._polygonize_labels(labels, tuple(new_gt), mask_geom, sieve_size)
 
         # Format colors to Hex strings for UI and Map Layer styling
         hex_colors =["#{:02x}{:02x}{:02x}".format(c[0], c[1], c[2]) for c in centroids]
@@ -182,16 +191,34 @@ class DigitizerEngine(BaseEngine):
 
 
 
-    def _get_first_polygon_geometry(self, poly_layer: QgsVectorLayer, target_crs) -> Optional[QgsGeometry]:
+    def _get_mask_geometry(self, vector_layer: QgsVectorLayer, target_crs) -> Optional[QgsGeometry]:
         """
-        Extracts the first feature from the polygon layer and reprojects it if necessary.
+        Extracts the first feature from the polygon or line layer and reprojects it if necessary.
+        If it's a line, dynamically closes it to form a Polygon.
         """
-        for feat in poly_layer.getFeatures():
+        for feat in vector_layer.getFeatures():
             geom = feat.geometry()
-            if poly_layer.crs() != target_crs:
-                xform = QgsCoordinateTransform(poly_layer.crs(), target_crs, QgsProject.instance())
+            
+            # Reprojection if necessary
+            if vector_layer.crs() != target_crs:
+                xform = QgsCoordinateTransform(vector_layer.crs(), target_crs, QgsProject.instance())
                 geom.transform(xform)
+                
+            # If it's a Line (GeometryType == 1), convert to Polygon
+            if vector_layer.geometryType() == 1:
+                if geom.isMultipart():
+                    line_pts = geom.asMultiPolyline()[0]
+                else:
+                    line_pts = geom.asPolyline()
+                    
+                # Close the line to make a valid polygon ring
+                if line_pts and line_pts[0] != line_pts[-1]:
+                    line_pts.append(line_pts[0])
+                    
+                geom = QgsGeometry.fromPolygonXY([line_pts])
+                
             return geom
+            
         return None
 
     def _polygonize_labels(self, label_array: np.ndarray, geo_transform: tuple, mask_geom: QgsGeometry, sieve_threshold: int) -> list[dict]:
