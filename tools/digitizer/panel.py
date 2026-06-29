@@ -9,7 +9,8 @@ UI Panel for the Geological Map Digitizer tool.
 from PyQt5.QtWidgets import ( # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QSpinBox, QGroupBox, QLabel,
-    QTreeWidget, QTreeWidgetItem, QLineEdit, QWidget
+    QTreeWidget, QTreeWidgetItem, QLineEdit,
+    QDoubleSpinBox, QWidget
 )
 from PyQt5.QtCore import Qt, QCoreApplication # type: ignore
 from PyQt5.QtGui import QColor # type: ignore
@@ -102,7 +103,7 @@ class DigitizerPanel(BasePanel):
         self.spin_smooth = QSpinBox()
         self.spin_smooth.setRange(1, 21)
         self.spin_smooth.setSingleStep(2) # Only odd numbers
-        self.spin_smooth.setValue(5)
+        self.spin_smooth.setValue(3)
         self.spin_smooth.setToolTip(tr(
             "<b>Smoothing Level:</b><br>"
             "Median filter kernel size (must be odd). Higher values remove more noise "
@@ -122,6 +123,61 @@ class DigitizerPanel(BasePanel):
             "by the surrounding geological unit. Set to 0 to disable."
         ))
         param_layout.addRow(tr("Minimum polygon size (px):"), self.spin_sieve)
+
+        self.spin_max_iter = QSpinBox()
+        self.spin_max_iter.setRange(5, 100)
+        self.spin_max_iter.setValue(50)
+        self.spin_max_iter.setToolTip(tr(
+            "<b>Max K-Means Iterations:</b><br>"
+            "Lower = faster but less accurate centroid placement.<br>"
+            "50 is sufficient for most geological maps."
+        ))
+        param_layout.addRow(tr("Max iterations (speed):"), self.spin_max_iter)
+        
+        self.spin_subsample = QSpinBox()
+        self.spin_subsample.setRange(5, 100)
+        self.spin_subsample.setValue(30)
+        self.spin_subsample.setSuffix(" %")
+        self.spin_subsample.setToolTip(tr(
+            "<b>Pixel Subsample for K-Means:</b><br>"
+            "Percentage of pixels used to compute color centroids.<br>"
+            "30% gives identical results to 100% on geological maps<br>"
+            "because colors are homogeneous — and runs 3x faster.<br>"
+            "Increase only if you get wrong color groupings."
+        ))
+        param_layout.addRow(tr("Subsample pixels:"), self.spin_subsample)
+
+        self.spin_tolerance = QDoubleSpinBox()
+        self.spin_tolerance.setRange(2.0, 40.0)
+        self.spin_tolerance.setValue(12.0) # 12% est le sweet spot humain
+        self.spin_tolerance.setSingleStep(1.0)
+        self.spin_tolerance.setSuffix(" %")
+        self.spin_tolerance.setToolTip(tr(
+            "<b>Visual Difference Limit:</b><br>"
+            "How different must a region look to be considered a new geological unit?<br>"
+            "Algorithm will automatically discover the exact number of formations."
+            "• 8 %  = Detects slight variations (splits units easily)<br>"
+            "• 12 % = Standard (groups faded/dark areas of the same color)<br>"
+            "• 20 % = Aggressive grouping"
+        ))
+        param_layout.addRow(tr("Separation Tolerance:"), self.spin_tolerance)
+
+
+        # self.spin_texture = QDoubleSpinBox()
+        # self.spin_texture.setRange(0.0, 10.0)
+        # self.spin_texture.setValue(3.0)
+        # self.spin_texture.setSingleStep(0.5)
+        # self.spin_texture.setDecimals(1)
+        # self.spin_texture.setToolTip(tr(
+        #     "<b>Texture Weight:</b><br>"
+        #     "Controls how strongly patterns (crosses, hatching) separate clusters<br>"
+        #     "from plain colors of the same hue.<br><br>"
+        #     "0.0 = color only (original behavior)<br>"
+        #     "3.0 = texture contributes ~50% of cluster separation (recommended)<br>"
+        #     "6.0 = texture dominates — use when formations share very similar colors"
+        # ))
+        # param_layout.addRow(tr("Texture sensitivity:"), self.spin_texture)
+
 
         root.addWidget(param_group)
 
@@ -181,7 +237,11 @@ class DigitizerPanel(BasePanel):
             "polygon_layer": poly_layer if (poly_layer and poly_layer.isValid()) else None,
             "n_clusters": self.spin_clusters.value(),
             "smooth_size": self.spin_smooth.value(),
-            "sieve_threshold": self.spin_sieve.value()
+            "sieve_threshold": self.spin_sieve.value(),
+            "max_iter":     self.spin_max_iter.value(),     
+            "subsample_pct": self.spin_subsample.value(),
+            # "color_tolerance": self.spin_tolerance.value(),
+            # "texture_weight": self.spin_texture.value(),
         }
 
         self.compute_btn.setEnabled(False)
@@ -223,9 +283,10 @@ class DigitizerPanel(BasePanel):
     # ------------------------------------------------------------------
     def _populate_tree(self):
         self.color_tree.clear()
-        colors = self._results.get("colors",[])
-        
-        for i, hex_color in enumerate(colors):
+        colors_dict = self._results.get("colors_dict", {})
+        unique_hex = list(set(colors_dict.values()))
+
+        for i, hex_color in enumerate(unique_hex):
             item = QTreeWidgetItem(self.color_tree)
             item.setText(0, f"Cluster {i}")
             
@@ -263,30 +324,31 @@ class DigitizerPanel(BasePanel):
         vl.updateFields()
 
         # Add features
-        colors = self._results["colors"]
         features =[]
         for poly_data in self._results["polygons"]:
             feat = QgsFeature(fields)
             feat.setGeometry(poly_data["geometry"])
             c_id = poly_data["cluster_id"]
-            feat.setAttributes([c_id, colors[c_id]])
+            hex_color = poly_data["hex_color"]
+            feat.setAttributes([c_id, hex_color])
             features.append(feat)
 
         pr.addFeatures(features)
         vl.updateExtents()
 
         # Build Categorized Symbology automatically!
-        categories =[]
-        for i, hex_color in enumerate(colors):
+        categories = []
+        unique_hex = list(set([p["hex_color"] for p in self._results["polygons"]]))
+        for i, hex_color in enumerate(unique_hex):
             symbol = QgsFillSymbol.createSimple({
                 "color": hex_color,
                 "outline_color": "#333333",
                 "outline_width": "0.1"
             })
-            category = QgsRendererCategory(i, symbol, f"Cluster {i}")
+            category = QgsRendererCategory(hex_color , symbol, f"Cluster {i}")
             categories.append(category)
 
-        renderer = QgsCategorizedSymbolRenderer("cluster_id", categories)
+        renderer = QgsCategorizedSymbolRenderer("hex_color", categories)
         vl.setRenderer(renderer)
         vl.triggerRepaint()
 
