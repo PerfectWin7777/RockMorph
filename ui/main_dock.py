@@ -13,6 +13,7 @@ from ..tools.ncp.panel import NCPPanel
 from ..tools.fluvial.panel import FluvialPanel
 from ..tools.watershed.panel import WatershedPanel
 from ..tools.digitizer.panel import DigitizerPanel
+from ..tools.explorer3d.panel import Explorer3DPanel
 
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
@@ -27,6 +28,7 @@ TOOLS = [
     ("Fluvial Toolbox", FluvialPanel),
     ("Watershed", WatershedPanel),
      ("Geological Digitizer", DigitizerPanel),
+     ("3D Explorer", Explorer3DPanel),
 ]
 
 
@@ -96,7 +98,7 @@ class RockMorphDock(QDockWidget):
 
         # Load first tool
         self.tool_combo.setCurrentIndex(6)
-        self._switch_tool(6)
+        self._switch_tool(7)
 
     def _switch_tool(self, index: int):
         """
