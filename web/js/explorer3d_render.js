@@ -962,10 +962,11 @@ function _updateZScale(scale) {
 function _updateVectorGeometryZ(mesh, descriptor) {
     const posAttr = mesh.geometry.attributes.position;
     const positions = posAttr.array;
-    
+
+    const zOffset = descriptor.height_offset || 0.0;
     let idx = 0;
     descriptor.vertices.forEach(([x, y, z]) => {
-        positions[idx + 2] = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
+        positions[idx + 2] = ((z + zOffset) - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
         idx += 3;
     });
     posAttr.needsUpdate = true;
@@ -975,34 +976,43 @@ function _updateVectorGeometryZ(mesh, descriptor) {
 function _updateCurtainGeometryZ(mesh, descriptor) {
     const posAttr = mesh.geometry.attributes.position;
     const positions = posAttr.array;
-    
+
+    // Scale real-world depth meters to match exaggerated terrain vertical axis [Fix 3]
+    const scaledDepth = (descriptor.extrude_depth || 0.0) * baseExaggeration * currentZScale * scaleFactor;
+    const zOffset = descriptor.height_offset || 0.0;
+
     let idx = 0;
     descriptor.vertices.forEach(([x, y, z]) => {
-        const zTop = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
-        const zBottom = zTop - (descriptor.extrude_depth || 0.0) * scaleFactor;
+        const zTop = ((z + zOffset) - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
+        const zBottom = zTop - scaledDepth;
         positions[idx + 2] = zTop;
         positions[idx + 5] = zBottom;
         idx += 6;
     });
     posAttr.needsUpdate = true;
     mesh.geometry.computeVertexNormals();
+    if (mesh.geometry.attributes.normal) {
+        mesh.geometry.attributes.normal.needsUpdate = true;
+    }
     mesh.geometry.computeBoundingSphere();
 }
 
 function _updatePointMarkerZ(mesh, descriptor) {
     const [x, y, z] = descriptor.vertices[0];
-    const zDraped = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
-    const floatOffset = modelMaxDim * 0.005; 
+    const zOffset = descriptor.height_offset || 0.0;
+    const zDraped = ((z + zOffset) - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
+    const floatOffset = modelMaxDim * 0.005;
     mesh.position.z = zDraped + floatOffset;
 }
 
 function _updateFilledPolygonZ(mesh, descriptor) {
     const posAttr = mesh.geometry.attributes.position;
     const positions = posAttr.array;
+    const zOffset = descriptor.height_offset || 0.0;
 
     const scaledBoundaries = [];
     descriptor.vertices.forEach(([x, y, z]) => {
-        const zScaled = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
+        const zScaled = ((z + zOffset) - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
         scaledBoundaries.push({
             x: (x - spatialOffsets.x) * scaleFactor,
             y: (y - spatialOffsets.y) * scaleFactor,
@@ -1310,12 +1320,13 @@ function _buildVectorFeature(descriptor) {
 
     if (descriptor.vertices.length < 2) return;
 
+    const zOffset = descriptor.height_offset || 0.0;
     const positions = [];
     descriptor.vertices.forEach(([x, y, z]) => {
         positions.push(
             (x - spatialOffsets.x) * scaleFactor,
             (y - spatialOffsets.y) * scaleFactor,
-            (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor
+            ((z + zOffset) - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor
         );
     });
 
@@ -1343,12 +1354,15 @@ function _buildVectorFeature(descriptor) {
 
 function _buildExtrudedCurtain(descriptor, topPositions) {
     const curtainPositions = [];
+    // Scale real-world depth meters to match exaggerated terrain vertical axis [Fix 3]
+    const scaledDepth = (descriptor.extrude_depth || 0.0) * baseExaggeration * currentZScale * scaleFactor;
+
     for (let i = 0; i < topPositions.length; i += 3) {
         const x = topPositions[i];
         const y = topPositions[i + 1];
         const zTop = topPositions[i + 2];
         curtainPositions.push(x, y, zTop);
-        curtainPositions.push(x, y, zTop - (descriptor.extrude_depth || 0.0) * scaleFactor);
+        curtainPositions.push(x, y, zTop - scaledDepth);
     }
 
     const indices = [];
@@ -1469,8 +1483,57 @@ function _buildFilledPolygon(descriptor) {
 
 
 function _applyDynamicVectorStyle(style) {
-    const targetPrefix = style.element_id;
+    // Append an underscore to resolve prefix collision boundaries (e.g., vector_1 vs vector_11)
+    const targetPrefix = style.element_id + "_";
 
+    // 1. Check if the visualization mode (geom_type) changed.
+    let needsRebuild = false;
+    for (const id in sceneObjects) {
+        if (id.startsWith(targetPrefix)) {
+            const obj = sceneObjects[id];
+            if (obj && obj.descriptor && obj.descriptor.geom_type !== style.geom_type) {
+                needsRebuild = true;
+                break;
+            }
+        }
+    }
+
+    if (needsRebuild) {
+        const descriptorsToRebuild = [];
+        const seenIds = new Set();
+        for (const id in sceneObjects) {
+            if (id.startsWith(targetPrefix)) {
+                const obj = sceneObjects[id];
+                if (obj && obj.descriptor && !seenIds.has(obj.descriptor.element_id)) {
+                    seenIds.add(obj.descriptor.element_id);
+                    descriptorsToRebuild.push(obj.descriptor);
+                }
+            }
+        }
+
+        const keysToRemove = [];
+        for (const id in sceneObjects) {
+            if (id.startsWith(targetPrefix)) {
+                keysToRemove.push(id);
+            }
+        }
+        keysToRemove.forEach(key => unregisterObject(key));
+
+        descriptorsToRebuild.forEach(desc => {
+            desc.geom_type = style.geom_type;
+            desc.extrude_depth = style.extrude_depth;
+            desc.polygon_opacity = style.polygon_opacity;
+            desc.point_marker_size = style.point_marker_size;
+            desc.height_offset = style.height_offset;
+            desc.color_styling = style.color_styling;
+            desc.vector_colormap = style.vector_colormap;
+            desc.color = style.fixed_color;
+            _buildVectorFeature(desc);
+        });
+        return;
+    }
+
+    // 2. If mode is unchanged, perform safe real-time property mutations:
     for (const id in sceneObjects) {
         if (!id.startsWith(targetPrefix)) continue;
 
@@ -1480,15 +1543,14 @@ function _applyDynamicVectorStyle(style) {
         const mesh = obj.mesh;
         const desc = obj.descriptor;
 
-        // 1. Update descriptor cached styles
         desc.geom_type = style.geom_type;
         desc.extrude_depth = style.extrude_depth;
         desc.polygon_opacity = style.polygon_opacity;
         desc.point_marker_size = style.point_marker_size;
+        desc.height_offset = style.height_offset;
         desc.color_styling = style.color_styling;
         desc.vector_colormap = style.vector_colormap;
 
-        // 2. Compute dynamic color
         let resolvedColor = style.fixed_color || "#3498db";
         if (style.color_styling === "attribute" && desc.attribute_values && desc.attribute_bounds) {
             const val = desc.attribute_values[0];
@@ -1507,31 +1569,42 @@ function _applyDynamicVectorStyle(style) {
 
         desc.color = resolvedColor;
 
-        // 3. Mutate WebGL properties dynamically based on feature type
         if (obj.type === "vector") {
-            mesh.material.color.set(resolvedColor);
+            if (mesh.material.color) {
+                mesh.material.color.set(resolvedColor);
+            }
             mesh.material.linewidth = style.line_width || 2;
             mesh.material.needsUpdate = true;
+            _updateVectorGeometryZ(mesh, desc);
         }
         else if (obj.type === "curtain") {
-            mesh.material.color.set(resolvedColor);
+            // Defensive Check: Update uniforms if using custom ShaderMaterial, color if basic
+            if (mesh.material.uniforms && mesh.material.uniforms.uSolidColor) {
+                mesh.material.uniforms.uSolidColor.value.set(resolvedColor);
+            } else if (mesh.material.color) {
+                mesh.material.color.set(resolvedColor);
+            }
             mesh.material.needsUpdate = true;
-            // Re-extrude geometries to match the updated depth
             _updateCurtainGeometryZ(mesh, desc);
         }
         else if (obj.type === "filled_polygon") {
-            mesh.material.color.set(resolvedColor);
+            if (mesh.material.color) {
+                mesh.material.color.set(resolvedColor);
+            }
             mesh.material.opacity = style.polygon_opacity || 0.5;
             mesh.material.needsUpdate = true;
             _updateFilledPolygonZ(mesh, desc);
         }
         else if (obj.type === "point_marker") {
-            mesh.material.color.set(resolvedColor);
+            if (mesh.material.uniforms && mesh.material.uniforms.uSolidColor) {
+                mesh.material.uniforms.uSolidColor.value.set(resolvedColor);
+            } else if (mesh.material.color) {
+                mesh.material.color.set(resolvedColor);
+            }
             mesh.material.needsUpdate = true;
-
-            // Scaler mutation avoids reconstructing point geometries
             const sizeMultiplier = style.point_marker_size || 1.0;
             mesh.scale.setScalar(sizeMultiplier);
+            _updatePointMarkerZ(mesh, desc);
         }
     }
 }

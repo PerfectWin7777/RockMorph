@@ -433,10 +433,10 @@ class Explorer3DPanel(BasePanel):
         layout_curtain.setContentsMargins(0, 0, 0, 0)
         layout_curtain.addWidget(QLabel(tr("Depth:")))
         self.slider_curtain_depth = QSlider(Qt.Horizontal)
-        self.slider_curtain_depth.setRange(1, 100)
-        self.slider_curtain_depth.setValue(15)
+        self.slider_curtain_depth.setRange(1, 2000)
+        self.slider_curtain_depth.setValue(250)
         layout_curtain.addWidget(self.slider_curtain_depth)
-        self.lbl_curtain_depth_val = QLabel("15 m")
+        self.lbl_curtain_depth_val = QLabel("250 m")
         layout_curtain.addWidget(self.lbl_curtain_depth_val)
         self.stacked_vector_settings.addWidget(page_curtain)
 
@@ -467,6 +467,17 @@ class Explorer3DPanel(BasePanel):
         self.stacked_vector_settings.addWidget(page_point)
 
         vector_style_layout.addWidget(self.stacked_vector_settings)
+
+        vector_style_layout.addWidget(QLabel(tr("Vertical height offset:")))
+        row_offset = QHBoxLayout()
+        self.slider_height_offset = QSlider(Qt.Horizontal)
+        self.slider_height_offset.setRange(-200, 1000)  # From -20m to 100m
+        self.slider_height_offset.setValue(10)         # Default 1 meter above surface
+        row_offset.addWidget(self.slider_height_offset)
+        self.lbl_height_offset_val = QLabel("10 m")
+        row_offset.addWidget(self.lbl_height_offset_val)
+        vector_style_layout.addLayout(row_offset)
+
 
         # Color Styling Selector
         vector_style_layout.addWidget(QLabel(tr("Coloring method:")))
@@ -937,10 +948,14 @@ class Explorer3DPanel(BasePanel):
         self.combo_color_styling.currentIndexChanged.connect(self._slot_style_parameter_changed)
         self.combo_vector_attribute.currentIndexChanged.connect(self._slot_style_parameter_changed)
         self.combo_vector_colormap.currentIndexChanged.connect(self._slot_style_parameter_changed)
+        self.slider_height_offset.valueChanged.connect(self._slot_style_parameter_changed)
         
         # Connect labels
         self.slider_line_width.valueChanged.connect(
             lambda v: self.lbl_line_width_val.setText(f"{v} px")
+        )
+        self.slider_height_offset.valueChanged.connect(
+            lambda v: self.lbl_height_offset_val.setText(f"{v} m")
         )
 
         # ── Page 2 — Symbology ───────────────────────────────────────────
@@ -1118,7 +1133,8 @@ class Explorer3DPanel(BasePanel):
             point_marker_size = float(self.slider_point_size.value() / 10.0)
         
         line_width = float(self.slider_line_width.value())
-        
+        height_offset = float(self.slider_height_offset.value())
+
         # Color configurations
         color_styling_idx = self.combo_color_styling.currentIndex()
         color_styling = "fixed" if color_styling_idx == 0 else "attribute"
@@ -1163,6 +1179,7 @@ class Explorer3DPanel(BasePanel):
             v_dict["polygon_opacity"] = polygon_opacity
             v_dict["point_marker_size"] = point_marker_size
             v_dict["line_width"] = line_width
+            v_dict["height_offset"] = height_offset
             v_dict["color_styling"] = color_styling
             v_dict["vector_colormap"] = vector_colormap
             v_dict["attribute_bounds"] = {"min": attr_min, "max": attr_max}
@@ -1236,16 +1253,27 @@ class Explorer3DPanel(BasePanel):
         # Skip if block base is selected (only vectors can be custom styled)
         if not element_id or element_id == "block_base":
             return
-
+        
         # Read values from widgets
         drape_mode_idx = self.combo_drape_mode.currentIndex()
         drape_modes = ["line", "curtain", "outline", "filled", "point"]
         selected_drape_mode = drape_modes[drape_mode_idx]
 
-        extrude_depth = float(self.slider_curtain_depth.value())
-        polygon_opacity = float(self.slider_polygon_opacity.value() / 100.0)
-        point_marker_size = float(self.slider_point_size.value() / 10.0)
+        # Explicitly isolate parameter values to prevent attribute leakage [Fix 1]
+        extrude_depth = 0.0
+        if selected_drape_mode == "curtain":
+            extrude_depth = float(self.slider_curtain_depth.value())
+
+        polygon_opacity = 1.0
+        if selected_drape_mode == "filled":
+            polygon_opacity = float(self.slider_polygon_opacity.value() / 100.0)
+
+        point_marker_size = 1.0
+        if selected_drape_mode == "point":
+            point_marker_size = float(self.slider_point_size.value() / 10.0)
+
         line_width = float(self.slider_line_width.value())
+        height_offset = float(self.slider_height_offset.value())
 
         # Colors
         color_styling_idx = self.combo_color_styling.currentIndex()
@@ -1263,6 +1291,7 @@ class Explorer3DPanel(BasePanel):
                 "polygon_opacity": polygon_opacity,
                 "point_marker_size": point_marker_size,
                 "line_width": line_width,
+                "height_offset": height_offset,
                 "color_styling": color_styling,
                 "fixed_color": fixed_color_hex,
                 "attribute_field": attribute_field,
@@ -1711,8 +1740,8 @@ class Explorer3DPanel(BasePanel):
                 self._js({"action": "set_solid_color", "payload": {"color": color.name()}})
         
         elif target == "vector_fixed":
-            # Just updates the swatch; visual payload is read when clicking '+ Add'
-            pass
+            # Immediately notify WebGL of the updated swatch color [Fix 1]
+            self._slot_style_parameter_changed()
 
     # ── Internal helpers ─────────────────────────────────────────────────
 
