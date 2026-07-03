@@ -37,6 +37,7 @@ class ThreeDRaster(ThreeDElement):
     z_max: float
     nodata_value: Optional[float] = None
     color_ramp: str = "terrain"
+    label: str = ""  # Clean display name from QGIS layer
 
 
 @dataclass

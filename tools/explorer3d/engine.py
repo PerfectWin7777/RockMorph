@@ -99,10 +99,11 @@ class Explorer3DEngine(BaseEngine):
             z_values=z_values,
             z_min=z_min,
             z_max=z_max,
-            nodata_value=reader.nodata_value
+            nodata_value=reader.nodata_value,
+            label=dem_layer.name()  # Propagate the clean QGIS layer name
         )
     
-    
+
     def prepare_vector_layer(
         self,
         vector_layer: QgsVectorLayer,

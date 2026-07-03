@@ -644,7 +644,7 @@ function _buildTerrain(data) {
         }
     });
 
-    _updateStatus(`Scene: ${data.element_id} loaded (${width}×${height} vertices).`);
+    _updateStatus(`Scene: ${data.label || data.element_id} loaded (${width}×${height} vertices).`);
 }
 
 // ---------------------------------------------------------------------------
