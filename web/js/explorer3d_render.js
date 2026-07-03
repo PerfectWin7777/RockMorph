@@ -1849,52 +1849,52 @@ function _updateCameraOverlayText(message) {
 }
 
 
-
-// [Add at the bottom of explorer3d_render.js]
 function _exportViewport(format, dpi) {
     const container = document.getElementById("viewport-container");
     const width = container.clientWidth;
     const height = container.clientHeight;
 
-    // 1. Force a clean, synchronous render pass of the primary 3D terrain
+    // 1. Temporarily hide spatial helpers during render to ensure a clean model export
+    const gridObj = sceneObjects["scene_grid"];
+    let tempGridVisible = false;
+    if (gridObj) {
+        tempGridVisible = gridObj.mesh.visible;
+        gridObj.mesh.visible = false;
+    }
+    const tempAxesVisible = axesSceneVisible;
+    axesSceneVisible = false;
+
+    // 2. Resolve background clear color based on format
+    // WebGL transparency maps to black in JPEG; we force a solid white background instead
+    if (format === "jpg" || format === "jpeg") {
+        renderer.setClearColor(0xffffff, 1.0);
+    }
+
+    // 3. Force clean synchronous render pass of the terrain model
     renderer.setViewport(0, 0, width, height);
     renderer.setScissor(0, 0, width, height);
     renderer.setScissorTest(false);
     renderer.clear();
     renderer.render(scene, camera);
 
-    // 2. Render the Orientation Marker triad over the captured buffer
-    if (axesSceneVisible && axesScene && axesCamera) {
-        const axesSize = 110;
-        const padding = 10;
-        const left = width - axesSize - padding;
-        const bottom = padding;
-
-        renderer.setViewport(left, bottom, axesSize, axesSize);
-        renderer.setScissor(left, bottom, axesSize, axesSize);
-        renderer.setScissorTest(true);
-
-        axesCamera.position.copy(camera.position).sub(controls.target).setLength(25);
-        axesCamera.up.copy(camera.up);
-        axesCamera.lookAt(0, 0, 0);
-
-        renderer.clearDepth();
-        renderer.render(axesScene, axesCamera);
-
-        renderer.setScissorTest(false);
-        renderer.setViewport(0, 0, width, height);
-    }
-
-    // 3. Extract the image buffer natively from GPU memory
+    // 4. Capture the WebGL context as a high-quality data URL
     let mimeType = "image/png";
     if (format === "jpg" || format === "jpeg") {
         mimeType = "image/jpeg";
     }
-    
-    // Convert WebGL drawing buffer to Base64
     const dataURL = renderer.domElement.toDataURL(mimeType, 0.95);
 
-    // 4. Return payload directly to the QWebChannel bridge
+    // 5. Restore screen visibility states and reset transparency backdrop
+    if (gridObj) {
+        gridObj.mesh.visible = tempGridVisible;
+    }
+    axesSceneVisible = tempAxesVisible;
+    renderer.setClearColor(0x000000, 0.0); // Restore original transparency
+
+    // Force rendering update to show helpers back on the interactive screen
+    _animate();
+
+    // 6. Return data URL to the inherited python bridge
     if (typeof bridge !== "undefined") {
         bridge.receive_export(dataURL);
     } else {

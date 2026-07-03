@@ -247,7 +247,7 @@ class RockMorphExporter:
 
     def save_image(self, svg_data_url: str, path: str, dpi: int = 300) -> None:
         """
-        Convert Plotly SVG dataURL to final format.
+        Convert Plotly SVG dataURL to final format or write pre-rasterized WebGL binary streams to disk.
         Uses QSvgRenderer for PNG/JPG/PDF — no DOM manipulation.
         cairosvg used automatically if installed (better quality).
 
@@ -258,7 +258,24 @@ class RockMorphExporter:
         dpi          : int — for raster formats
         """
         try:
-            fmt       = os.path.splitext(path)[1].lower().lstrip('.')
+            fmt = os.path.splitext(path)[1].lower().lstrip('.')
+            
+            # ── Direct Binary Image writing (Pre-rasterized WebGL streams) ──
+            if "data:image/" in svg_data_url:
+                header, payload = svg_data_url.split(',', 1)
+                if 'base64' in header:
+                    img_bytes = base64.b64decode(payload)
+                    
+                    if fmt in ('png', 'jpg', 'jpeg'):
+                        with open(path, 'wb') as f:
+                            f.write(img_bytes)
+                        self._info(tr(f"Image saved successfully → {os.path.basename(path)}"))
+                        return
+                    elif fmt == 'pdf':
+                        self._write_pdf_from_png_bytes(img_bytes, path)
+                        return
+
+            # ── Standard SVG Vector processing (Plotly) ────────────
             svg_bytes = self._extract_svg_bytes(svg_data_url)
 
             if fmt == 'svg':
@@ -445,6 +462,33 @@ class RockMorphExporter:
         renderer.render(painter)
         painter.end()
         return image
+
+    def _write_pdf_from_png_bytes(self, png_bytes: bytes, path: str) -> None:
+        """Helper to print raw PNG screenshot bytes into a standalone PDF file."""
+        try:
+            
+            image = QImage.fromData(png_bytes)
+            if image.isNull():
+                self._error(tr("Invalid image data for PDF export."))
+                return
+                
+            printer = QPrinter(QPrinter.HighResolution)
+            printer.setOutputFormat(QPrinter.PdfFormat)
+            printer.setOutputFileName(path)
+            
+            # Match PDF page size to the exact image aspect ratio (0.2646 mm per screen pixel)
+            printer.setPageSizeMM(QSizeF(
+                image.width() * 0.2646,
+                image.height() * 0.2646
+            ))
+            
+            painter = QPainter(printer)
+            painter.drawImage(0, 0, image)
+            painter.end()
+            self._info(tr(f"PDF → {os.path.basename(path)}"))
+        except Exception as e:
+            self._error(tr(f"PDF export failed: {e}"))
+
 
     @staticmethod
     def _extract_svg_bytes(data_url: str) -> bytes:

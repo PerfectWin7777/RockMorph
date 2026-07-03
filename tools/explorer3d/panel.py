@@ -1786,58 +1786,6 @@ class Explorer3DPanel(BasePanel):
             "payload": {"format": fmt, "dpi": dpi}
         })
 
-    def _save_export(self, data_url: str) -> None:
-        """Override parent method to handle direct writing of WebGL binary snapshots."""
-        try:
-            fmt = os.path.splitext(self._pending_export_path)[1].lower().lstrip('.')
-            
-            # Since WebGL returns direct pre-rasterized base64 streams, we bypass 
-            # the SVG parser to perform a direct, lightweight binary disk write.
-            if ',' in data_url:
-                header, payload = data_url.split(',', 1)
-                if 'base64' in header:
-                    img_bytes = base64.b64decode(payload)
-                    
-                    if fmt in ['png', 'jpg', 'jpeg']:
-                        with open(self._pending_export_path, 'wb') as f:
-                            f.write(img_bytes)
-                        self.show_info(tr(f"3D Viewport exported successfully: {os.path.basename(self._pending_export_path)}"))
-                        return
-                    elif fmt == 'pdf':
-                        self._save_png_bytes_as_pdf(img_bytes, self._pending_export_path)
-                        return
-                        
-            # Fallback for standard vector datasets
-            self._exporter.save_image(data_url, self._pending_export_path, self._pending_export_dpi)
-        except Exception as e:
-            self.show_error(tr(f"Export failed: {e}"))
-
-    def _save_png_bytes_as_pdf(self, png_bytes: bytes, path: str) -> None:
-        """Helper to print raw PNG screenshot bytes into a standalone PDF file."""
-        from PyQt5.QtGui import QImage, QPainter
-        from PyQt5.QtPrintSupport import QPrinter
-        from PyQt5.QtCore import QSizeF
-        
-        image = QImage.fromData(png_bytes)
-        if image.isNull():
-            raise ValueError("Failed to parse viewport bytes for PDF render.")
-            
-        printer = QPrinter(QPrinter.HighResolution)
-        printer.setOutputFormat(QPrinter.PdfFormat)
-        printer.setOutputFileName(path)
-        
-        # Match page size to the exact aspect ratio (0.2646 mm per screen pixel)
-        printer.setPageSizeMM(QSizeF(
-            image.width() * 0.2646,
-            image.height() * 0.2646
-        ))
-        
-        painter = QPainter(printer)
-        painter.drawImage(0, 0, image)
-        painter.end()
-        self.show_info(tr(f"3D Viewport exported as PDF: {os.path.basename(path)}"))
-
-
 
     def _slot_export_interactive_html(self) -> None:
         # TODO: serialize scene state + inline Three.js into a standalone HTML file
