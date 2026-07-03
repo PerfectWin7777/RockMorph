@@ -144,6 +144,9 @@ class Explorer3DPanel(BasePanel):
         # ── Data model (always before widgets) ──────────────────────────
         self.engine = Explorer3DEngine()
         self.is_3d_active = False
+        # Pending WebEngine command queue to prevent initialization race conditions
+        self._web_ready = False
+        self._pending_commands = []
         
         # Initialize the style debounce timer first to prevent initialization crashes [Fix 1]
         self._style_debounce_timer = QTimer()
@@ -471,8 +474,8 @@ class Explorer3DPanel(BasePanel):
         vector_style_layout.addWidget(QLabel(tr("Vertical height offset:")))
         row_offset = QHBoxLayout()
         self.slider_height_offset = QSlider(Qt.Horizontal)
-        self.slider_height_offset.setRange(-200, 1000)  # From -20m to 100m
-        self.slider_height_offset.setValue(10)         # Default 1 meter above surface
+        self.slider_height_offset.setRange(-200, 1000)  
+        self.slider_height_offset.setValue(10)         
         row_offset.addWidget(self.slider_height_offset)
         self.lbl_height_offset_val = QLabel("10 m")
         row_offset.addWidget(self.lbl_height_offset_val)
@@ -907,6 +910,9 @@ class Explorer3DPanel(BasePanel):
         Every signal connection lives here.
         Scanning this method is sufficient to understand all interactivity.
         """
+         # ── WebEngine Lifecycle ──────────────────────────────────────────
+        self.webview.loadFinished.connect(self._slot_web_load_finished)
+
         # ── View switcher ────────────────────────────────────────────────
         self.rad_view_3d.toggled.connect(self._slot_view_mode_changed)
         self.rad_view_2d.toggled.connect(self._slot_view_mode_changed)
@@ -1057,8 +1063,11 @@ class Explorer3DPanel(BasePanel):
         Guard: no-op if the same DEM is already loaded.
         """
         if not self.is_3d_active:
+            self.rad_view_3d.blockSignals(True)
             self.rad_view_3d.setChecked(True)
-            return
+            self.rad_view_3d.blockSignals(False)
+            self._slot_view_mode_changed()
+
         layer = self.combo_raster.currentLayer()
         if not layer:
             return
@@ -1745,12 +1754,34 @@ class Explorer3DPanel(BasePanel):
 
     # ── Internal helpers ─────────────────────────────────────────────────
 
-    def _js(self, command: dict) -> None:
-        """Send a JSON command to the WebGL viewport (no-op if page not ready)."""
-        print(f"[Python -> JS Command] Action envoyée : {command.get('action')}")
+    # ── Shared WebEngine Communication and Queue Management ──────────────
+
+    def _slot_web_load_finished(self, ok: bool) -> None:
+        """Handler for WebEngine view load completion. Flushes deferred commands."""
+        if ok:
+            self._web_ready = True
+            print(f"[RockMorph] WebEngine ready. Flushing {len(self._pending_commands)} pending commands.")
+            for cmd in self._pending_commands:
+                self._js_direct(cmd)
+            self._pending_commands.clear()
+        else:
+            print("[RockMorph] Failed to load WebGL WebEngine page.")
+
+    def _js_direct(self, command: dict) -> None:
+        """Executes javascript call immediately on the WebEngine page thread."""
         self.webview.page().runJavaScript(
             f"processPythonCommand({json.dumps(command)});"
         )
+
+    def _js(self, command: dict) -> None:
+        """Send a JSON command to the WebGL viewport, queuing it if the WebEngine is still initializing."""
+        print(f"[Python -> JS Command] Dispatching: {command.get('action')}")
+        if not self._web_ready:
+            print(f"[RockMorph] WebEngine offline/loading. Queueing action: {command.get('action')}")
+            self._pending_commands.append(command)
+        else:
+            self._js_direct(command)
+            
 
     def _add_layer_item(self, label: str, element_id: str) -> QListWidgetItem:
         """Add a checkable item to the scene registry list and return it."""
