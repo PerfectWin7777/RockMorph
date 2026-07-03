@@ -885,7 +885,8 @@ class Explorer3DPanel(BasePanel):
         self._loaded_raster_id = layer.id()
         dem_data = self.engine.prepare_dem(layer)
         self._js({"action": "set_main_raster", "payload": dem_data.to_dict()})
-       # Cache elevations for classified mapping
+        
+        # Cache elevations for classified mapping
         self.active_dem_min_z = dem_data.z_min
         self.active_dem_max_z = dem_data.z_max
 
@@ -896,9 +897,9 @@ class Explorer3DPanel(BasePanel):
         self.spin_min_z.blockSignals(False)
         self.spin_max_z.blockSignals(False)
 
-        # Trigger colorization update
-        if self.combo_render_mode.currentIndex() == 1:
-            self._rebuild_classified_ui()
+        # Trigger colorization update using the corrected,
+        if self.combo_symbology_render_mode.currentIndex() == 1:
+            self._rebuild_classified_brackets_ui()
         else:
             self._slot_selected_raster_changed()
 
@@ -997,7 +998,8 @@ class Explorer3DPanel(BasePanel):
         if self.chk_reverse_cmap.isChecked():
             position = 1.0 - position
 
-        colormap_name = self.combo_colormap.currentText() or "terrain"
+        # Strip whitespace and convert to lowercase for deterministic lookup
+        colormap_name = (self.combo_colormap.currentText() or "terrain").strip().lower()
 
         try:
             # 1. Lazy load the colormaps file once to optimize performance
@@ -1008,18 +1010,34 @@ class Explorer3DPanel(BasePanel):
                 else:
                     self._colormaps_cache = {}
 
-            # 2. Extract stops (Fallback directly to 'terrain' from the JSON)
-            stops = self._colormaps_cache.get(colormap_name) or self._colormaps_cache.get("terrain")
-            if not stops:
-                return "#27ae60"  # Clean fallback terrain green
+            # 2. Case-insensitive dictionary mapping to avoid case mismatch failures
+            lowercase_cache = {key.lower(): val for key, val in self._colormaps_cache.items()}
 
-            # 3. Parse stops into standard (pos, (r, g, b)) tuples
+            # Extract stops, falling back to lowercase 'terrain'
+            stops = lowercase_cache.get(colormap_name) or lowercase_cache.get("terrain")
+            if not stops:
+                return self._fallback_terrain_gradient(position)
+
+            # 3. Parse stops cleanly supporting multiple potential formats
             parsed_stops = []
-            for pos, rgb in stops:
+            for item in stops:
+                if isinstance(item, list) and len(item) == 2 and isinstance(item[1], list):
+                    pos = float(item[0])
+                    rgb = item[1]
+                elif isinstance(item, list) and len(item) == 4:
+                    pos = float(item[0])
+                    rgb = item[1:4]
+                elif isinstance(item, dict):
+                    pos = float(item.get("pos", item.get("position", 0.0)))
+                    rgb = item.get("rgb", [item.get("r", 0), item.get("g", 0), item.get("b", 0)])
+                else:
+                    continue
+
+                # Scale float 0..1 RGB to 0..255 integers
                 r = int(rgb[0] * 255) if isinstance(rgb[0], float) and rgb[0] <= 1.0 else int(rgb[0])
                 g = int(rgb[1] * 255) if isinstance(rgb[1], float) and rgb[1] <= 1.0 else int(rgb[1])
                 b = int(rgb[2] * 255) if isinstance(rgb[2], float) and rgb[2] <= 1.0 else int(rgb[2])
-                parsed_stops.append((float(pos), (r, g, b)))
+                parsed_stops.append((pos, (r, g, b)))
 
             parsed_stops.sort(key=lambda x: x[0])
 
@@ -1031,7 +1049,7 @@ class Explorer3DPanel(BasePanel):
                 c = parsed_stops[-1][1]
                 return f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
 
-            # 5. Simple linear interpolation
+            # 5. Linear interpolation
             for i in range(len(parsed_stops) - 1):
                 p0, c0 = parsed_stops[i]
                 p1, c1 = parsed_stops[i + 1]
@@ -1043,9 +1061,37 @@ class Explorer3DPanel(BasePanel):
                     return f"#{r:02x}{g:02x}{b:02x}"
 
         except Exception as e:
-            print(f"[RockMorph] Error sampling colormap: {e}")
+            print(f"[RockMorph] Error sampling colormap, using fallback: {e}")
 
-        return "#27ae60"  # Safe default terrain green
+        return self._fallback_terrain_gradient(position)
+
+    def _fallback_terrain_gradient(self, position: float) -> str:
+        """
+        Calculates a beautiful terrain profile (Blue -> Green -> Brown -> White)
+        if the JSON cannot be loaded or parsed.
+        """
+        terrain_stops = [
+            (0.000, (51, 102, 204)),    # Deep Blue
+            (0.150, (65, 152, 175)),    # Aqua
+            (0.250, (230, 240, 150)),   # Sand
+            (0.400, (34, 139, 34)),     # Forest Green
+            (0.650, (139, 115, 85)),    # Earth Brown
+            (0.850, (90, 70, 50)),      # Rocky Dark Brown
+            (1.000, (255, 255, 255))    # Snow White
+        ]
+        position = max(0.0, min(1.0, position))
+        for i in range(len(terrain_stops) - 1):
+            p0, c0 = terrain_stops[i]
+            p1, c1 = terrain_stops[i + 1]
+            if p0 <= position <= p1:
+                t = (position - p0) / (p1 - p0) if (p1 - p0) > 0 else 0.0
+                r = int(c0[0] + (c1[0] - c0[0]) * t)
+                g = int(c0[1] + (c1[1] - c0[1]) * t)
+                b = int(c0[2] + (c1[2] - c0[2]) * t)
+                return f"#{r:02x}{g:02x}{b:02x}"
+        return "#228b22"
+
+        
 
     def _slot_render_mode_changed(self, index: int) -> None:
         """Swap active configuration page and show/hide bounds settings dynamically."""
@@ -1172,20 +1218,6 @@ class Explorer3DPanel(BasePanel):
         elif render_mode == 1:  # Classified
             self._rebuild_classified_brackets_ui()
 
-    def _slot_update_classified_shading(self) -> None:
-        """Pushes current classified parameters to WebGL (Renamed for clarity)."""
-        if not self.is_3d_active or self.combo_symbology_render_mode.currentIndex() != 1:
-            return
-        self._js({
-            "action": "set_classified_colors",
-            "payload": {
-                "bounds": self._class_bounds[:-1],
-                "colors": self._class_colors
-            }
-        })
-
-
-
     def _slot_pick_class_color(self) -> None:
         """Open native picker to customize a specific class's color."""
         button = self.sender()
@@ -1199,13 +1231,14 @@ class Explorer3DPanel(BasePanel):
 
         _apply_color_to_btn(button, color)
         self._class_colors[class_idx] = color.name()
-        self._slot_update_classified_colors()
+        # Use renamed method
+        self._slot_update_classified_shading()
 
-    def _slot_update_classified_colors(self) -> None:
+    def _slot_update_classified_shading(self) -> None:
         """Serialize current bounds and color mapping, then push to the WebGL rendering thread."""
-        if not self.is_3d_active or self.combo_render_mode.currentIndex() != 1:
+        if not self.is_3d_active or self.combo_symbology_render_mode.currentIndex() != 1:
             return
-        # Bounds has length N-1 (omitting the absolute top bound, handled by raw elevation check)
+        # Bounds has length N-1
         self._js({
             "action": "set_classified_colors",
             "payload": {
@@ -1213,6 +1246,10 @@ class Explorer3DPanel(BasePanel):
                 "colors": self._class_colors
             }
         })
+
+    def _slot_update_classified_colors(self) -> None:
+        """Fallback alias to prevent crashes from any external references."""
+        self._slot_update_classified_shading()
 
 
     # Lighting page
