@@ -44,6 +44,7 @@ let elevationStats = { min: 0, max: 1 };
 let spatialOffsets = { x: 0, y: 0, z: 0 };
 let baseExaggeration = 1.0;    // auto-computed once per DEM load
 let currentZScale = 1.5;
+let blockBaseVisible = true; // Authoritative visibility state for walls and sole
 
 // Wall vertex index mappings for synchronized Z-scale updates.
 let wallVertexMappings = [];
@@ -407,6 +408,7 @@ function processPythonCommand(command) {
                 const isVisible = command.payload.visible;
 
                 if (elementId === "block_base") {
+                    blockBaseVisible = isVisible; // Cache user preference globally
                     ["block_base_walls", "block_base_sole"].forEach(subId => {
                         const obj = sceneObjects[subId];
                         if (obj) {
@@ -662,6 +664,7 @@ function _buildSole(terrainGeometry, baseZ) {
     const mat = createStructuralMaterial(baseColor);
 
     const mesh = new THREE.Mesh(geo, mat);
+    mesh.visible = blockBaseVisible; // Apply the cached visibility state
     scene.add(mesh);
     registerObject("block_base_sole", mesh, "sole");
 }
@@ -765,8 +768,8 @@ function _buildWalls(data, baseZ, maxDim) {
 
     // Use structural material with wall-specific color
     const mat = createStructuralMaterial(wallsColor);
-
     wallMesh = new THREE.Mesh(geo, mat);
+    wallMesh.visible = blockBaseVisible; // Apply the cached visibility state
     scene.add(wallMesh);
     registerObject("block_base_walls", wallMesh, "walls");
 }
