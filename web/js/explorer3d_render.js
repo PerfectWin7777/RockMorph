@@ -602,16 +602,20 @@ function _buildTerrain(data) {
     //     "— Z:", data.z_min, "→", data.z_max);
 
 
-    // 1. Identify and cleanly unregister any pre-existing raster in the scene
+    // 1. Sweep and fully dispose of all old terrain, block, and vector layers [Vector Persistence Fix]
+    const keysToRemove = [];
     for (const id in sceneObjects) {
-        if (sceneObjects[id].type === "raster") {
-            unregisterObject(id);
+        const type = sceneObjects[id].type;
+        // Purge all spatial meshes, keeping only active lights and their helpers
+        if (type !== "light" && type !== "gizmo") {
+            keysToRemove.push(id);
         }
     }
+    keysToRemove.forEach(key => {
+        unregisterObject(key);
+    });
 
-    // 2. Clear block elements and reset reference variables
-    unregisterObject("block_base_walls");
-    unregisterObject("block_base_sole");
+    // 2. Reset base reference variables
     wallMesh = null;
     wallVertexMappings = [];
 
