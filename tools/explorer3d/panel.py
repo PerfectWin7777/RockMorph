@@ -197,11 +197,18 @@ class Explorer3DPanel(BasePanel):
         root.addStretch()
 
         # ── QGIS canvas wiring ───────────────────────────────────────────
+        # ── QGIS canvas wiring ───────────────────────────────────────────
         self.canvas_2d = self.iface.mapCanvas()
         self.central_container = self.canvas_2d.parentWidget()
-        self.central_layout = self.central_container.layout()
-        self.central_layout.addWidget(self.webview)
+        
+        # Make the webview a direct overlay child of the central container
+        # instead of inserting it into QGIS's strict grid layout.
+        self.webview.setParent(self.central_container)
         self.webview.hide() 
+
+        # Install an event filter to capture real-time resizing of the central area
+        self.central_container.installEventFilter(self)
+
 
         # Redirect JS console to QGIS Python Console
         debug_page = DebugWebEnginePage(self.webview)
@@ -1019,14 +1026,11 @@ class Explorer3DPanel(BasePanel):
     def _slot_view_mode_changed(self) -> None:
         """Swap QGIS 2D canvas and WebGL viewport."""
         if self.rad_view_3d.isChecked():
-            self.canvas_2d.hide()
+            # Copy the exact coordinates of the active 2D canvas and raise the WebGL scene
+            self.webview.setGeometry(self.canvas_2d.geometry())
             self.webview.show()
+            self.webview.raise_()
             self.is_3d_active = True
-
-            # Auto-trigger render if a DEM is already selected but not yet loaded
-            # layer = self.combo_raster.currentLayer()
-            # if layer and self._loaded_raster_id != layer.id():
-            #     self._slot_render_terrain()
         else:
             self.webview.hide()
             self.canvas_2d.show()
@@ -1781,7 +1785,7 @@ class Explorer3DPanel(BasePanel):
             self._pending_commands.append(command)
         else:
             self._js_direct(command)
-            
+
 
     def _add_layer_item(self, label: str, element_id: str) -> QListWidgetItem:
         """Add a checkable item to the scene registry list and return it."""
@@ -1820,6 +1824,19 @@ class Explorer3DPanel(BasePanel):
         setattr(self, attr_name, slider)
         parent_layout.addWidget(slider)
 
+    
+    # ── Real-Time Layout Synchronization ──────────────────────────────────
+
+    def eventFilter(self, obj, event) -> bool:
+        """Intercept central container resize events to synchronize WebGL container geometry."""
+        from qgis.PyQt.QtCore import QEvent  # type: ignore
+        if obj == self.central_container and event.type() == QEvent.Resize:
+            if self.is_3d_active:
+                # Force the webview to perfectly match the size and position of the 2D canvas
+                self.webview.setGeometry(self.canvas_2d.geometry())
+        return super().eventFilter(obj, event)
+
+
     # ── BasePanel required overrides ─────────────────────────────────────
 
     def _on_compute(self) -> None:
@@ -1832,5 +1849,7 @@ class Explorer3DPanel(BasePanel):
         """Restore QGIS 2D canvas and detach the WebGL widget on plugin unload."""
         if self.is_3d_active:
             self.rad_view_2d.setChecked(True)
+        if self.central_container:
+            self.central_container.removeEventFilter(self)
         if self.webview:
-            self.central_layout.removeWidget(self.webview)
+            self.webview.setParent(None)
