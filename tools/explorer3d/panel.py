@@ -222,6 +222,10 @@ class Explorer3DPanel(BasePanel):
         self._slot_view_mode_changed()        
         self._slot_selected_raster_changed()
 
+        self._add_layer_item(tr("🌐  Reference Grid"), element_id="scene_grid")
+        self._add_layer_item(tr("📍  Orientation Axes (X, Y, Z)"), element_id="scene_axes")
+
+
     # ── Navigation widgets ───────────────────────────────────────────────
 
     def _build_view_switcher(self) -> QWidget:
@@ -931,6 +935,7 @@ class Explorer3DPanel(BasePanel):
         self.combo_raster.currentIndexChanged.connect(self._slot_selected_raster_changed)
         self.btn_render_terrain.clicked.connect(self._slot_render_terrain)
         self.list_layers.itemChanged.connect(self._slot_layer_visibility_changed)
+        self.list_layers.currentItemChanged.connect(self._slot_scene_list_selection_changed)
         self.btn_add_vector.clicked.connect(self._slot_add_vector_layer)
         # ── Vector Layer Interactivity & Styling ─────────────────────────
         self.combo_vector.currentIndexChanged.connect(self._slot_selected_vector_changed)
@@ -970,7 +975,7 @@ class Explorer3DPanel(BasePanel):
         self.slider_height_offset.valueChanged.connect(
             lambda v: self.lbl_height_offset_val.setText(f"{v} m")
         )
-
+        
         # ── Page 2 — Symbology ───────────────────────────────────────────
         self.combo_symbology_render_mode.currentIndexChanged.connect(self._slot_render_mode_changed)
         self.spin_class_count.valueChanged.connect(self._rebuild_classified_brackets_ui)
@@ -1079,6 +1084,13 @@ class Explorer3DPanel(BasePanel):
             return
 
         self._loaded_raster_id = layer.id()
+
+        # Keep permanent system layers, only prune old vector overlays
+        # for i in range(self.list_layers.count() - 1, -1, -1):
+        #     item = self.list_layers.item(i)
+        #     elem_id = item.data(Qt.UserRole)
+        #     if elem_id and elem_id.startswith("vector_"):
+        #         self.list_layers.takeItem(i)
         
         # 1. Clear the PyQt scene list to prepare for the new 3D scene [UX Refinement]
         self.list_layers.clear()
@@ -1089,6 +1101,8 @@ class Explorer3DPanel(BasePanel):
         
         # 3. Dynamically add the Block base control only when rendering succeeds [UX Refinement]
         self._add_layer_item(tr("🧱  Block base (walls & sole)"), element_id="block_base")
+        # self._add_layer_item(tr("🌐  Reference Grid"), element_id="scene_grid")
+        # self._add_layer_item(tr("📍  Orientation Axes (X, Y, Z)"), element_id="scene_axes")
         
         # Cache elevations for classified mapping
         self.active_dem_min_z = dem_data.z_min
@@ -1314,15 +1328,42 @@ class Explorer3DPanel(BasePanel):
 
 
 
+    # ── Scene List Control and Safety Guards ─────────────────────────────
+
+    def _slot_scene_list_selection_changed(self, current, previous) -> None:
+        """Disable the delete control when system/permanent objects are selected."""
+        if not current:
+            self.btn_delete_object.setEnabled(False)
+            return
+            
+        element_id = current.data(Qt.UserRole)
+        # Protect permanent system elements from deletion
+        if element_id in ["block_base", "scene_grid", "scene_axes"]:
+            self.btn_delete_object.setEnabled(False)
+            self.btn_delete_object.setStyleSheet("""
+                QPushButton { background-color: #7f8c8d; color: #ccc; border-radius: 4px; }
+            """)
+        else:
+            self.btn_delete_object.setEnabled(True)
+            self.btn_delete_object.setStyleSheet("""
+                QPushButton {
+                    background-color: #e74c3c;
+                    color: white;
+                    font-weight: bold;
+                    border-radius: 4px;
+                }
+                QPushButton:hover { background-color: #c0392b; }
+            """)
+
     def _slot_delete_scene_object(self) -> None:
-        """Delete the currently selected object in the Scene list from WebGL and UI."""
+        """Delete the currently selected vector object from WebGL and UI."""
         current_item = self.list_layers.currentItem()
         if not current_item:
             return
 
         element_id = current_item.data(Qt.UserRole)
-        if not element_id or element_id == "block_base":
-            return # Block base is permanent
+        if not element_id or element_id in ["block_base", "scene_grid", "scene_axes"]:
+            return # Protect system layers from deletion
 
         # Send deletion transaction to the WebGL rendering engine
         self._js({

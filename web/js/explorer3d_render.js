@@ -431,6 +431,53 @@ function _addDefaultLights() {
     sunDirection.set(sunPos.x, sunPos.y, sunPos.z).normalize(); // Safe initialization from plain JS object
     ambientIntensity = 0.3;
     ambientColor.set(0xffffff);
+
+    // ── Permanent Scene Grid ────────────────────────────────────────────
+    const gridHelper = new THREE.GridHelper(200, 20, 0x555555, 0x2d2d2d);
+    gridHelper.rotation.x = Math.PI / 2; // Orient flat along the X-Y plane
+    gridHelper.position.set(0, 0, -10);   // Default height before terrain loads
+    scene.add(gridHelper);
+    registerObject("scene_grid", gridHelper, "helper");
+
+    // ── Permanent Labeled Axes Group ────────────────────────────────────
+    const axesGroup = new THREE.Group();
+    const axesHelper = new THREE.AxesHelper(15);
+    axesGroup.add(axesHelper);
+
+    // Render Canvas-based Sprite labels for professional visual orientation
+    const xLabel = _createLabelSprite("X", "#ff2222");
+    xLabel.position.set(17, 0, 0);
+    axesGroup.add(xLabel);
+
+    const yLabel = _createLabelSprite("Y", "#22ff22");
+    yLabel.position.set(0, 17, 0);
+    axesGroup.add(yLabel);
+
+    const zLabel = _createLabelSprite("Z", "#2222ff");
+    zLabel.position.set(0, 0, 17);
+    axesGroup.add(zLabel);
+
+    axesGroup.position.set(-60, -60, -10);
+    scene.add(axesGroup);
+    registerObject("scene_axes", axesGroup, "helper");
+}
+
+function _createLabelSprite(text, color) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    ctx.font = "Bold 46px monospace";
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, 32, 32);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(4, 4, 1);
+    return sprite;
 }
 
 // ---------------------------------------------------------------------------
