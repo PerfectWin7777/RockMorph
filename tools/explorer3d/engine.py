@@ -78,8 +78,9 @@ class Explorer3DEngine(BaseEngine):
             y_coords = [y - y_center for y in raw_y_coords]
 
         # Ensure vertical inversion aligns correctly with standard bottom-left WebGL systems
-        z_values = np.flipud(subsampled).tolist()
-        y_coords = y_coords[::-1]
+        # z_values = np.flipud(subsampled).tolist()
+        z_values = subsampled.tolist()
+        # y_coords = y_coords[::-1]
 
         # Compute valid elevation stats, filtering out NaNs
         valid_values = subsampled[~np.isnan(subsampled)]
@@ -174,10 +175,24 @@ class Explorer3DEngine(BaseEngine):
             for part in geom.constParts():
                 vertices_3d = []
                 for vertex in part.vertices():
-                    pt = QgsPointXY(vertex.x(), vertex.y())
+                    # 1. Capture the raw coordinate
+                    raw_x = vertex.x()
+                    raw_y = vertex.y()
+
+                    # 2. Calculate a half-pixel safety buffer [Indexing Bug Fix]
+                    half_pixel_x = pixel_size_x * 0.5
+                    half_pixel_y = pixel_size_y * 0.5 # Always positive in properties
+
+                    # 3. Clamp coordinates slightly inside the active pixel grid
+                    clamped_x = max(x_min + half_pixel_x, min(x_max - half_pixel_x, raw_x))
+                    clamped_y = max(y_min + half_pixel_y, min(y_max - half_pixel_y, raw_y))
+                    
+                    pt = QgsPointXY(clamped_x, clamped_y)
+
                     if transform:
                         pt = transform.transform(pt)
 
+                    # 4. Read elevation (This is now guaranteed to find a valid edge pixel)
                     z_val = reader.sample_at(pt.x(), pt.y())
                     if np.isnan(z_val):
                         z_val = 0.0
