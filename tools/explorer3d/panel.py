@@ -24,7 +24,7 @@ from qgis.PyQt.QtWidgets import (  # type: ignore
     QColorDialog, QDoubleSpinBox, QToolButton, QButtonGroup,
     QSizePolicy, QSpacerItem, QScrollArea
 )
-from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication  # type: ignore
+from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QTimer  # type: ignore
 from qgis.PyQt.QtGui import QColor, QIcon, QPixmap, QPainter  # type: ignore
 from qgis.PyQt.QtWebEngineWidgets import QWebEnginePage  # type: ignore
 from qgis.core import QgsMapLayerProxyModel  # type: ignore
@@ -144,6 +144,13 @@ class Explorer3DPanel(BasePanel):
         # ── Data model (always before widgets) ──────────────────────────
         self.engine = Explorer3DEngine()
         self.is_3d_active = False
+        
+        # Initialize the style debounce timer first to prevent initialization crashes [Fix 1]
+        self._style_debounce_timer = QTimer()
+        self._style_debounce_timer.setSingleShot(True)
+        self._style_debounce_timer.setInterval(50)  # 50ms buffer
+        self._style_debounce_timer.timeout.connect(self._slot_apply_vector_style_update)
+
         # Cached values for classified rendering
         self.active_dem_min_z = 0.0
         self.active_dem_max_z = 1.0
@@ -204,7 +211,6 @@ class Explorer3DPanel(BasePanel):
         # Initial UI state
         self._slot_view_mode_changed()        
         self._slot_selected_raster_changed()
-        # self._refresh_light_panel()
 
     # ── Navigation widgets ───────────────────────────────────────────────
 
@@ -408,9 +414,18 @@ class Explorer3DPanel(BasePanel):
         # Dynamic Mode-Specific Settings Stack
         self.stacked_vector_settings = QStackedWidget()
 
-        # Page 0: Line/Outline (no extra controls needed)
-        page_empty = QWidget()
-        self.stacked_vector_settings.addWidget(page_empty)
+        # Page 0: Line/Outline settings [Line Width Slider] [New]
+        page_line = QWidget()
+        layout_line = QHBoxLayout(page_line)
+        layout_line.setContentsMargins(0, 0, 0, 0)
+        layout_line.addWidget(QLabel(tr("Line Width:")))
+        self.slider_line_width = QSlider(Qt.Horizontal)
+        self.slider_line_width.setRange(1, 10)
+        self.slider_line_width.setValue(2)
+        layout_line.addWidget(self.slider_line_width)
+        self.lbl_line_width_val = QLabel("2 px")
+        layout_line.addWidget(self.lbl_line_width_val)
+        self.stacked_vector_settings.addWidget(page_line)
 
         # Page 1: Curtain depth slider
         page_curtain = QWidget()
@@ -913,6 +928,21 @@ class Explorer3DPanel(BasePanel):
         )
         self.btn_delete_object.clicked.connect(self._slot_delete_scene_object)
 
+        # Connect dynamic triggers to the debouncer [New]
+        self.combo_drape_mode.currentIndexChanged.connect(self._slot_style_parameter_changed)
+        self.slider_line_width.valueChanged.connect(self._slot_style_parameter_changed)
+        self.slider_curtain_depth.valueChanged.connect(self._slot_style_parameter_changed)
+        self.slider_polygon_opacity.valueChanged.connect(self._slot_style_parameter_changed)
+        self.slider_point_size.valueChanged.connect(self._slot_style_parameter_changed)
+        self.combo_color_styling.currentIndexChanged.connect(self._slot_style_parameter_changed)
+        self.combo_vector_attribute.currentIndexChanged.connect(self._slot_style_parameter_changed)
+        self.combo_vector_colormap.currentIndexChanged.connect(self._slot_style_parameter_changed)
+        
+        # Connect labels
+        self.slider_line_width.valueChanged.connect(
+            lambda v: self.lbl_line_width_val.setText(f"{v} px")
+        )
+
         # ── Page 2 — Symbology ───────────────────────────────────────────
         self.combo_symbology_render_mode.currentIndexChanged.connect(self._slot_render_mode_changed)
         self.spin_class_count.valueChanged.connect(self._rebuild_classified_brackets_ui)
@@ -1086,7 +1116,9 @@ class Explorer3DPanel(BasePanel):
         point_marker_size = 1.0
         if selected_drape_mode == "point":
             point_marker_size = float(self.slider_point_size.value() / 10.0)
-
+        
+        line_width = float(self.slider_line_width.value())
+        
         # Color configurations
         color_styling_idx = self.combo_color_styling.currentIndex()
         color_styling = "fixed" if color_styling_idx == 0 else "attribute"
@@ -1130,6 +1162,7 @@ class Explorer3DPanel(BasePanel):
             v_dict["geom_type"] = selected_drape_mode
             v_dict["polygon_opacity"] = polygon_opacity
             v_dict["point_marker_size"] = point_marker_size
+            v_dict["line_width"] = line_width
             v_dict["color_styling"] = color_styling
             v_dict["vector_colormap"] = vector_colormap
             v_dict["attribute_bounds"] = {"min": attr_min, "max": attr_max}
@@ -1151,7 +1184,7 @@ class Explorer3DPanel(BasePanel):
             element_id=f"vector_{vec_layer.id()}"
         )
 
-        
+
     
     def _slot_selected_vector_changed(self) -> None:
         """Triggered when the selected vector layer changes. Populates field columns."""
@@ -1167,14 +1200,77 @@ class Explorer3DPanel(BasePanel):
 
     def _slot_drape_mode_changed(self, index: int) -> None:
         """Swap configuration pages based on the chosen drape visualization."""
-        if index == 1:    # Curtain (Fault)
+        if index == 1:    # Curtain
             self.stacked_vector_settings.setCurrentIndex(1)
         elif index == 3:  # Polygon Filled
             self.stacked_vector_settings.setCurrentIndex(2)
         elif index == 4:  # Point Markers
             self.stacked_vector_settings.setCurrentIndex(3)
-        else:             # Line or Polygon Outline
+        else:             # Line (0) or Polygon Outline (2)
             self.stacked_vector_settings.setCurrentIndex(0)
+            
+        # Trigger an immediate style preview update
+        self._slot_style_parameter_changed()
+    
+    def _slot_style_parameter_changed(self) -> None:
+        """Debounce the change event before transmitting to WebGL."""
+        if self._style_debounce_timer.isActive():
+            self._style_debounce_timer.stop()
+        self._style_debounce_timer.start()
+
+    def _slot_apply_vector_style_update(self) -> None:
+        """Identify selected scene object and push styling overrides to WebGL in real-time."""
+        current_item = self.list_layers.currentItem()
+        # Fallback: if no layer is selected, but there is exactly one vector layer, auto-select it [Fix 2]
+        if not current_item and self.list_layers.count() > 0:
+            items = [self.list_layers.item(i) for i in range(self.list_layers.count())]
+            vector_items = [it for it in items if it.data(Qt.UserRole) != "block_base"]
+            if len(vector_items) == 1:
+                current_item = vector_items[0]
+                self.list_layers.setCurrentItem(current_item)
+
+        if not current_item or not self.is_3d_active:
+            return
+
+        element_id = current_item.data(Qt.UserRole)
+        # Skip if block base is selected (only vectors can be custom styled)
+        if not element_id or element_id == "block_base":
+            return
+
+        # Read values from widgets
+        drape_mode_idx = self.combo_drape_mode.currentIndex()
+        drape_modes = ["line", "curtain", "outline", "filled", "point"]
+        selected_drape_mode = drape_modes[drape_mode_idx]
+
+        extrude_depth = float(self.slider_curtain_depth.value())
+        polygon_opacity = float(self.slider_polygon_opacity.value() / 100.0)
+        point_marker_size = float(self.slider_point_size.value() / 10.0)
+        line_width = float(self.slider_line_width.value())
+
+        # Colors
+        color_styling_idx = self.combo_color_styling.currentIndex()
+        color_styling = "fixed" if color_styling_idx == 0 else "attribute"
+        fixed_color_hex = self.btn_vector_fixed_color.property("color_hex") or "#3498db"
+        attribute_field = self.combo_vector_attribute.currentText()
+        vector_colormap = self.combo_vector_colormap.currentText() or "terrain"
+
+        self._js({
+            "action": "update_vector_style",
+            "payload": {
+                "element_id": element_id,
+                "geom_type": selected_drape_mode,
+                "extrude_depth": extrude_depth,
+                "polygon_opacity": polygon_opacity,
+                "point_marker_size": point_marker_size,
+                "line_width": line_width,
+                "color_styling": color_styling,
+                "fixed_color": fixed_color_hex,
+                "attribute_field": attribute_field,
+                "vector_colormap": vector_colormap
+            }
+        })
+
+
 
     def _slot_delete_scene_object(self) -> None:
         """Delete the currently selected object in the Scene list from WebGL and UI."""

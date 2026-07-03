@@ -473,6 +473,9 @@ function processPythonCommand(command) {
                 }
                 break;
             }
+            case "update_vector_style":
+                _applyDynamicVectorStyle(command.payload);
+                break;
             
             case "remove_vector_layer": {
                 const elementId = command.payload.element_id;
@@ -1321,7 +1324,7 @@ function _buildVectorFeature(descriptor) {
 
     const mat = new THREE.LineBasicMaterial({
         color: descriptor.resolved_color,
-        linewidth: 2
+        linewidth: descriptor.line_width || 2
     });
     const line = new THREE.Line(geo, mat);
     scene.add(line);
@@ -1462,6 +1465,75 @@ function _buildFilledPolygon(descriptor) {
         descriptor: descriptor,
         positions3D: positions3D
     };
+}
+
+
+function _applyDynamicVectorStyle(style) {
+    const targetPrefix = style.element_id;
+
+    for (const id in sceneObjects) {
+        if (!id.startsWith(targetPrefix)) continue;
+
+        const obj = sceneObjects[id];
+        if (!obj || !obj.mesh || !obj.descriptor) continue;
+
+        const mesh = obj.mesh;
+        const desc = obj.descriptor;
+
+        // 1. Update descriptor cached styles
+        desc.geom_type = style.geom_type;
+        desc.extrude_depth = style.extrude_depth;
+        desc.polygon_opacity = style.polygon_opacity;
+        desc.point_marker_size = style.point_marker_size;
+        desc.color_styling = style.color_styling;
+        desc.vector_colormap = style.vector_colormap;
+
+        // 2. Compute dynamic color
+        let resolvedColor = style.fixed_color || "#3498db";
+        if (style.color_styling === "attribute" && desc.attribute_values && desc.attribute_bounds) {
+            const val = desc.attribute_values[0];
+            const minVal = desc.attribute_bounds.min;
+            const maxVal = desc.attribute_bounds.max;
+            const norm = (val - minVal) / (maxVal - minVal);
+
+            const ramp = COLORMAPS[style.vector_colormap] || COLORMAPS.terrain || COLORMAPS.viridis;
+            const sampled = _sampleRamp(ramp, norm);
+
+            resolvedColor = "#" +
+                Math.round(sampled.r * 255).toString(16).padStart(2, "0") +
+                Math.round(sampled.g * 255).toString(16).padStart(2, "0") +
+                Math.round(sampled.b * 255).toString(16).padStart(2, "0");
+        }
+
+        desc.color = resolvedColor;
+
+        // 3. Mutate WebGL properties dynamically based on feature type
+        if (obj.type === "vector") {
+            mesh.material.color.set(resolvedColor);
+            mesh.material.linewidth = style.line_width || 2;
+            mesh.material.needsUpdate = true;
+        }
+        else if (obj.type === "curtain") {
+            mesh.material.color.set(resolvedColor);
+            mesh.material.needsUpdate = true;
+            // Re-extrude geometries to match the updated depth
+            _updateCurtainGeometryZ(mesh, desc);
+        }
+        else if (obj.type === "filled_polygon") {
+            mesh.material.color.set(resolvedColor);
+            mesh.material.opacity = style.polygon_opacity || 0.5;
+            mesh.material.needsUpdate = true;
+            _updateFilledPolygonZ(mesh, desc);
+        }
+        else if (obj.type === "point_marker") {
+            mesh.material.color.set(resolvedColor);
+            mesh.material.needsUpdate = true;
+
+            // Scaler mutation avoids reconstructing point geometries
+            const sizeMultiplier = style.point_marker_size || 1.0;
+            mesh.scale.setScalar(sizeMultiplier);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
