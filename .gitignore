@@ -43,5 +43,5 @@ tests/data/temp/
 
 web/js/tex-mml-chtml.js
 jsconfig.json
-
+generate_colormaps.py
 command.txt
