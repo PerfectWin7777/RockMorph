@@ -300,7 +300,7 @@ class Explorer3DPanel(BasePanel):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(8)
 
-        # DEM selection
+        # 1. DEM selection
         lbl_dem = QLabel(tr("Elevation DEM layer:"))
         lbl_dem.setStyleSheet("font-weight: bold;")
         layout.addWidget(lbl_dem)
@@ -311,7 +311,6 @@ class Explorer3DPanel(BasePanel):
         layout.addWidget(self.combo_raster)
 
         self.btn_render_terrain = QPushButton(tr("⛰  Render 3D Terrain"))
-        self.btn_render_terrain.setToolTip(tr("Load the selected DEM into the 3D viewport."))
         self.btn_render_terrain.setStyleSheet("""
             QPushButton {
                 background-color: #27ae60;
@@ -320,26 +319,23 @@ class Explorer3DPanel(BasePanel):
                 padding: 6px;
                 border-radius: 4px;
             }
-            QPushButton:disabled {
-                background-color: #aaa;
-                color: #eee;
-            }
+            QPushButton:disabled { background-color: #aaa; color: #eee; }
             QPushButton:hover:!disabled { background-color: #219a52; }
         """)
         layout.addWidget(self.btn_render_terrain)
 
         # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        layout.addWidget(sep)
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.HLine)
+        layout.addWidget(sep1)
 
-        # Scene registry
+        # 2. Scene registry list with Delete controls
         lbl_scene = QLabel(tr("Scene objects:"))
         lbl_scene.setStyleSheet("font-weight: bold;")
         layout.addWidget(lbl_scene)
 
+        list_row = QHBoxLayout()
         self.list_layers = QListWidget()
-        self.list_layers.setToolTip(tr("Check or uncheck to toggle visibility of each scene object."))
         self.list_layers.setStyleSheet("""
             QListWidget {
                 border: 1px solid #ccc;
@@ -349,17 +345,34 @@ class Explorer3DPanel(BasePanel):
             QListWidget::item { padding: 4px; }
             QListWidget::item:selected { background: #d0e8ff; color: #000; }
         """)
-        self.list_layers.setMaximumHeight(140)
+        self.list_layers.setMaximumHeight(120)
+        list_row.addWidget(self.list_layers)
 
-        # Default permanent entry
-        self._add_layer_item(tr("🧱  Block base (walls & sole)"), element_id="block_base")
-        layout.addWidget(self.list_layers)
+        # Small vertical panel for list actions (Delete)
+        list_actions = QVBoxLayout()
+        self.btn_delete_object = QPushButton(tr("🗑"))
+        self.btn_delete_object.setFixedSize(32, 32)
+        self.btn_delete_object.setToolTip(tr("Delete the selected layer from the 3D scene."))
+        self.btn_delete_object.setStyleSheet("""
+            QPushButton {
+                background-color: #e74c3c;
+                color: white;
+                font-weight: bold;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #c0392b; }
+        """)
+        list_actions.addWidget(self.btn_delete_object)
+        list_actions.addStretch()
+        list_row.addLayout(list_actions)
+        layout.addLayout(list_row)
 
-        # Vector overlay
+        # Separator
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.HLine)
         layout.addWidget(sep2)
 
+        # 3. Vector Overlay Section
         lbl_vec = QLabel(tr("Drape vector layer onto terrain:"))
         lbl_vec.setStyleSheet("font-weight: bold;")
         layout.addWidget(lbl_vec)
@@ -375,6 +388,114 @@ class Explorer3DPanel(BasePanel):
         row_vec.addWidget(self.btn_add_vector)
         layout.addLayout(row_vec)
 
+        # 4. Collapse-ready Vector Styling Settings Group Box
+        self.group_vector_style = QGroupBox(tr("Vector Styling Settings"))
+        vector_style_layout = QVBoxLayout(self.group_vector_style)
+        vector_style_layout.setSpacing(6)
+
+        # Drape Mode Selector
+        vector_style_layout.addWidget(QLabel(tr("Drape visualization mode:")))
+        self.combo_drape_mode = QComboBox()
+        self.combo_drape_mode.addItems([
+            tr("Line (Default)"),
+            tr("Curtain (Geological Fault)"),
+            tr("Polygon Outline"),
+            tr("Polygon Filled (Transparent)"),
+            tr("Point Markers")
+        ])
+        vector_style_layout.addWidget(self.combo_drape_mode)
+
+        # Dynamic Mode-Specific Settings Stack
+        self.stacked_vector_settings = QStackedWidget()
+
+        # Page 0: Line/Outline (no extra controls needed)
+        page_empty = QWidget()
+        self.stacked_vector_settings.addWidget(page_empty)
+
+        # Page 1: Curtain depth slider
+        page_curtain = QWidget()
+        layout_curtain = QHBoxLayout(page_curtain)
+        layout_curtain.setContentsMargins(0, 0, 0, 0)
+        layout_curtain.addWidget(QLabel(tr("Depth:")))
+        self.slider_curtain_depth = QSlider(Qt.Horizontal)
+        self.slider_curtain_depth.setRange(1, 100)
+        self.slider_curtain_depth.setValue(15)
+        layout_curtain.addWidget(self.slider_curtain_depth)
+        self.lbl_curtain_depth_val = QLabel("15 m")
+        layout_curtain.addWidget(self.lbl_curtain_depth_val)
+        self.stacked_vector_settings.addWidget(page_curtain)
+
+        # Page 2: Polygon opacity slider
+        page_opacity = QWidget()
+        layout_opacity = QHBoxLayout(page_opacity)
+        layout_opacity.setContentsMargins(0, 0, 0, 0)
+        layout_opacity.addWidget(QLabel(tr("Opacity:")))
+        self.slider_polygon_opacity = QSlider(Qt.Horizontal)
+        self.slider_polygon_opacity.setRange(10, 100)
+        self.slider_polygon_opacity.setValue(50)
+        layout_opacity.addWidget(self.slider_polygon_opacity)
+        self.lbl_polygon_opacity_val = QLabel("50 %")
+        layout_opacity.addWidget(self.lbl_polygon_opacity_val)
+        self.stacked_vector_settings.addWidget(page_opacity)
+
+        # Page 3: Point size slider
+        page_point = QWidget()
+        layout_point = QHBoxLayout(page_point)
+        layout_point.setContentsMargins(0, 0, 0, 0)
+        layout_point.addWidget(QLabel(tr("Marker Size:")))
+        self.slider_point_size = QSlider(Qt.Horizontal)
+        self.slider_point_size.setRange(1, 50)
+        self.slider_point_size.setValue(15)
+        layout_point.addWidget(self.slider_point_size)
+        self.lbl_point_size_val = QLabel("1.5 m")
+        layout_point.addWidget(self.lbl_point_size_val)
+        self.stacked_vector_settings.addWidget(page_point)
+
+        vector_style_layout.addWidget(self.stacked_vector_settings)
+
+        # Color Styling Selector
+        vector_style_layout.addWidget(QLabel(tr("Coloring method:")))
+        self.combo_color_styling = QComboBox()
+        self.combo_color_styling.addItems([
+            tr("Fixed Uniform Color"),
+            tr("Color by Attribute Value")
+        ])
+        vector_style_layout.addWidget(self.combo_color_styling)
+
+        # Dynamic Color Settings Stack
+        self.stacked_color_settings = QStackedWidget()
+
+        # Page 0: Simple fixed color picker
+        page_fixed_color = QWidget()
+        layout_fixed = QVBoxLayout(page_fixed_color)
+        layout_fixed.setContentsMargins(0, 0, 0, 0)
+        self.btn_vector_fixed_color = _make_color_btn(tr("Select color"), "#3498db")
+        layout_fixed.addWidget(self.btn_vector_fixed_color)
+        self.stacked_color_settings.addWidget(page_fixed_color)
+
+        # Page 1: Attribute categorization + colormap selector
+        page_attribute_color = QWidget()
+        layout_attrib = QVBoxLayout(page_attribute_color)
+        layout_attrib.setContentsMargins(0, 0, 0, 0)
+        layout_attrib.setSpacing(4)
+
+        row_attr = QHBoxLayout()
+        row_attr.addWidget(QLabel(tr("Attribute Field:")))
+        self.combo_vector_attribute = QComboBox()
+        row_attr.addWidget(self.combo_vector_attribute)
+        layout_attrib.addLayout(row_attr)
+
+        row_cmap = QHBoxLayout()
+        row_cmap.addWidget(QLabel(tr("Palette Ramp:")))
+        self.combo_vector_colormap = QComboBox()
+        self.combo_vector_colormap.addItems(["terrain", "viridis", "magma", "plasma", "cividis"])
+        row_cmap.addWidget(self.combo_vector_colormap)
+        layout_attrib.addLayout(row_cmap)
+
+        self.stacked_color_settings.addWidget(page_attribute_color)
+        vector_style_layout.addWidget(self.stacked_color_settings)
+
+        layout.addWidget(self.group_vector_style)
         layout.addStretch()
         return page
 
@@ -772,6 +893,25 @@ class Explorer3DPanel(BasePanel):
         self.btn_render_terrain.clicked.connect(self._slot_render_terrain)
         self.list_layers.itemChanged.connect(self._slot_layer_visibility_changed)
         self.btn_add_vector.clicked.connect(self._slot_add_vector_layer)
+        # ── Vector Layer Interactivity & Styling ─────────────────────────
+        self.combo_vector.currentIndexChanged.connect(self._slot_selected_vector_changed)
+        self.combo_drape_mode.currentIndexChanged.connect(self._slot_drape_mode_changed)
+        self.combo_color_styling.currentIndexChanged.connect(self.stacked_color_settings.setCurrentIndex)
+        
+        self.slider_curtain_depth.valueChanged.connect(
+            lambda v: self.lbl_curtain_depth_val.setText(f"{v} m")
+        )
+        self.slider_polygon_opacity.valueChanged.connect(
+            lambda v: self.lbl_polygon_opacity_val.setText(f"{v} %")
+        )
+        self.slider_point_size.valueChanged.connect(
+            lambda v: self.lbl_point_size_val.setText(f"{v/10.0:.1f} m")
+        )
+        
+        self.btn_vector_fixed_color.clicked.connect(
+            lambda: self._slot_pick_color_for("vector_fixed", self.btn_vector_fixed_color)
+        )
+        self.btn_delete_object.clicked.connect(self._slot_delete_scene_object)
 
         # ── Page 2 — Symbology ───────────────────────────────────────────
         self.combo_symbology_render_mode.currentIndexChanged.connect(self._slot_render_mode_changed)
@@ -870,8 +1010,6 @@ class Explorer3DPanel(BasePanel):
         """
         Process and send DEM to the WebGL viewport.
         Guard: no-op if the same DEM is already loaded.
-        Note: for large DEMs, move engine.prepare_dem() into a ComputeWorker
-        to avoid freezing the QGIS main thread.
         """
         if not self.is_3d_active:
             self.rad_view_3d.setChecked(True)
@@ -883,8 +1021,16 @@ class Explorer3DPanel(BasePanel):
             return
 
         self._loaded_raster_id = layer.id()
+        
+        # 1. Clear the PyQt scene list to prepare for the new 3D scene [UX Refinement]
+        self.list_layers.clear()
+
+        # 2. Process and send the DEM payload to WebGL
         dem_data = self.engine.prepare_dem(layer)
         self._js({"action": "set_main_raster", "payload": dem_data.to_dict()})
+        
+        # 3. Dynamically add the Block base control only when rendering succeeds [UX Refinement]
+        self._add_layer_item(tr("🧱  Block base (walls & sole)"), element_id="block_base")
         
         # Cache elevations for classified mapping
         self.active_dem_min_z = dem_data.z_min
@@ -897,12 +1043,11 @@ class Explorer3DPanel(BasePanel):
         self.spin_min_z.blockSignals(False)
         self.spin_max_z.blockSignals(False)
 
-        # Trigger colorization update using the corrected,
+        # Trigger colorization update
         if self.combo_symbology_render_mode.currentIndex() == 1:
             self._rebuild_classified_brackets_ui()
         else:
             self._slot_selected_raster_changed()
-
 
 
     def _slot_layer_visibility_changed(self, item: QListWidgetItem) -> None:
@@ -947,6 +1092,50 @@ class Explorer3DPanel(BasePanel):
             label=f"💧  {vec_layer.name()}",
             element_id=f"vector_{vec_layer.id()}"
         )
+    
+    def _slot_selected_vector_changed(self) -> None:
+        """Triggered when the selected vector layer changes. Populates field columns."""
+        layer = self.combo_vector.currentLayer()
+        self.combo_vector_attribute.clear()
+        if not layer:
+            return
+        
+        # Pull field names from the QGIS Vector layer provider
+        fields = layer.fields()
+        for field in fields:
+            self.combo_vector_attribute.addItem(field.name())
+
+    def _slot_drape_mode_changed(self, index: int) -> None:
+        """Swap configuration pages based on the chosen drape visualization."""
+        if index == 1:    # Curtain (Fault)
+            self.stacked_vector_settings.setCurrentIndex(1)
+        elif index == 3:  # Polygon Filled
+            self.stacked_vector_settings.setCurrentIndex(2)
+        elif index == 4:  # Point Markers
+            self.stacked_vector_settings.setCurrentIndex(3)
+        else:             # Line or Polygon Outline
+            self.stacked_vector_settings.setCurrentIndex(0)
+
+    def _slot_delete_scene_object(self) -> None:
+        """Delete the currently selected object in the Scene list from WebGL and UI."""
+        current_item = self.list_layers.currentItem()
+        if not current_item:
+            return
+
+        element_id = current_item.data(Qt.UserRole)
+        if not element_id or element_id == "block_base":
+            return # Block base is permanent
+
+        # Send deletion transaction to the WebGL rendering engine
+        self._js({
+            "action": "remove_vector_layer",
+            "payload": {"element_id": element_id}
+        })
+
+        # Remove from PyQt list
+        self.list_layers.takeItem(self.list_layers.row(current_item))
+
+
 
     # Symbology page
 
@@ -1364,6 +1553,10 @@ class Explorer3DPanel(BasePanel):
         elif target == "solid_color":
             if self.is_3d_active:
                 self._js({"action": "set_solid_color", "payload": {"color": color.name()}})
+        
+        elif target == "vector_fixed":
+            # Just updates the swatch; visual payload is read when clicking '+ Add'
+            pass
 
     # ── Internal helpers ─────────────────────────────────────────────────
 

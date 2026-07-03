@@ -463,15 +463,34 @@ function processPythonCommand(command) {
                         }
                     });
                 } else {
-                    const obj = sceneObjects[elementId];
-                    if (obj) {
-                        obj.mesh.visible = isVisible;
-                        obj.visible = isVisible;
+                    // Match and toggle visibility for all sub-features under this layer prefix [Visibility Fix]
+                    for (const id in sceneObjects) {
+                        if (id.startsWith(elementId)) {
+                            sceneObjects[id].mesh.visible = isVisible;
+                            sceneObjects[id].visible = isVisible;
+                        }
                     }
                 }
                 break;
             }
+            
+            case "remove_vector_layer": {
+                const elementId = command.payload.element_id;
 
+                // Identify and cleanly dispose of all meshes starting with this layer prefix [Deletion Fix]
+                const keysToRemove = [];
+                for (const id in sceneObjects) {
+                    if (id.startsWith(elementId)) {
+                        keysToRemove.push(id);
+                    }
+                }
+
+                keysToRemove.forEach(key => {
+                    unregisterObject(key);
+                });
+                break;
+            }
+                
             case "set_multidirectional_shading":
                 globalMultidirectional = command.payload.enabled;
                 updateSceneUniforms();
