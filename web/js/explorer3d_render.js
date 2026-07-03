@@ -38,6 +38,8 @@ const sceneObjects = {};
 // Terrain state — cached for real-time Z-scale updates
 // ---------------------------------------------------------------------------
 let originalDEMValues = null;   // 2D array [row][col] of raw elevation floats
+let cachedModelWidth = 100.0;   // Cached geographical width of the active DEM
+let cachedModelHeight = 100.0;  // Cached geographical height of the active DEM
 let elevationStats = { min: 0, max: 1 };
 let spatialOffsets = { x: 0, y: 0, z: 0 };
 let baseExaggeration = 1.0;    // auto-computed once per DEM load
@@ -533,6 +535,8 @@ function _buildTerrain(data) {
 
     const modelWidth = Math.abs(data.x_coords[data.x_coords.length - 1] - data.x_coords[0]);
     const modelHeight = Math.abs(data.y_coords[data.y_coords.length - 1] - data.y_coords[0]);
+    cachedModelWidth = modelWidth;
+    cachedModelHeight = modelHeight;
     const maxDim = Math.max(modelWidth, modelHeight);
     
     // SCALE DOWN : Normalizes coords to a maximum size of 100 units to prevent shader float underflow
@@ -1124,8 +1128,8 @@ function _buildDataFromCache() {
         z_min: elevationStats.min,
         z_max: elevationStats.max,
         nodata_value: null,
-        x_coords: Array.from({ length: w }, (_, i) => (i / (w - 1) - 0.5) * 1),
-        y_coords: Array.from({ length: h }, (_, j) => (0.5 - j / (h - 1)) * 1),
+        x_coords: Array.from({ length: w }, (_, i) => (i / (w - 1) - 0.5) * cachedModelWidth),
+        y_coords: Array.from({ length: h }, (_, j) => (0.5 - j / (h - 1)) * cachedModelHeight),
     };
 }
 
