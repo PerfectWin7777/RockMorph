@@ -16,7 +16,14 @@ from ...base.base_engine import BaseEngine
 from ...core.raster import RasterReader
 from .models import ThreeDRaster, ThreeDVector
 
-from qgis.core import QgsRasterLayer, QgsVectorLayer, QgsPointXY, QgsCoordinateTransform, QgsProject  # type: ignore
+from qgis.core import (QgsRasterLayer,  # type: ignore
+    QgsVectorLayer, QgsPointXY, QgsCoordinateTransform, QgsProject)  
+
+from qgis.PyQt.QtCore import  QCoreApplication # type: ignore
+
+
+def tr(message: str) -> str:
+    return QCoreApplication.translate("RockMorph", message)
 
 
 class Explorer3DEngine(BaseEngine):
@@ -28,8 +35,30 @@ class Explorer3DEngine(BaseEngine):
         super().__init__()
 
     def compute(self, **kwargs) -> dict:
-        """Required override of BaseEngine abstract method."""
-        return {}
+        """
+        Runs in the background thread.
+        Prepares the raster digital elevation model (DEM) and returns its data structure.
+        """
+        dem_layer = kwargs.get("dem_layer")
+        progress_callback = kwargs.get("progress_callback")
+        
+        if not dem_layer:
+            raise ValueError("No raster DEM layer provided to the compute engine.")
+
+        # Step 1: Report initialization progress
+        if progress_callback:
+            progress_callback(15, tr("Reading geospatial coordinates..."))
+
+        # Step 2: Execute the heavy GDAL raster extraction and downsampling
+        dem_data = self.prepare_dem(dem_layer)
+
+        # Step 3: Report near completion
+        if progress_callback:
+            progress_callback(90, tr("Assembling 3D mesh matrix..."))
+
+        # Return the resulting ThreeDRaster object back to the main thread
+        return {"dem_data": dem_data}
+    
 
     def prepare_dem(self, dem_layer: QgsRasterLayer, max_resolution: int = 400) -> ThreeDRaster:
         """

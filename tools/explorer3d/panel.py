@@ -31,7 +31,7 @@ from qgis.PyQt.QtWebEngineWidgets import QWebEnginePage  # type: ignore
 from qgis.core import QgsMapLayerProxyModel  # type: ignore
 from qgis.gui import QgsMapLayerComboBox  # type: ignore
 
-from ...base.base_panel import BasePanel
+from ...base.base_panel import BasePanel, ComputeWorker
 from .engine import Explorer3DEngine
 
 from ...widgets.colormap_combo import MatplotlibColorMapComboBox
@@ -1086,8 +1086,8 @@ class Explorer3DPanel(BasePanel):
 
     def _slot_render_terrain(self) -> None:
         """
-        Process and send DEM to the WebGL viewport.
-        Guard: no-op if the same DEM is already loaded.
+        Initiate the background computation worker to prepare the 3D terrain
+        without freezing the QGIS main graphical thread.
         """
         if not self.is_3d_active:
             self.rad_view_3d.blockSignals(True)
@@ -1109,21 +1109,43 @@ class Explorer3DPanel(BasePanel):
             elem_id = item.data(Qt.UserRole)
             if elem_id and elem_id.startswith("vector_"):
                 self.list_layers.takeItem(i)
-        
-        # 1. Clear the PyQt scene list to prepare for the new 3D scene [UX Refinement]
-        # self.list_layers.clear()
 
-        # 2. Process and send the DEM payload to WebGL
-        dem_data = self.engine.prepare_dem(layer)
+        # 1. Show the built-in professional progress feedback panel
+        self.set_loading_state(True, tr("Initializing 3D computation worker..."), total=100)
+
+        # 2. Setup and run the background thread worker
+        self._worker = ComputeWorker(self.engine, {"dem_layer": layer})
+        
+        # Connect dynamic worker signals directly to UI slots
+        self._worker.progress.connect(self.update_progress)
+        self._worker.finished.connect(self._slot_on_dem_ready)
+        self._worker.error.connect(self._slot_on_dem_failed)
+        
+        # Launch the asynchronous thread
+        self._worker.start()
+
+    
+    def _slot_on_dem_ready(self, result: dict) -> None:
+        """
+        Triggered on the main thread when ComputeWorker finishes terrain preparation.
+        Updates UI bounds and transmits the 3D payload to WebGL.
+        """
+        # 1. Close the progress feedback and unlock UI controls
+        self.set_loading_state(False)
+        
+        dem_data = result.get("dem_data")
+        if not dem_data:
+            self.show_error(tr("Received empty dataset from computation thread."))
+            return
+            
+        # 2. Cache and transmit the dataset to the WebGL rendering engine
         self._active_dem_data = dem_data.to_dict()
-        self._js({"action": "set_main_raster", "payload": dem_data.to_dict()})
+        self._js({"action": "set_main_raster", "payload": self._active_dem_data})
         
-        # 3. Dynamically add the Block base control only when rendering succeeds [UX Refinement]
+        # 3. Dynamically append structural Block control options
         self._add_layer_item(tr("🧱  Block base (walls & sole)"), element_id="block_base")
-        # self._add_layer_item(tr("🌐  Reference Grid"), element_id="scene_grid")
-        # self._add_layer_item(tr("📍  Orientation Axes (X, Y, Z)"), element_id="scene_axes")
         
-        # Cache elevations for classified mapping
+        # 4. Cache and update elevation boundary widgets for classified rendering
         self.active_dem_min_z = dem_data.z_min
         self.active_dem_max_z = dem_data.z_max
 
@@ -1134,11 +1156,19 @@ class Explorer3DPanel(BasePanel):
         self.spin_min_z.blockSignals(False)
         self.spin_max_z.blockSignals(False)
 
-        # Trigger colorization update
+        # 5. Refresh colorization state based on active render mode
         if self.combo_symbology_render_mode.currentIndex() == 1:
             self._rebuild_classified_brackets_ui()
         else:
             self._slot_selected_raster_changed()
+
+    def _slot_on_dem_failed(self, error_msg: str) -> None:
+        """
+        Triggered on the main thread if the background thread encounters a fatal exception.
+        """
+        self.set_loading_state(False)
+        self._loaded_raster_id = None # Clear cached ID to allow re-trying
+        self.show_error(tr(f"3D Terrain preparation failed: {error_msg}"))
 
 
     def _slot_layer_visibility_changed(self, item: QListWidgetItem) -> None:
@@ -2152,9 +2182,10 @@ class Explorer3DPanel(BasePanel):
 
 
     # ── BasePanel required overrides ─────────────────────────────────────
-
+    
     def _on_compute(self) -> None:
-        pass  # Computation is driven by UI events, not a single Compute button.
+        """Satisfy the abstract base class requirement without blocking QGIS."""
+        pass  # Computation is driven by UI events in our background worker threads
 
     def _on_result(self, data: dict) -> None:
         pass  # Results are piped in real-time via _js().
