@@ -144,6 +144,11 @@ class Explorer3DPanel(BasePanel):
         # ── Data model (always before widgets) ──────────────────────────
         self.engine = Explorer3DEngine()
         self.is_3d_active = False
+        # Cached values for classified rendering
+        self.active_dem_min_z = 0.0
+        self.active_dem_max_z = 1.0
+        self._class_colors = []
+        self._class_bounds = []
         self._loaded_raster_id: Optional[str] = None
         self._selected_light_idx: int = 0
         self._lights: list = [_default_sun()]
@@ -381,52 +386,92 @@ class Explorer3DPanel(BasePanel):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(8)
 
-        # Color mode
-        lbl_mode = QLabel(tr("Colorization mode:"))
+        # 1. Unified Render Mode Selector
+        lbl_mode = QLabel(tr("Symbology render mode:"))
         lbl_mode.setStyleSheet("font-weight: bold;")
         layout.addWidget(lbl_mode)
 
-        mode_row = QHBoxLayout()
-        self.rad_mode_cmap = QRadioButton(tr("Elevation colormap"))
-        self.rad_mode_cmap.setChecked(True)
-        self.rad_mode_solid = QRadioButton(tr("Solid uniform color"))
-        mode_row.addWidget(self.rad_mode_cmap)
-        mode_row.addWidget(self.rad_mode_solid)
-        layout.addLayout(mode_row)
+        self.combo_render_mode = QComboBox()
+        self.combo_render_mode.addItems([
+            tr("Continuous Colormap (Scientific Pseudocolor)"),
+            tr("Classified Intervals (Discrete Brackets)"),
+            tr("Solid Uniform Fill")
+        ])
+        layout.addWidget(self.combo_render_mode)
 
-        # Solid color picker (only relevant when rad_mode_solid is active)
-        self.btn_solid_color = _make_color_btn(tr("Terrain color"), "#4a90d9")
-        self.btn_solid_color.setEnabled(False)
-        self.btn_solid_color.setToolTip(tr("Choose the uniform color applied to the terrain surface."))
-        layout.addWidget(self.btn_solid_color)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        layout.addWidget(sep)
-
-        # Colormap selector
+        # 2. Stacked Settings Area for cleaner layout
+        self.stacked_symbology = QStackedWidget()
+        
+        # --- Page 0: Continuous Settings ---
+        page_continuous = QWidget()
+        layout_cont = QVBoxLayout(page_continuous)
+        layout_cont.setContentsMargins(0, 4, 0, 4)
+        layout_cont.setSpacing(6)
+        
         lbl_cmap = QLabel(tr("Scientific colormap:"))
         lbl_cmap.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_cmap)
+        layout_cont.addWidget(lbl_cmap)
+
 
         self.combo_colormap = MatplotlibColorMapComboBox(json_file)
         self.combo_colormap.setToolTip(
             tr("All names match Matplotlib conventions — use the same name in figure captions.")
         )
-        layout.addWidget(self.combo_colormap)
+        layout_cont.addWidget(self.combo_colormap)
 
         self.chk_reverse_cmap = QCheckBox(tr("Reverse color ramp"))
-        self.chk_reverse_cmap.setToolTip(
-            tr("Flip the colormap so that low elevations get the top color.")
-        )
-        layout.addWidget(self.chk_reverse_cmap)
+        layout_cont.addWidget(self.chk_reverse_cmap)
+        layout_cont.addStretch()
+        self.stacked_symbology.addWidget(page_continuous)
 
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.HLine)
-        layout.addWidget(sep2)
+        # --- Page 1: Classified Settings ---
+        page_classified = QWidget()
+        layout_class = QVBoxLayout(page_classified)
+        layout_class.setContentsMargins(0, 4, 0, 4)
+        layout_class.setSpacing(6)
 
-        # Color bounds
-        lbl_bounds = QLabel(tr("Color value bounds:"))
+        row_count = QHBoxLayout()
+        row_count.addWidget(QLabel(tr("Number of classes:")))
+        self.spin_class_count = QDoubleSpinBox() # Using DoubleSpinBox mapped as integer for consistency
+        self.spin_class_count.setRange(2, 12)
+        self.spin_class_count.setDecimals(0)
+        self.spin_class_count.setValue(5)
+        row_count.addWidget(self.spin_class_count)
+        layout_class.addLayout(row_count)
+
+        # Scroll area to contain custom class range pickers
+        scroll_classes = QScrollArea()
+        scroll_classes.setWidgetResizable(True)
+        scroll_classes.setMaximumHeight(150)
+        scroll_classes.setStyleSheet("QScrollArea { border: 1px solid #ccc; border-radius: 4px; }")
+        
+        self.widget_classes_list = QWidget()
+        self.layout_classes_list = QVBoxLayout(self.widget_classes_list)
+        self.layout_classes_list.setContentsMargins(4, 4, 4, 4)
+        self.layout_classes_list.setSpacing(4)
+        scroll_classes.setWidget(self.widget_classes_list)
+        layout_class.addWidget(scroll_classes)
+        self.stacked_symbology.addWidget(page_classified)
+
+        # --- Page 2: Solid Fill Settings ---
+        page_solid = QWidget()
+        layout_solid = QVBoxLayout(page_solid)
+        layout_solid.setContentsMargins(0, 4, 0, 4)
+        layout_solid.setSpacing(6)
+
+        self.btn_solid_color = _make_color_btn(tr("Terrain color"), "#4a90d9")
+        layout_solid.addWidget(self.btn_solid_color)
+        layout_solid.addStretch()
+        self.stacked_symbology.addWidget(page_solid)
+
+        layout.addWidget(self.stacked_symbology)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        layout.addWidget(sep)
+
+        # 3. Shared value bounds (Z range)
+        lbl_bounds = QLabel(tr("Elevation classification bounds:"))
         lbl_bounds.setStyleSheet("font-weight: bold;")
         layout.addWidget(lbl_bounds)
 
@@ -434,11 +479,9 @@ class Explorer3DPanel(BasePanel):
         self.rad_scale_auto = QRadioButton(tr("Auto (DEM range)"))
         self.rad_scale_auto.setChecked(True)
         self.rad_scale_manual = QRadioButton(tr("Custom range"))
-
         self.scale_btn_group = QButtonGroup(self)
         self.scale_btn_group.addButton(self.rad_scale_auto)
         self.scale_btn_group.addButton(self.rad_scale_manual)
-
         bounds_row.addWidget(self.rad_scale_auto)
         bounds_row.addWidget(self.rad_scale_manual)
         layout.addLayout(bounds_row)
@@ -448,19 +491,12 @@ class Explorer3DPanel(BasePanel):
         self.spin_min_z = QDoubleSpinBox()
         self.spin_min_z.setRange(-99999, 99999)
         self.spin_min_z.setEnabled(False)
-        self.spin_min_z.setToolTip(
-            tr("Lock the bottom of the color scale to this elevation (meters). "
-               "Useful for comparing multiple figures in the same publication.")
-        )
         spin_row.addWidget(self.spin_min_z)
 
         spin_row.addWidget(QLabel(tr("Max Z:")))
         self.spin_max_z = QDoubleSpinBox()
         self.spin_max_z.setRange(-99999, 99999)
         self.spin_max_z.setEnabled(False)
-        self.spin_max_z.setToolTip(
-            tr("Lock the top of the color scale to this elevation (meters).")
-        )
         spin_row.addWidget(self.spin_max_z)
         layout.addLayout(spin_row)
 
@@ -732,13 +768,8 @@ class Explorer3DPanel(BasePanel):
         self.btn_add_vector.clicked.connect(self._slot_add_vector_layer)
 
         # ── Page 2 — Symbology ───────────────────────────────────────────
-        self.rad_mode_solid.toggled.connect(self.btn_solid_color.setEnabled)
-        self.rad_mode_solid.toggled.connect(
-            lambda checked: self.combo_colormap.setEnabled(not checked)
-        )
-        self.rad_mode_solid.toggled.connect(
-            lambda checked: self.chk_reverse_cmap.setEnabled(not checked)
-        )
+        self.combo_render_mode.currentIndexChanged.connect(self._slot_render_mode_changed)
+        self.spin_class_count.valueChanged.connect(self._rebuild_classified_ui)
         self.btn_solid_color.clicked.connect(
             lambda: self._slot_pick_color_for("solid_color", self.btn_solid_color)
         )
@@ -748,7 +779,6 @@ class Explorer3DPanel(BasePanel):
         self.rad_scale_manual.toggled.connect(self.spin_max_z.setEnabled)
         self.spin_min_z.valueChanged.connect(self._slot_update_color_bounds)
         self.spin_max_z.valueChanged.connect(self._slot_update_color_bounds)
-        self.rad_mode_solid.toggled.connect(self._slot_color_mode_changed)
         self.rad_scale_auto.toggled.connect(self._slot_color_scale_mode_changed)
 
         # ── Page 3 — Lights ──────────────────────────────────────────────
@@ -849,7 +879,24 @@ class Explorer3DPanel(BasePanel):
         self._loaded_raster_id = layer.id()
         dem_data = self.engine.prepare_dem(layer)
         self._js({"action": "set_main_raster", "payload": dem_data.to_dict()})
-        self._slot_selected_raster_changed()
+       # Cache elevations for classified mapping
+        self.active_dem_min_z = dem_data.z_min
+        self.active_dem_max_z = dem_data.z_max
+
+        self.spin_min_z.blockSignals(True)
+        self.spin_max_z.blockSignals(True)
+        self.spin_min_z.setValue(self.active_dem_min_z)
+        self.spin_max_z.setValue(self.active_dem_max_z)
+        self.spin_min_z.blockSignals(False)
+        self.spin_max_z.blockSignals(False)
+
+        # Trigger colorization update
+        if self.combo_render_mode.currentIndex() == 1:
+            self._rebuild_classified_ui()
+        else:
+            self._slot_selected_raster_changed()
+
+            
 
     def _slot_layer_visibility_changed(self, item: QListWidgetItem) -> None:
         """Toggle visibility for a scene object identified by its stored element_id."""
@@ -933,7 +980,117 @@ class Explorer3DPanel(BasePanel):
             self._js({"action": "set_color_bounds_auto", "payload": {}})
         else:
             self._slot_update_color_bounds()
+    
+    # Symbology slots
 
+    def _slot_render_mode_changed(self, index: int) -> None:
+        """Swap active configuration page and trigger 3D viewport update."""
+        self.stacked_symbology.setCurrentIndex(index)
+        if not self.is_3d_active:
+            return
+        if index == 0:
+            self._slot_update_colormap()
+        elif index == 1:
+            self._rebuild_classified_ui()
+        elif index == 2:
+            hex_color = self.btn_solid_color.property("color_hex") or "#4a90d9"
+            self._js({"action": "set_solid_color", "payload": {"color": hex_color}})
+
+    def _rebuild_classified_ui(self) -> None:
+        """Regenerate dynamic rows in the scroll panel and divide the Z span into equal intervals."""
+        min_z = self.active_dem_min_z if self.rad_scale_auto.isChecked() else self.spin_min_z.value()
+        max_z = self.active_dem_max_z if self.rad_scale_auto.isChecked() else self.spin_max_z.value()
+        
+        num_classes = int(self.spin_class_count.value())
+        if max_z <= min_z:
+            max_z = min_z + 1.0
+
+        interval = (max_z - min_z) / num_classes
+
+        # Clear existing rows
+        while self.layout_classes_list.count():
+            item = self.layout_classes_list.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        # Scientific Viridis anchor stops for default programmatic gradient
+        viridis_stops = [
+            (0.267, 0.004, 0.329), # Deep purple
+            (0.223, 0.302, 0.541), # Marine blue
+            (0.125, 0.549, 0.556), # Forest green
+            (0.368, 0.784, 0.380), # Lime green
+            (0.992, 0.901, 0.141)  # Yellow
+        ]
+        
+        def interpolate_viridis(t: float) -> str:
+            t = max(0.0, min(1.0, t))
+            idx = t * (len(viridis_stops) - 1)
+            lower = int(idx)
+            upper = min(lower + 1, len(viridis_stops) - 1)
+            frac = idx - lower
+            c0, c1 = viridis_stops[lower], viridis_stops[upper]
+            r = c0[0] + (c1[0] - c0[0]) * frac
+            g = c0[1] + (c1[1] - c0[1]) * frac
+            b = c0[2] + (c1[2] - c0[2]) * frac
+            return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+
+        self._class_colors = []
+        self._class_bounds = []
+
+        for i in range(num_classes):
+            c_min = min_z + i * interval
+            c_max = min_z + (i + 1) * interval
+            self._class_bounds.append(c_max)
+
+            # Assign default color using the interpolated Viridis ramp
+            t = i / max(1, num_classes - 1)
+            default_hex = interpolate_viridis(t)
+            self._class_colors.append(default_hex)
+
+            # Row layout assembly
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 2, 0, 2)
+
+            label_text = f"Bracket {i+1}: {c_min:.1f}m - {c_max:.1f}m"
+            row_layout.addWidget(QLabel(label_text))
+
+            btn_color = _make_color_btn(tr("Select"), default_hex)
+            btn_color.setProperty("class_idx", i)
+            btn_color.clicked.connect(self._slot_pick_class_color)
+            row_layout.addWidget(btn_color)
+
+            self.layout_classes_list.addWidget(row)
+
+        self._slot_update_classified_colors()
+
+    def _slot_pick_class_color(self) -> None:
+        """Open native picker to customize a specific class's color."""
+        button = self.sender()
+        if not button:
+            return
+        class_idx = button.property("class_idx")
+        current_hex = self._class_colors[class_idx]
+        color = QColorDialog.getColor(QColor(current_hex), self, tr("Select class color"))
+        if not color.isValid():
+            return
+
+        _apply_color_to_btn(button, color)
+        self._class_colors[class_idx] = color.name()
+        self._slot_update_classified_colors()
+
+    def _slot_update_classified_colors(self) -> None:
+        """Serialize current bounds and color mapping, then push to the WebGL rendering thread."""
+        if not self.is_3d_active or self.combo_render_mode.currentIndex() != 1:
+            return
+        # Bounds has length N-1 (omitting the absolute top bound, handled by raw elevation check)
+        self._js({
+            "action": "set_classified_colors",
+            "payload": {
+                "bounds": self._class_bounds[:-1],
+                "colors": self._class_colors
+            }
+        })
 
 
     # Lighting page

@@ -55,6 +55,9 @@ let wallMesh = null;
 // Current colormap state
 let currentColormapName = "terrain";
 let currentColormapReverse = false;
+let currentClassColors = [];   // Array of hex strings representing custom class colors
+let currentClassBounds = [];   // Array of floats representing upper bounds of classes (length N-1)
+let colorMode = "colormap";    // Active color state: "colormap", "solid", "classified"
 let colorBoundsAuto = true;
 let colorBoundsMin = 0;
 let colorBoundsMax = 1;
@@ -472,10 +475,25 @@ function processPythonCommand(command) {
                 break;
 
             // ── Colormaps ────────────────────────────────────────────────
+            // Inside processPythonCommand:
+
+            case "set_classified_colors":
+                colorMode = "classified";
+                currentClassColors = command.payload.colors;
+                currentClassBounds = command.payload.bounds;
+                _applyClassifiedColors();
+                break;
+
             case "set_colormap":
+                colorMode = "colormap"; // Register active mode
                 currentColormapName = command.payload.name;
                 currentColormapReverse = command.payload.reverse || false;
                 _applyColormap();
+                break;
+
+            case "set_solid_color":
+                colorMode = "solid"; // Register active mode
+                _applySolidColor(command.payload.color);
                 break;
 
             case "set_color_bounds":
@@ -488,10 +506,6 @@ function processPythonCommand(command) {
             case "set_color_bounds_auto": 
                 colorBoundsAuto = true;
                 _applyColormap();
-                break;
-
-            case "set_solid_color":
-                _applySolidColor(command.payload.color);
                 break;
 
             // ── Block colors ─────────────────────────────────────────────
@@ -945,6 +959,46 @@ function _applySolidColor(hexColor) {
         uniforms.uSolidColor.value.set(hexColor);
     }
 }
+
+
+/** Recompute class intervals and map discrete colors to each vertex buffer location. */
+function _applyClassifiedColors() {
+    const terrainObj = _findTerrainObject();
+    if (!terrainObj || !originalDEMValues || currentClassColors.length === 0) return;
+
+    const colors = [];
+    const numClasses = currentClassColors.length;
+
+    for (let j = 0; j < originalDEMValues.length; j++) {
+        for (let i = 0; i < originalDEMValues[j].length; i++) {
+            const rawZ = originalDEMValues[j][i];
+            let zVal = rawZ ?? elevationStats.min;
+
+            // Discretize: find matching class bucket
+            let classIdx = 0;
+            for (let c = 0; c < numClasses - 1; c++) {
+                if (zVal > currentClassBounds[c]) {
+                    classIdx = c + 1;
+                } else {
+                    break;
+                }
+            }
+
+            const cColor = new THREE.Color(currentClassColors[classIdx]);
+            colors.push(cColor.r, cColor.g, cColor.b);
+        }
+    }
+
+    const geo = terrainObj.mesh.geometry;
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    geo.attributes.color.needsUpdate = true;
+
+    const uniforms = terrainObj.mesh.material.uniforms;
+    if (uniforms) {
+        uniforms.uUseVertexColors.value = true;
+    }
+}
+
 
 // ---------------------------------------------------------------------------
 // BLOCK COLOR SETTERS
