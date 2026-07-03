@@ -1086,14 +1086,14 @@ class Explorer3DPanel(BasePanel):
         self._loaded_raster_id = layer.id()
 
         # Keep permanent system layers, only prune old vector overlays
-        # for i in range(self.list_layers.count() - 1, -1, -1):
-        #     item = self.list_layers.item(i)
-        #     elem_id = item.data(Qt.UserRole)
-        #     if elem_id and elem_id.startswith("vector_"):
-        #         self.list_layers.takeItem(i)
+        for i in range(self.list_layers.count() - 1, -1, -1):
+            item = self.list_layers.item(i)
+            elem_id = item.data(Qt.UserRole)
+            if elem_id and elem_id.startswith("vector_"):
+                self.list_layers.takeItem(i)
         
         # 1. Clear the PyQt scene list to prepare for the new 3D scene [UX Refinement]
-        self.list_layers.clear()
+        # self.list_layers.clear()
 
         # 2. Process and send the DEM payload to WebGL
         dem_data = self.engine.prepare_dem(layer)

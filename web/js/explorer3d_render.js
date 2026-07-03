@@ -27,6 +27,8 @@
 // ---------------------------------------------------------------------------
 
 let scene, camera, renderer, controls;
+let axesScene, axesCamera;
+let axesSceneVisible = true;
 
 // ---------------------------------------------------------------------------
 // Scene object registry
@@ -338,6 +340,7 @@ function initScene() {
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio || 1);
     renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.autoClear = false; // Required for multi-viewport corner rendering
     container.appendChild(renderer.domElement);
 
     // Orbit controls
@@ -394,11 +397,44 @@ function _onWindowResize() {
     renderer.setSize(container.clientWidth, container.clientHeight);
 }
 
-
 function _animate() {
     requestAnimationFrame(_animate);
     controls.update();
+
+    const container = document.getElementById("viewport-container");
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    // 1. Render Primary 3D Terrain Viewport
+    renderer.setViewport(0, 0, width, height);
+    renderer.setScissor(0, 0, width, height);
+    renderer.setScissorTest(false);
+    renderer.clear();
     renderer.render(scene, camera);
+
+    // 2. Render Corner Orientation Marker Widget (Bottom-Right)
+    if (axesSceneVisible && axesScene && axesCamera) {
+        const axesSize = 110; // 110x110 px fixed overlay box
+        const padding = 10;
+        const left = width - axesSize - padding;
+        const bottom = padding;
+
+        renderer.setViewport(left, bottom, axesSize, axesSize);
+        renderer.setScissor(left, bottom, axesSize, axesSize);
+        renderer.setScissorTest(true);
+
+        // Extract camera rotational vector without inheriting translation or zoom
+        axesCamera.position.copy(camera.position).sub(controls.target).setLength(25);
+        axesCamera.up.copy(camera.up);
+        axesCamera.lookAt(0, 0, 0);
+
+        renderer.clearDepth(); // Prevent underlying terrain from clipping the axes
+        renderer.render(axesScene, axesCamera);
+
+        // Restore default scissor state
+        renderer.setScissorTest(false);
+        renderer.setViewport(0, 0, width, height);
+    }
 }
 
 
@@ -432,34 +468,47 @@ function _addDefaultLights() {
     ambientIntensity = 0.3;
     ambientColor.set(0xffffff);
 
-    // ── Permanent Scene Grid ────────────────────────────────────────────
+    // ── Permanent Scene Floor Grid (Remains in 3D world space) ──────────
     const gridHelper = new THREE.GridHelper(200, 20, 0x555555, 0x2d2d2d);
-    gridHelper.rotation.x = Math.PI / 2; // Orient flat along the X-Y plane
-    gridHelper.position.set(0, 0, -10);   // Default height before terrain loads
+    gridHelper.rotation.x = Math.PI / 2;
+    gridHelper.position.set(0, 0, -10);
     scene.add(gridHelper);
     registerObject("scene_grid", gridHelper, "helper");
 
-    // ── Permanent Labeled Axes Group ────────────────────────────────────
-    const axesGroup = new THREE.Group();
-    const axesHelper = new THREE.AxesHelper(15);
-    axesGroup.add(axesHelper);
+    // Initialize Corner Orientation Marker Widget
+    _initCornerAxes();
+}
 
-    // Render Canvas-based Sprite labels for professional visual orientation
-    const xLabel = _createLabelSprite("X", "#ff2222");
-    xLabel.position.set(17, 0, 0);
-    axesGroup.add(xLabel);
+function _initCornerAxes() {
+    axesScene = new THREE.Scene();
 
-    const yLabel = _createLabelSprite("Y", "#22ff22");
-    yLabel.position.set(0, 17, 0);
-    axesGroup.add(yLabel);
+    // Orthographic projection prevents perspective distortion during rotation
+    const frustum = 18;
+    axesCamera = new THREE.OrthographicCamera(
+        -frustum / 2, frustum / 2,
+        frustum / 2, -frustum / 2,
+        0.1, 100
+    );
+    axesCamera.position.set(0, -25, 25);
+    axesCamera.lookAt(0, 0, 0);
 
-    const zLabel = _createLabelSprite("Z", "#2222ff");
-    zLabel.position.set(0, 0, 17);
-    axesGroup.add(zLabel);
+    const ambient = new THREE.AmbientLight(0xffffff, 1.0);
+    axesScene.add(ambient);
 
-    axesGroup.position.set(-60, -60, -10);
-    scene.add(axesGroup);
-    registerObject("scene_axes", axesGroup, "helper");
+    const axesHelper = new THREE.AxesHelper(7);
+    axesScene.add(axesHelper);
+
+    const xLabel = _createLabelSprite("X", "#ff4444");
+    xLabel.position.set(8.5, 0, 0);
+    axesScene.add(xLabel);
+
+    const yLabel = _createLabelSprite("Y", "#44ff44");
+    yLabel.position.set(0, 8.5, 0);
+    axesScene.add(yLabel);
+
+    const zLabel = _createLabelSprite("Z", "#4444ff");
+    zLabel.position.set(0, 0, 8.5);
+    axesScene.add(zLabel);
 }
 
 function _createLabelSprite(text, color) {
@@ -467,7 +516,7 @@ function _createLabelSprite(text, color) {
     canvas.width = 64;
     canvas.height = 64;
     const ctx = canvas.getContext("2d");
-    ctx.font = "Bold 46px monospace";
+    ctx.font = "Bold 44px sans-serif";
     ctx.fillStyle = color;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -476,10 +525,9 @@ function _createLabelSprite(text, color) {
     const texture = new THREE.CanvasTexture(canvas);
     const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
     const sprite = new THREE.Sprite(material);
-    sprite.scale.set(4, 4, 1);
+    sprite.scale.set(3.5, 3.5, 1);
     return sprite;
 }
-
 // ---------------------------------------------------------------------------
 // ACTION DISPATCHER
 // ---------------------------------------------------------------------------
@@ -514,7 +562,10 @@ function processPythonCommand(command) {
             case "toggle_visibility": {
                 const elementId = command.payload.element_id;
                 const isVisible = command.payload.visible;
-
+                if (elementId === "scene_axes") {
+                    axesSceneVisible = isVisible;
+                    break;
+                }
                 if (elementId === "block_base") {
                     blockBaseVisible = isVisible; // Cache user preference globally
                     ["block_base_walls", "block_base_sole"].forEach(subId => {
@@ -672,7 +723,7 @@ function _buildTerrain(data) {
     for (const id in sceneObjects) {
         const type = sceneObjects[id].type;
         // Purge all spatial meshes, keeping only active lights and their helpers
-        if (type !== "light" && type !== "gizmo") {
+        if (type !== "light" && type !== "gizmo" && id !=="scene_grid") {
             keysToRemove.push(id);
         }
     }
