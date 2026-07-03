@@ -1102,6 +1102,8 @@ class Explorer3DPanel(BasePanel):
             return
 
         self._loaded_raster_id = layer.id()
+        # Wipe out python vector cache to prevent ghost vector overlays in standalone HTML exports
+        self._loaded_vectors = []
 
         # Keep permanent system layers, only prune old vector overlays
         for i in range(self.list_layers.count() - 1, -1, -1):
@@ -1336,7 +1338,7 @@ class Explorer3DPanel(BasePanel):
         self.set_loading_state(False)
         self.show_error(tr(f"Failed to drape vector layer: {error_msg}"))
 
-        
+
     def _slot_selected_vector_changed(self) -> None:
         """Triggered when the selected vector layer changes. Populates field columns."""
         layer = self.combo_vector.currentLayer()
@@ -1373,9 +1375,10 @@ class Explorer3DPanel(BasePanel):
         """Identify selected scene object and push styling overrides to WebGL in real-time."""
         current_item = self.list_layers.currentItem()
         # Fallback: if no layer is selected, but there is exactly one vector layer, auto-select it [Fix 2]
+        # Correctly filter actual vector layers (starting with 'vector_') to enable fluid automatic selection
         if not current_item and self.list_layers.count() > 0:
             items = [self.list_layers.item(i) for i in range(self.list_layers.count())]
-            vector_items = [it for it in items if it.data(Qt.UserRole) != "block_base"]
+            vector_items = [it for it in items if it.data(Qt.UserRole) and it.data(Qt.UserRole).startswith("vector_")]
             if len(vector_items) == 1:
                 current_item = vector_items[0]
                 self.list_layers.setCurrentItem(current_item)
@@ -1384,9 +1387,10 @@ class Explorer3DPanel(BasePanel):
             return
 
         element_id = current_item.data(Qt.UserRole)
-        # Skip if block base is selected (only vectors can be custom styled)
-        if not element_id or element_id == "block_base":
+        # Skip if system layout layers are selected
+        if not element_id or element_id in ["block_base", "scene_grid", "scene_axes"]:
             return
+            
         
         # Read values from widgets
         drape_mode_idx = self.combo_drape_mode.currentIndex()
