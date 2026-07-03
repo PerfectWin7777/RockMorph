@@ -696,6 +696,9 @@ function processPythonCommand(command) {
             case "export_viewport":
                 _exportViewport(command.payload.format, command.payload.dpi);
                 break;
+            case "export_stl":
+                _exportSTL();
+                break;
             
            case "add_vector_batch":
                 if (Array.isArray(command.payload)) {
@@ -1902,9 +1905,124 @@ function _exportViewport(format, dpi) {
     }
 }
 
+function _exportSTL() {
+    let stl = "solid rockmorph_terrain\n";
+
+    for (const id in sceneObjects) {
+        const obj = sceneObjects[id];
+        if (!obj || !obj.mesh || !obj.visible) continue;
+        // Process only physical spatial meshes (terrain model, lateral walls, bottom plate)
+        if (obj.type !== "raster" && obj.type !== "walls" && obj.type !== "sole") continue;
+
+        const mesh = obj.mesh;
+        const geometry = mesh.geometry;
+        if (!geometry) continue;
+
+        const positionAttr = geometry.attributes.position;
+        const indexAttr = geometry.index;
+        if (!positionAttr) continue;
+
+        const positions = positionAttr.array;
+
+        if (indexAttr) {
+            const indices = indexAttr.array;
+            for (let i = 0; i < indices.length; i += 3) {
+                const i1 = indices[i], i2 = indices[i + 1], i3 = indices[i + 2];
+
+                const x1 = positions[i1 * 3], y1 = positions[i1 * 3 + 1], z1 = positions[i1 * 3 + 2];
+                const x2 = positions[i2 * 3], y2 = positions[i2 * 3 + 1], z2 = positions[i2 * 3 + 2];
+                const x3 = positions[i3 * 3], y3 = positions[i3 * 3 + 1], z3 = positions[i3 * 3 + 2];
+
+                // Calculate structural flat normal (vector cross product)
+                const ux = x2 - x1, uy = y2 - y1, uz = z2 - z1;
+                const vx = x3 - x1, vy = y3 - y1, vz = z3 - z1;
+                const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+                const len = Math.hypot(nx, ny, nz) || 1;
+
+                stl += `  facet normal ${nx / len} ${ny / len} ${nz / len}\n`;
+                stl += "    outer loop\n";
+                stl += `      vertex ${x1} ${y1} ${z1}\n`;
+                stl += `      vertex ${x2} ${y2} ${z2}\n`;
+                stl += `      vertex ${x3} ${y3} ${z3}\n`;
+                stl += "    endloop\n";
+                stl += "  endfacet\n";
+            }
+        } else {
+            for (let i = 0; i < positionAttr.count; i += 3) {
+                const x1 = positions[i * 3], y1 = positions[i * 3 + 1], z1 = positions[i * 3 + 2];
+                const x2 = positions[i * 3 + 3], y2 = positions[i * 3 + 4], z2 = positions[i * 3 + 5];
+                const x3 = positions[i * 3 + 6], y3 = positions[i * 3 + 7], z3 = positions[i * 3 + 8];
+
+                const ux = x2 - x1, uy = y2 - y1, uz = z2 - z1;
+                const vx = x3 - x1, vy = y3 - y1, vz = z3 - z1;
+                const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+                const len = Math.hypot(nx, ny, nz) || 1;
+
+                stl += `  facet normal ${nx / len} ${ny / len} ${nz / len}\n`;
+                stl += "    outer loop\n";
+                stl += `      vertex ${x1} ${y1} ${z1}\n`;
+                stl += `      vertex ${x2} ${y2} ${z2}\n`;
+                stl += `      vertex ${x3} ${y3} ${z3}\n`;
+                stl += "    endloop\n";
+                stl += "  endfacet\n";
+            }
+        }
+    }
+    stl += "endsolid rockmorph_terrain\n";
+
+    // Encode text to raw base64 and return to Python
+    const base64STL = btoa(unescape(encodeURIComponent(stl)));
+    const dataURL = "data:model/stl;base64," + base64STL;
+
+    if (typeof bridge !== "undefined") {
+        bridge.receive_export(dataURL);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 
-window.onload = initScene;
+window.onload = function () {
+    initScene();
+
+    // Check if we are running in standalone exported mode (QWebChannel absent)
+    if (typeof ACTIVE_SCENE_DATA !== "undefined") {
+        // 1. Re-render Terrain block
+        _buildTerrain(ACTIVE_SCENE_DATA.raster);
+
+        // 2. Re-render draped vector layers
+        if (ACTIVE_SCENE_DATA.vectors) {
+            ACTIVE_SCENE_DATA.vectors.forEach(v => _buildVectorFeature(v));
+        }
+
+        // 3. Re-apply precise scientific styling parameters
+        const style = ACTIVE_SCENE_DATA.style;
+        if (style) {
+            _updateZScale(style.z_scale);
+            _setObjectColor("block_base_walls", style.walls_color);
+            _setObjectColor("block_base_sole", style.base_color);
+
+            skyColorTop = new THREE.Color(style.sky_top);
+            skyColorBottom = new THREE.Color(style.sky_bottom);
+            _applySkyGradient();
+
+            if (style.color_mode === "classified") {
+                currentClassColors = style.class_colors;
+                currentClassBounds = style.class_bounds;
+                _applyClassifiedColors();
+            } else if (style.color_mode === "solid") {
+                _applySolidColor(style.solid_color);
+            } else {
+                currentColormapName = style.colormap;
+                currentColormapReverse = style.reverse_cmap;
+                _applyColormap();
+            }
+
+            globalRoughness = style.roughness;
+            globalSlopeContrast = style.slope_contrast;
+            globalMultidirectional = style.multidirectional;
+            updateSceneUniforms();
+        }
+    }
+};

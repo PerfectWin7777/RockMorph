@@ -22,7 +22,8 @@ from qgis.PyQt.QtWidgets import (  # type: ignore
     QGroupBox, QSlider, QComboBox, QCheckBox, QFrame,
     QRadioButton, QStackedWidget, QListWidget, QListWidgetItem,
     QColorDialog, QDoubleSpinBox, QToolButton, QButtonGroup,
-    QSizePolicy, QSpacerItem, QScrollArea, QMenu
+    QSizePolicy, QSpacerItem, QScrollArea, QMenu,
+    QFileDialog
 )
 from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QTimer  # type: ignore
 from qgis.PyQt.QtGui import QColor, QIcon, QPixmap, QPainter  # type: ignore
@@ -147,6 +148,8 @@ class Explorer3DPanel(BasePanel):
         # Pending WebEngine command queue to prevent initialization race conditions
         self._web_ready = False
         self._pending_commands = []
+        self._active_dem_data = None
+        self._loaded_vectors = []
         
         # Initialize the style debounce timer first to prevent initialization crashes [Fix 1]
         self._style_debounce_timer = QTimer()
@@ -911,6 +914,20 @@ class Explorer3DPanel(BasePanel):
         """)
         layout.addWidget(self.btn_export_html)
 
+        self.btn_export_mesh = QPushButton(tr("📐  Export 3D Mesh (STL)..."))
+        self.btn_export_mesh.setToolTip(tr("Export the terrain and block base as a solid STL file for 3D printing or Blender."))
+        self.btn_export_mesh.setStyleSheet("""
+            QPushButton {
+                padding: 10px;
+                font-weight: bold;
+                border-radius: 4px;
+                background: #e67e22;
+                color: white;
+            }
+            QPushButton:hover { background: #d35400; }
+        """)
+        layout.addWidget(self.btn_export_mesh)
+
         layout.addStretch()
         return page
 
@@ -1023,6 +1040,7 @@ class Explorer3DPanel(BasePanel):
         # ── Page 5 — Export ──────────────────────────────────────────────
         self.btn_export_img.clicked.connect(self._slot_export_high_res_image)
         self.btn_export_html.clicked.connect(self._slot_export_interactive_html)
+        self.btn_export_mesh.clicked.connect(self._slot_export_3d_mesh)
 
     # ── Slots ────────────────────────────────────────────────────────────
 
@@ -1097,6 +1115,7 @@ class Explorer3DPanel(BasePanel):
 
         # 2. Process and send the DEM payload to WebGL
         dem_data = self.engine.prepare_dem(layer)
+        self._active_dem_data = dem_data.to_dict()
         self._js({"action": "set_main_raster", "payload": dem_data.to_dict()})
         
         # 3. Dynamically add the Block base control only when rendering succeeds [UX Refinement]
@@ -1215,6 +1234,9 @@ class Explorer3DPanel(BasePanel):
                 v_dict["color"] = fixed_color_hex
                 
             serialized_vectors.append(v_dict)
+        
+        # Cache the vectors in Python for HTML export
+        self._loaded_vectors.extend(serialized_vectors)
 
         # 4. Single batch transaction
         self._js({
@@ -1373,6 +1395,8 @@ class Explorer3DPanel(BasePanel):
 
         # Remove from PyQt list
         self.list_layers.takeItem(self.list_layers.row(current_item))
+        # Remove from Python export cache
+        self._loaded_vectors = [v for v in self._loaded_vectors if not v["element_id"].startswith(element_id)]
 
 
 
@@ -1787,9 +1811,123 @@ class Explorer3DPanel(BasePanel):
         })
 
 
+    # ── High-Quality Exporters ───────────────────────────────────────────
+
+    def _slot_export_3d_mesh(self) -> None:
+        """Trigger solid STL mesh export."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, tr("Export 3D Mesh"), "rockmorph_terrain_model.stl", "STL Files (*.stl)"
+        )
+        if not path:
+            return
+            
+        self._pending_export_path = path
+        
+        self._js({
+            "action": "export_stl"
+        })
+
     def _slot_export_interactive_html(self) -> None:
-        # TODO: serialize scene state + inline Three.js into a standalone HTML file
-        self.show_info(tr("Interactive HTML export is not yet implemented."))
+        """Export the active 3D scene as a standalone, double-clickable interactive HTML file."""
+        if not self._active_dem_data:
+            self.show_error(tr("No active terrain loaded. Please render a MNT first."))
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, tr("Export Interactive HTML"), "rockmorph_3d_scene.html", "HTML Files (*.html)"
+        )
+        if not path:
+            return
+
+        # 1. Test internet connection to switch dynamically between CDN and offline bundling
+        has_net = False
+        import urllib.request
+        try:
+            urllib.request.urlopen("https://cdnjs.cloudflare.com", timeout=1.5)
+            has_net = True
+        except Exception:
+            pass
+
+        # 2. Compile full 3D scene dataset (vectors, textures, block styling, shader settings)
+        scene_data = {
+            "raster": self._active_dem_data,
+            "vectors": self._loaded_vectors,
+            "style": {
+                "z_scale": self.slider_z_scale.value() / 10.0,
+                "thickness": self.slider_thickness.value() / 100.0,
+                "walls_color": self._colors["walls"],
+                "base_color": self._colors["base"],
+                "sky_top": self._colors["sky_top"],
+                "sky_bottom": self._colors["sky_bottom"],
+                "colormap": self.combo_colormap.currentText(),
+                "reverse_cmap": self.chk_reverse_cmap.isChecked(),
+                "color_mode": "colormap" if self.combo_symbology_render_mode.currentIndex() == 0 else ("classified" if self.combo_symbology_render_mode.currentIndex() == 1 else "solid"),
+                "solid_color": self.btn_solid_color.property("color_hex") or "#4a90d9",
+                "class_colors": self._class_colors,
+                "class_bounds": self._class_bounds,
+                "roughness": self.slider_roughness.value() / 100.0,
+                "slope_contrast": self.slider_slope_contrast.value() / 100.0,
+                "multidirectional": self.chk_multidirectional.isChecked(),
+            }
+        }
+
+        # 3. Read template and inline libraries if offline
+        web_dir = self._web_dir()
+        template_path = os.path.join(web_dir, "explorer3d.html")
+        with open(template_path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        # Inject the structured dataset into the header
+        data_script = f"\n    <script>const ACTIVE_SCENE_DATA = {json.dumps(scene_data)};</script>\n"
+        html = html.replace("<head>", f"<head>{data_script}")
+
+        if has_net:
+            # Inline lightweight high-speed CDN imports
+            html = html.replace('<script src="js/three.min.js"></script>', '<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>')
+            html = html.replace('<script src="js/TrackballControls.js"></script>', '<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TrackballControls.js"></script>')
+            # Strip unused bridging libraries
+            html = html.replace('<script src="js/qwebchannel.js"></script>', '')
+            html = html.replace('<script src="js/bridge.js"></script>', '')
+        else:
+            # Fully inlined offline bundle
+            for js_file in ["three.min.js", "TrackballControls.js", "colormaps_data.js", "explorer3d_render.js"]:
+                js_path = os.path.join(web_dir, "js", js_file)
+                if os.path.exists(js_path):
+                    with open(js_path, "r", encoding="utf-8") as f:
+                        js_content = f.read()
+                    html = html.replace(f'<script src="js/{js_file}"></script>', f'<script>{js_content}</script>')
+            html = html.replace('<script src="js/qwebchannel.js"></script>', '')
+            html = html.replace('<script src="js/bridge.js"></script>', '')
+
+        # 4. Save to disk
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(html)
+            self.show_info(tr(f"Standalone interactive HTML exported successfully → {os.path.basename(path)}"))
+        except Exception as e:
+            self.show_error(tr(f"HTML Export failed: {e}"))
+
+    def _save_export(self, data_url: str) -> None:
+        """Override to intercept STL binary model exports and delegate images to BasePanel."""
+        try:
+            fmt = os.path.splitext(self._pending_export_path)[1].lower().lstrip('.')
+            
+            if fmt == 'stl':
+                if ',' in data_url:
+                    header, payload = data_url.split(',', 1)
+                    if 'base64' in header:
+                        stl_bytes = base64.b64decode(payload)
+                        with open(self._pending_export_path, 'wb') as f:
+                            f.write(stl_bytes)
+                        self.show_info(tr(f"3D Model successfully exported to STL: {os.path.basename(self._pending_export_path)}"))
+                        return
+                        
+            # Let the parent base class (BasePanel / RockMorphExporter) save images/PDFs natively
+            super()._save_export(data_url)
+        except Exception as e:
+            self.show_error(tr(f"Export failed: {e}"))
+
+
 
     # ── Shared color picker ──────────────────────────────────────────────
 
