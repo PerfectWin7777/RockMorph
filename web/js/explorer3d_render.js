@@ -50,7 +50,7 @@ let wallVertexMappings = [];
 let wallMesh = null;
 
 // Current colormap state
-let currentColormapName = "viridis";
+let currentColormapName = "terrain";
 let currentColormapReverse = false;
 let colorBoundsAuto = true;
 let colorBoundsMin = 0;
@@ -296,7 +296,6 @@ function initScene() {
 
     // Scene
     scene = new THREE.Scene();
-    _applySkyGradient();
 
     // Camera adjusted to high-precision 100-units scale
     camera = new THREE.PerspectiveCamera(
@@ -307,17 +306,19 @@ function initScene() {
     );
     camera.position.set(0, -150, 120);
 
-    // Renderer — WebGL 1 compatible
-    renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Renderer — configured with antialiasing and transparency (alpha channel)
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio || 1);
     renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.debug.checkShaderErrors = true;
     container.appendChild(renderer.domElement);
 
     // Orbit controls
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
+
+    // Apply the sky gradient now that both 'scene' and 'renderer' are fully initialized
+    _applySkyGradient();
 
     // Default scene lights
     _addDefaultLights();
@@ -327,6 +328,7 @@ function initScene() {
 
     window.addEventListener("resize", _onWindowResize);
 }
+
 
 function _animate() {
     requestAnimationFrame(_animate);

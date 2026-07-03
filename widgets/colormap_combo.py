@@ -25,6 +25,8 @@ class MatplotlibColorMapComboBox(QComboBox):
             self.colormaps = json.load(f)
 
         self._populate()
+
+        self.setCurrentText("terrain")
     
 
     def _populate(self):
@@ -75,7 +77,6 @@ class MatplotlibColorMapComboBox(QComboBox):
     def current_name(self):
 
         return self.currentText()
-
 
     def stops(self):
 
