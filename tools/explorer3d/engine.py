@@ -175,24 +175,27 @@ class Explorer3DEngine(BaseEngine):
             for part in geom.constParts():
                 vertices_3d = []
                 for vertex in part.vertices():
-                    # 1. Capture the raw coordinate
-                    raw_x = vertex.x()
-                    raw_y = vertex.y()
+                    # 1. Start with the raw vertex in the Vector layer's CRS
+                    pt = QgsPointXY(vertex.x(), vertex.y())
 
-                    # 2. Calculate a half-pixel safety buffer [Indexing Bug Fix]
+                    # 2. Reproject to the DEM's CRS first [Order of Operations Fix]
+                    if transform:
+                        try:
+                            pt = transform.transform(pt)
+                        except Exception:
+                            # Skip corrupted or non-transformable coordinates safely
+                            continue
+
+                    # 3. Apply the half-pixel clamping now that pt is in DEM CRS [Order of Operations Fix]
                     half_pixel_x = pixel_size_x * 0.5
-                    half_pixel_y = pixel_size_y * 0.5 # Always positive in properties
+                    half_pixel_y = pixel_size_y * 0.5
 
-                    # 3. Clamp coordinates slightly inside the active pixel grid
-                    clamped_x = max(x_min + half_pixel_x, min(x_max - half_pixel_x, raw_x))
-                    clamped_y = max(y_min + half_pixel_y, min(y_max - half_pixel_y, raw_y))
+                    clamped_x = max(x_min + half_pixel_x, min(x_max - half_pixel_x, pt.x()))
+                    clamped_y = max(y_min + half_pixel_y, min(y_max - half_pixel_y, pt.y()))
                     
                     pt = QgsPointXY(clamped_x, clamped_y)
 
-                    if transform:
-                        pt = transform.transform(pt)
-
-                    # 4. Read elevation (This is now guaranteed to find a valid edge pixel)
+                    # 4. Sample elevation safely
                     z_val = reader.sample_at(pt.x(), pt.y())
                     if np.isnan(z_val):
                         z_val = 0.0
