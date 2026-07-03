@@ -713,6 +713,16 @@ function _buildTerrain(data) {
         }
     });
 
+    // --- Preserve Symbology Render Mode Across Layer Changes --- [Bug D Fix]
+    if (colorMode === "classified") {
+        _applyClassifiedColors();
+    } else if (colorMode === "solid") {
+        const fallbackSolidColor = "#4a90d9";
+        _applySolidColor(fallbackSolidColor);
+    } else {
+        _applyColormap();
+    }
+
     _updateStatus(`Scene: ${data.label || data.element_id} loaded (${width}×${height} vertices).`);
 }
 

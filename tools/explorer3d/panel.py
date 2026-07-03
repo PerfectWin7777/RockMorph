@@ -386,21 +386,21 @@ class Explorer3DPanel(BasePanel):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(8)
 
-        # 1. Unified Render Mode Selector
+        # 1. Unified Render Mode Selector (Renamed for clarity)
         lbl_mode = QLabel(tr("Symbology render mode:"))
         lbl_mode.setStyleSheet("font-weight: bold;")
         layout.addWidget(lbl_mode)
 
-        self.combo_render_mode = QComboBox()
-        self.combo_render_mode.addItems([
+        self.combo_symbology_render_mode = QComboBox()
+        self.combo_symbology_render_mode.addItems([
             tr("Continuous Colormap (Scientific Pseudocolor)"),
             tr("Classified Intervals (Discrete Brackets)"),
             tr("Solid Uniform Fill")
         ])
-        layout.addWidget(self.combo_render_mode)
+        layout.addWidget(self.combo_symbology_render_mode)
 
-        # 2. Stacked Settings Area for cleaner layout
-        self.stacked_symbology = QStackedWidget()
+        # 2. Stacked Settings Area 
+        self.stacked_symbology_settings = QStackedWidget()
         
         # --- Page 0: Continuous Settings ---
         page_continuous = QWidget()
@@ -412,7 +412,6 @@ class Explorer3DPanel(BasePanel):
         lbl_cmap.setStyleSheet("font-weight: bold;")
         layout_cont.addWidget(lbl_cmap)
 
-
         self.combo_colormap = MatplotlibColorMapComboBox(json_file)
         self.combo_colormap.setToolTip(
             tr("All names match Matplotlib conventions — use the same name in figure captions.")
@@ -422,7 +421,7 @@ class Explorer3DPanel(BasePanel):
         self.chk_reverse_cmap = QCheckBox(tr("Reverse color ramp"))
         layout_cont.addWidget(self.chk_reverse_cmap)
         layout_cont.addStretch()
-        self.stacked_symbology.addWidget(page_continuous)
+        self.stacked_symbology_settings.addWidget(page_continuous)
 
         # --- Page 1: Classified Settings ---
         page_classified = QWidget()
@@ -432,7 +431,7 @@ class Explorer3DPanel(BasePanel):
 
         row_count = QHBoxLayout()
         row_count.addWidget(QLabel(tr("Number of classes:")))
-        self.spin_class_count = QDoubleSpinBox() # Using DoubleSpinBox mapped as integer for consistency
+        self.spin_class_count = QDoubleSpinBox()
         self.spin_class_count.setRange(2, 12)
         self.spin_class_count.setDecimals(0)
         self.spin_class_count.setValue(5)
@@ -451,7 +450,7 @@ class Explorer3DPanel(BasePanel):
         self.layout_classes_list.setSpacing(4)
         scroll_classes.setWidget(self.widget_classes_list)
         layout_class.addWidget(scroll_classes)
-        self.stacked_symbology.addWidget(page_classified)
+        self.stacked_symbology_settings.addWidget(page_classified)
 
         # --- Page 2: Solid Fill Settings ---
         page_solid = QWidget()
@@ -462,18 +461,24 @@ class Explorer3DPanel(BasePanel):
         self.btn_solid_color = _make_color_btn(tr("Terrain color"), "#4a90d9")
         layout_solid.addWidget(self.btn_solid_color)
         layout_solid.addStretch()
-        self.stacked_symbology.addWidget(page_solid)
+        self.stacked_symbology_settings.addWidget(page_solid)
 
-        layout.addWidget(self.stacked_symbology)
+        layout.addWidget(self.stacked_symbology_settings)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         layout.addWidget(sep)
 
-        # 3. Shared value bounds (Z range)
+        # 3. Dynamic bounds settings group (Hides automatically in solid mode) [Bug B Fix]
+        self.bounds_configuration_panel = QFrame()
+        self.bounds_configuration_panel.setFrameShape(QFrame.NoFrame)
+        layout_bounds = QVBoxLayout(self.bounds_configuration_panel)
+        layout_bounds.setContentsMargins(0, 0, 0, 0)
+        layout_bounds.setSpacing(6)
+
         lbl_bounds = QLabel(tr("Elevation classification bounds:"))
         lbl_bounds.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_bounds)
+        layout_bounds.addWidget(lbl_bounds)
 
         bounds_row = QHBoxLayout()
         self.rad_scale_auto = QRadioButton(tr("Auto (DEM range)"))
@@ -484,7 +489,7 @@ class Explorer3DPanel(BasePanel):
         self.scale_btn_group.addButton(self.rad_scale_manual)
         bounds_row.addWidget(self.rad_scale_auto)
         bounds_row.addWidget(self.rad_scale_manual)
-        layout.addLayout(bounds_row)
+        layout_bounds.addLayout(bounds_row)
 
         spin_row = QHBoxLayout()
         spin_row.addWidget(QLabel(tr("Min Z:")))
@@ -498,8 +503,9 @@ class Explorer3DPanel(BasePanel):
         self.spin_max_z.setRange(-99999, 99999)
         self.spin_max_z.setEnabled(False)
         spin_row.addWidget(self.spin_max_z)
-        layout.addLayout(spin_row)
+        layout_bounds.addLayout(spin_row)
 
+        layout.addWidget(self.bounds_configuration_panel)
         layout.addStretch()
         return page
 
@@ -768,8 +774,8 @@ class Explorer3DPanel(BasePanel):
         self.btn_add_vector.clicked.connect(self._slot_add_vector_layer)
 
         # ── Page 2 — Symbology ───────────────────────────────────────────
-        self.combo_render_mode.currentIndexChanged.connect(self._slot_render_mode_changed)
-        self.spin_class_count.valueChanged.connect(self._rebuild_classified_ui)
+        self.combo_symbology_render_mode.currentIndexChanged.connect(self._slot_render_mode_changed)
+        self.spin_class_count.valueChanged.connect(self._rebuild_classified_brackets_ui)
         self.btn_solid_color.clicked.connect(
             lambda: self._slot_pick_color_for("solid_color", self.btn_solid_color)
         )
@@ -984,27 +990,30 @@ class Explorer3DPanel(BasePanel):
     # Symbology slots
 
     def _slot_render_mode_changed(self, index: int) -> None:
-        """Swap active configuration page and guarantee that scale bounds are fully synchronized with WebGL."""
-        self.stacked_symbology.setCurrentIndex(index)
+        """Swap active configuration page and show/hide bounds settings dynamically."""
+        self.stacked_symbology_settings.setCurrentIndex(index)
+        
+        # Hide bounds UI group entirely in Solid Mode, show it for Continuous and Classified
+        if index == 2:  # Solid Uniform Fill
+            self.bounds_configuration_panel.setVisible(False)
+        else:
+            self.bounds_configuration_panel.setVisible(True)
+
         if not self.is_3d_active:
             return
             
         if index == 0:  # Continuous Colormap
-            # First, force synchronize the Z-bounds state (Auto vs Custom) to JS to resolve state conflicts
             self._slot_color_scale_mode_changed()
-            # Then, apply the colormap with updated bounds
             self._slot_update_colormap()
-            
         elif index == 1:  # Classified
-            self._rebuild_classified_ui()
-            
+            self._slot_color_scale_mode_changed()
+            self._rebuild_classified_brackets_ui()
         elif index == 2:  # Solid Color
             hex_color = self.btn_solid_color.property("color_hex") or "#4a90d9"
             self._js({"action": "set_solid_color", "payload": {"color": hex_color}})
 
-            
-    def _rebuild_classified_ui(self) -> None:
-        """Regenerate dynamic rows in the scroll panel, dividing the Z span into equal intervals while preserving custom colors."""
+    def _rebuild_classified_brackets_ui(self) -> None:
+        """Regenerate dynamic rows dividing the Z span into equal intervals, sampling the active colormap."""
         min_z = self.active_dem_min_z if self.rad_scale_auto.isChecked() else self.spin_min_z.value()
         max_z = self.active_dem_max_z if self.rad_scale_auto.isChecked() else self.spin_max_z.value()
         
@@ -1020,41 +1029,17 @@ class Explorer3DPanel(BasePanel):
             if item.widget():
                 item.widget().deleteLater()
 
-        # Scientific Viridis anchor stops for default programmatic gradient
-        viridis_stops = [
-            (0.267, 0.004, 0.329), # Deep purple
-            (0.223, 0.302, 0.541), # Marine blue
-            (0.125, 0.549, 0.556), # Forest green
-            (0.368, 0.784, 0.380), # Lime green
-            (0.992, 0.901, 0.141)  # Yellow
-        ]
-        
-        def interpolate_viridis(t: float) -> str:
-            t = max(0.0, min(1.0, t))
-            idx = t * (len(viridis_stops) - 1)
-            lower = int(idx)
-            upper = min(lower + 1, len(viridis_stops) - 1)
-            frac = idx - lower
-            c0, c1 = viridis_stops[lower], viridis_stops[upper]
-            r = c0[0] + (c1[0] - c0[0]) * frac
-            g = c0[1] + (c1[1] - c0[1]) * frac
-            b = c0[2] + (c1[2] - c0[2]) * frac
-            return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
-
-        # --- Smart Color Preservation Logic ---
-        # Adjust or reuse existing custom colors based on current class count
+        # Adjust and generate default colors using the SELECTED colormap [Bug C Fix]
         if len(self._class_colors) != num_classes:
             old_colors = self._class_colors
             self._class_colors = []
             for i in range(num_classes):
                 if i < len(old_colors):
-                    # Preserve already hand-picked color
                     self._class_colors.append(old_colors[i])
                 else:
-                    # Append new default color only for newly added classes
                     t = i / max(1, num_classes - 1)
-                    self._class_colors.append(interpolate_viridis(t))
-        # If len(self._class_colors) == num_classes, we leave the array fully untouched!
+                    sampled_hex = self._sample_active_colormap(t)
+                    self._class_colors.append(sampled_hex)
 
         self._class_bounds = []
 
@@ -1063,10 +1048,8 @@ class Explorer3DPanel(BasePanel):
             c_max = min_z + (i + 1) * interval
             self._class_bounds.append(c_max)
 
-            # Retrieve active color (either preserved or freshly generated)
             active_hex = self._class_colors[i]
 
-            # Row layout assembly
             row = QWidget()
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 2, 0, 2)
@@ -1081,8 +1064,70 @@ class Explorer3DPanel(BasePanel):
 
             self.layout_classes_list.addWidget(row)
 
-        self._slot_update_classified_colors()
+        self._slot_update_classified_shading()
 
+    def _slot_update_colormap(self) -> None:
+        if not self.is_3d_active:
+            return
+            
+        # If currently in Classified Mode, reset and rebuild classes with the new colormap
+        if self.combo_symbology_render_mode.currentIndex() == 1:
+            self._class_colors = []
+            self._rebuild_classified_brackets_ui()
+        else:
+            self._js({
+                "action": "set_colormap",
+                "payload": {
+                    "name": self.combo_colormap.currentText(),
+                    "reverse": self.chk_reverse_cmap.isChecked(),
+                }
+            })
+
+    def _slot_update_color_bounds(self) -> None:
+        """Route bounds change to the correct render mode [Bug A Fix]"""
+        if not self.is_3d_active or self.rad_scale_auto.isChecked():
+            return
+            
+        render_mode = self.combo_symbology_render_mode.currentIndex()
+        if render_mode == 0:  # Continuous Colormap
+            self._js({
+                "action": "set_color_bounds",
+                "payload": {
+                    "min_z": self.spin_min_z.value(),
+                    "max_z": self.spin_max_z.value(),
+                }
+            })
+        elif render_mode == 1:  # Classified
+            self._rebuild_classified_brackets_ui()
+
+    def _slot_color_scale_mode_changed(self) -> None:
+        """Triggered when switching between Auto and Custom Z bounds [Bug A Fix]"""
+        if not self.is_3d_active:
+            return
+            
+        render_mode = self.combo_symbology_render_mode.currentIndex()
+        if render_mode == 0:  # Continuous Colormap
+            if self.rad_scale_auto.isChecked():
+                self._js({"action": "set_color_bounds_auto", "payload": {}})
+            else:
+                self._slot_update_color_bounds()
+        elif render_mode == 1:  # Classified
+            self._rebuild_classified_brackets_ui()
+
+    def _slot_update_classified_shading(self) -> None:
+        """Pushes current classified parameters to WebGL (Renamed for clarity)."""
+        if not self.is_3d_active or self.combo_symbology_render_mode.currentIndex() != 1:
+            return
+        self._js({
+            "action": "set_classified_colors",
+            "payload": {
+                "bounds": self._class_bounds[:-1],
+                "colors": self._class_colors
+            }
+        })
+
+
+        
     def _slot_pick_class_color(self) -> None:
         """Open native picker to customize a specific class's color."""
         button = self.sender()
