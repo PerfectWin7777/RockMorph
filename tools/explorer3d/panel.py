@@ -896,7 +896,7 @@ class Explorer3DPanel(BasePanel):
         else:
             self._slot_selected_raster_changed()
 
-            
+
 
     def _slot_layer_visibility_changed(self, item: QListWidgetItem) -> None:
         """Toggle visibility for a scene object identified by its stored element_id."""
@@ -997,7 +997,7 @@ class Explorer3DPanel(BasePanel):
             self._js({"action": "set_solid_color", "payload": {"color": hex_color}})
 
     def _rebuild_classified_ui(self) -> None:
-        """Regenerate dynamic rows in the scroll panel and divide the Z span into equal intervals."""
+        """Regenerate dynamic rows in the scroll panel, dividing the Z span into equal intervals while preserving custom colors."""
         min_z = self.active_dem_min_z if self.rad_scale_auto.isChecked() else self.spin_min_z.value()
         max_z = self.active_dem_max_z if self.rad_scale_auto.isChecked() else self.spin_max_z.value()
         
@@ -1007,7 +1007,7 @@ class Explorer3DPanel(BasePanel):
 
         interval = (max_z - min_z) / num_classes
 
-        # Clear existing rows
+        # Clear existing rows in the UI layout
         while self.layout_classes_list.count():
             item = self.layout_classes_list.takeAt(0)
             if item.widget():
@@ -1034,7 +1034,21 @@ class Explorer3DPanel(BasePanel):
             b = c0[2] + (c1[2] - c0[2]) * frac
             return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
 
-        self._class_colors = []
+        # --- Smart Color Preservation Logic ---
+        # Adjust or reuse existing custom colors based on current class count
+        if len(self._class_colors) != num_classes:
+            old_colors = self._class_colors
+            self._class_colors = []
+            for i in range(num_classes):
+                if i < len(old_colors):
+                    # Preserve already hand-picked color
+                    self._class_colors.append(old_colors[i])
+                else:
+                    # Append new default color only for newly added classes
+                    t = i / max(1, num_classes - 1)
+                    self._class_colors.append(interpolate_viridis(t))
+        # If len(self._class_colors) == num_classes, we leave the array fully untouched!
+
         self._class_bounds = []
 
         for i in range(num_classes):
@@ -1042,10 +1056,8 @@ class Explorer3DPanel(BasePanel):
             c_max = min_z + (i + 1) * interval
             self._class_bounds.append(c_max)
 
-            # Assign default color using the interpolated Viridis ramp
-            t = i / max(1, num_classes - 1)
-            default_hex = interpolate_viridis(t)
-            self._class_colors.append(default_hex)
+            # Retrieve active color (either preserved or freshly generated)
+            active_hex = self._class_colors[i]
 
             # Row layout assembly
             row = QWidget()
@@ -1055,7 +1067,7 @@ class Explorer3DPanel(BasePanel):
             label_text = f"Bracket {i+1}: {c_min:.1f}m - {c_max:.1f}m"
             row_layout.addWidget(QLabel(label_text))
 
-            btn_color = _make_color_btn(tr("Select"), default_hex)
+            btn_color = _make_color_btn(tr("Select"), active_hex)
             btn_color.setProperty("class_idx", i)
             btn_color.clicked.connect(self._slot_pick_class_color)
             row_layout.addWidget(btn_color)
