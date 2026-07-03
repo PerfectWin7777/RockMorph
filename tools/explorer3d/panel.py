@@ -14,6 +14,7 @@ Authors: RockMorph contributors
 """
 
 import json
+from pathlib import Path
 from typing import Optional
 
 from qgis.PyQt.QtWidgets import (  # type: ignore
@@ -31,6 +32,16 @@ from qgis.gui import QgsMapLayerComboBox  # type: ignore
 
 from ...base.base_panel import BasePanel
 from .engine import Explorer3DEngine
+
+from ...widgets.colormap_combo import MatplotlibColorMapComboBox
+
+json_file = (
+    Path(__file__).parents[2]
+    / "web"
+    / "data"
+    / "colormaps.json"
+)
+
 
 
 # ---------------------------------------------------------------------------
@@ -398,15 +409,7 @@ class Explorer3DPanel(BasePanel):
         lbl_cmap.setStyleSheet("font-weight: bold;")
         layout.addWidget(lbl_cmap)
 
-        self.combo_colormap = QComboBox()
-        # Matplotlib colormap names — keep sorted for usability
-        colormaps = [
-            "viridis", "plasma", "inferno", "magma", "cividis",
-            "terrain", "gist_earth", "ocean",
-            "RdBu", "RdYlBu", "coolwarm",
-            "Greys", "hot", "jet",
-        ]
-        self.combo_colormap.addItems(colormaps)
+        self.combo_colormap = MatplotlibColorMapComboBox(json_file)
         self.combo_colormap.setToolTip(
             tr("All names match Matplotlib conventions — use the same name in figure captions.")
         )
