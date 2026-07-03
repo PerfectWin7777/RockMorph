@@ -58,6 +58,7 @@ let currentColormapReverse = false;
 let colorBoundsAuto = true;
 let colorBoundsMin = 0;
 let colorBoundsMax = 1;
+let perspectiveCamera, orthographicCamera;
 
 // Current base thickness as fraction of max dimension (default 5%)
 let baseThicknessFraction = 0.05;
@@ -293,21 +294,32 @@ function unregisterObject(elementId) {
 // ---------------------------------------------------------------------------
 // Scene initialization
 // ---------------------------------------------------------------------------
-
 function initScene() {
     const container = document.getElementById("viewport-container");
 
     // Scene
     scene = new THREE.Scene();
 
-    // Camera adjusted to high-precision 100-units scale
-    camera = new THREE.PerspectiveCamera(
-        45,
-        container.clientWidth / container.clientHeight,
+    const aspect = container.clientWidth / container.clientHeight;
+
+    // 1. Perspective Camera setup
+    perspectiveCamera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000.0);
+    perspectiveCamera.position.set(0, -150, 120);
+
+    // 2. Orthographic Camera setup (frustum sized to comfortably fit our 100-unit models)
+    const frustumSize = 120.0;
+    orthographicCamera = new THREE.OrthographicCamera(
+        (frustumSize * aspect) / -2,
+        (frustumSize * aspect) / 2,
+        frustumSize / 2,
+        (frustumSize) / -2,
         0.1,
         1000.0
     );
-    camera.position.set(0, -150, 120);
+    orthographicCamera.position.copy(perspectiveCamera.position);
+
+    // Default camera at start
+    camera = perspectiveCamera;
 
     // Renderer — configured with antialiasing and transparency (alpha channel)
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -323,6 +335,9 @@ function initScene() {
     // Apply the sky gradient now that both 'scene' and 'renderer' are fully initialized
     _applySkyGradient();
 
+    // Create a clean camera status overlay dynamically at the top-right
+    _createCameraOverlay(container);
+
     // Default scene lights
     _addDefaultLights();
 
@@ -332,6 +347,25 @@ function initScene() {
     window.addEventListener("resize", _onWindowResize);
 }
 
+function _onWindowResize() {
+    const container = document.getElementById("viewport-container");
+    const aspect = container.clientWidth / container.clientHeight;
+
+    // Rescale Perspective Projection
+    perspectiveCamera.aspect = aspect;
+    perspectiveCamera.updateProjectionMatrix();
+
+    // Rescale Orthographic Projection bounds
+    const frustumSize = 120.0;
+    orthographicCamera.left = (frustumSize * aspect) / -2;
+    orthographicCamera.right = (frustumSize * aspect) / 2;
+    orthographicCamera.top = frustumSize / 2;
+    orthographicCamera.bottom = (frustumSize) / -2;
+    orthographicCamera.updateProjectionMatrix();
+
+    renderer.setSize(container.clientWidth, container.clientHeight);
+}
+
 
 function _animate() {
     requestAnimationFrame(_animate);
@@ -339,12 +373,7 @@ function _animate() {
     renderer.render(scene, camera);
 }
 
-function _onWindowResize() {
-    const container = document.getElementById("viewport-container");
-    camera.aspect = container.clientWidth / container.clientHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(container.clientWidth, container.clientHeight);
-}
+
 
 // ---------------------------------------------------------------------------
 // Default lights
@@ -389,6 +418,10 @@ function processPythonCommand(command) {
             // ── Terrain ──────────────────────────────────────────────────
             case "set_main_raster":
                 _buildTerrain(command.payload);
+                break;
+
+            case "set_camera_projection":
+                _setCameraProjection(command.payload.mode);
                 break;
 
             // ── Z-scale ──────────────────────────────────────────────────
@@ -1144,6 +1177,68 @@ function _computeMaxDim(data) {
 
 function _updateStatus(message) {
     const el = document.getElementById("status-overlay");
+    if (el) el.innerText = message;
+}
+
+
+// Dynamically build a floating scientific status overlay in the viewport
+function _createCameraOverlay(container) {
+    const overlay = document.createElement("div");
+    overlay.id = "camera-overlay";
+    overlay.innerText = "Projection: Perspective (Scenic View)";
+    Object.assign(overlay.style, {
+        position: "absolute",
+        top: "10px",
+        right: "10px",
+        color: "#ddd",
+        fontSize: "11px",
+        pointerEvents: "none",
+        background: "rgba(0, 0, 0, 0.6)",
+        padding: "5px 8px",
+        borderRadius: "4px",
+        fontFamily: "monospace",
+        zIndex: "100"
+    });
+    container.appendChild(overlay);
+}
+
+function _setCameraProjection(mode) {
+    const container = document.getElementById("viewport-container");
+    const aspect = container.clientWidth / container.clientHeight;
+
+    // Clone the rotation target coordinates to keep focus centered smoothly
+    const currentTarget = controls.target.clone();
+
+    if (mode === "ortho") {
+        const frustumSize = 120.0;
+        orthographicCamera.left = (frustumSize * aspect) / -2;
+        orthographicCamera.right = (frustumSize * aspect) / 2;
+        orthographicCamera.top = frustumSize / 2;
+        orthographicCamera.bottom = (frustumSize) / -2;
+        orthographicCamera.updateProjectionMatrix();
+
+        // Match viewpoint vectors from the perspective camera
+        orthographicCamera.position.copy(camera.position);
+        orthographicCamera.rotation.copy(camera.rotation);
+
+        camera = orthographicCamera;
+        _updateCameraOverlayText("Projection: Orthographic (Scientific Scale)");
+    } else {
+        perspectiveCamera.position.copy(camera.position);
+        perspectiveCamera.rotation.copy(camera.rotation);
+
+        camera = perspectiveCamera;
+        _updateCameraOverlayText("Projection: Perspective (Scenic View)");
+    }
+
+    // Rebind the orbital viewport controller to the active camera object
+    controls.object = camera;
+    controls.target.copy(currentTarget);
+    controls.update();
+}
+
+function _updateCameraOverlayText(message) {
+    const el = document.getElementById("camera-overlay");
     if (el) el.innerText = message;
 }
 

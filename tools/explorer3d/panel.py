@@ -543,6 +543,23 @@ class Explorer3DPanel(BasePanel):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(8)
 
+        # Camera Projection Selection
+        lbl_cam = QLabel(tr("Camera projection mode:"))
+        lbl_cam.setStyleSheet("font-weight: bold;")
+        layout.addWidget(lbl_cam)
+
+        self.combo_camera = QComboBox()
+        self.combo_camera.addItems([tr("Perspective View"), tr("Orthographic View")])
+        self.combo_camera.setToolTip(
+            tr("Perspective: natural 3D depth. Orthographic: parallel projection, "
+               "guaranteeing consistent scale across the viewport (ideal for publication maps).")
+        )
+        layout.addWidget(self.combo_camera)
+
+        sep_cam = QFrame()
+        sep_cam.setFrameShape(QFrame.HLine)
+        layout.addWidget(sep_cam)
+
         # Z-Scale
         lbl_z = QLabel(tr("Vertical exaggeration (Z-scale):"))
         lbl_z.setStyleSheet("font-weight: bold;")
@@ -561,10 +578,6 @@ class Explorer3DPanel(BasePanel):
         self.lbl_z_value = QLabel("1.5 ×")
         self.lbl_z_value.setAlignment(Qt.AlignRight)
         layout.addWidget(self.lbl_z_value)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        layout.addWidget(sep)
 
         # Block base thickness
         lbl_thick = QLabel(tr("Block base thickness:"))
@@ -599,10 +612,6 @@ class Explorer3DPanel(BasePanel):
         color_row.addWidget(self.btn_wall_color)
         color_row.addWidget(self.btn_base_color)
         layout.addLayout(color_row)
-
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.HLine)
-        layout.addWidget(sep3)
 
         # Sky gradient
         lbl_sky = QLabel(tr("Background sky gradient:"))
@@ -766,6 +775,8 @@ class Explorer3DPanel(BasePanel):
         self.btn_sky_bottom.clicked.connect(
             lambda: self._slot_pick_color_for("sky_bottom", self.btn_sky_bottom)
         )
+
+        self.combo_camera.currentIndexChanged.connect(self._slot_camera_mode_changed)
 
         self.slider_roughness.valueChanged.connect(self._slot_update_aesthetic_shading)
         self.slider_slope_contrast.valueChanged.connect(self._slot_update_aesthetic_shading)
@@ -950,44 +961,7 @@ class Explorer3DPanel(BasePanel):
             "action": "set_multidirectional_shading",
             "payload": {"enabled": enabled}
         })
-
-
-    # def _slot_add_light(self) -> None:
-    #     idx = len(self._lights)
-    #     light = {
-    #         "id": f"light_{idx}",
-    #         "label": f"Light_{idx}",
-    #         "type": "directional",
-    #         "color": "#ffffff",
-    #         "intensity": 1.0,
-    #         "azimuth": 135,
-    #         "altitude": 45,
-    #         "gizmo": False,
-    #     }
-    #     self._lights.append(light)
-    #     self._rebuild_lights_list()
-    #     self.list_lights.setCurrentRow(idx)
-    #     self._js({"action": "add_light", "payload": light})
-
-    # def _slot_remove_light(self) -> None:
-    #     idx = self.list_lights.currentRow()
-    #     if idx < 0 or idx >= len(self._lights):
-    #         return
-    #     light_id = self._lights[idx]["id"]
-    #     self._lights.pop(idx)
-    #     self._rebuild_lights_list()
-    #     self._selected_light_idx = max(0, idx - 1)
-    #     self._refresh_light_panel()
-    #     self._js({"action": "remove_light", "payload": {"id": light_id}})
-
-    # def _slot_light_selected(self, row: int) -> None:
-    #     if row < 0 or row >= len(self._lights):
-    #         return
-    #     self._selected_light_idx = row
-    #     self._refresh_light_panel()
-
     
-
     # Aesthetics page
 
     def _slot_update_z_scale(self, value: int) -> None:
@@ -1016,6 +990,18 @@ class Explorer3DPanel(BasePanel):
                 "slope_contrast": slope_contrast
             }
         })
+
+    def _slot_camera_mode_changed(self) -> None:
+        """Trigger camera projection swap between perspective and orthographic parallel modes."""
+        if not self.is_3d_active:
+            return
+        mode = "ortho" if self.combo_camera.currentIndex() == 1 else "persp"
+        self._js({
+            "action": "set_camera_projection",
+            "payload": {"mode": mode}
+        })
+        if mode == "ortho":
+            self.show_info(tr("Orthographic projection enabled. Distances are now dimensionally consistent."))
 
     # Export page
 
@@ -1075,57 +1061,6 @@ class Explorer3DPanel(BasePanel):
         item.setData(Qt.UserRole, element_id)   # authoritative ID used in JS commands
         self.list_layers.addItem(item)
         return item
-
-    # def _rebuild_lights_list(self) -> None:
-    #     """Rebuild the QListWidget from the authoritative self._lights model."""
-    #     self.list_lights.blockSignals(True)
-    #     self.list_lights.clear()
-    #     for light in self._lights:
-    #         self.list_lights.addItem(light["label"])
-    #     self.list_lights.blockSignals(False)
-    #     if self._lights:
-    #         self.list_lights.setCurrentRow(self._selected_light_idx)
-
-    # def _refresh_light_panel(self) -> None:
-    #     """
-    #     Populate the light properties panel from self._lights[_selected_light_idx].
-    #     blockSignals() prevents each assignment from firing a JS command.
-    #     """
-    #     idx = self._selected_light_idx
-    #     if idx < 0 or idx >= len(self._lights):
-    #         self.group_light_props.setEnabled(False)
-    #         return
-
-    #     self.group_light_props.setEnabled(True)
-    #     light = self._lights[idx]
-
-    #     type_map = {"directional": 0, "point": 1, "spot": 2}
-
-    #     for widget in (
-    #         self.combo_light_type,
-    #         self.slider_light_intensity,
-    #         self.slider_light_azimuth,
-    #         self.slider_light_altitude,
-    #         self.chk_light_gizmo,
-    #     ):
-    #         widget.blockSignals(True)
-
-    #     self.combo_light_type.setCurrentIndex(type_map.get(light["type"], 0))
-    #     self.slider_light_intensity.setValue(int(light["intensity"] * 10))
-    #     self.slider_light_azimuth.setValue(light["azimuth"])
-    #     self.slider_light_altitude.setValue(light["altitude"])
-    #     self.chk_light_gizmo.setChecked(light["gizmo"])
-    #     _apply_color_to_btn(self.btn_light_color, QColor(light["color"]))
-
-    #     for widget in (
-    #         self.combo_light_type,
-    #         self.slider_light_intensity,
-    #         self.slider_light_azimuth,
-    #         self.slider_light_altitude,
-    #         self.chk_light_gizmo,
-    #     ):
-    #         widget.blockSignals(False)
-
 
 
     def _add_labeled_slider(
