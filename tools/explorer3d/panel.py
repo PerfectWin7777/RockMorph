@@ -1863,19 +1863,37 @@ class Explorer3DPanel(BasePanel):
             stops = colormaps_dict.get(current_cmap.lower()) or colormaps_dict.get("terrain")
             if stops:
                 for item in stops:
+                    pos = 0.0
+                    rgb = [0.0, 0.0, 0.0]
+                    
+                    # Format A: [position, [r, g, b]]
                     if isinstance(item, list) and len(item) == 2 and isinstance(item[1], list):
                         pos = float(item[0])
                         rgb = item[1]
+                    # Format B: [position, r, g, b]
                     elif isinstance(item, list) and len(item) == 4:
                         pos = float(item[0])
                         rgb = item[1:4]
+                    # Format C: Dictionary object {"pos": position, "rgb": [r, g, b]} or direct keys
+                    elif isinstance(item, dict):
+                        pos = float(item.get("pos", item.get("position", 0.0)))
+                        if "rgb" in item:
+                            rgb = item["rgb"]
+                        else:
+                            rgb = [item.get("r", 0.0), item.get("g", 0.0), item.get("b", 0.0)]
                     else:
                         continue
+                    
+                    # Normalize RGB values strictly to [0.0, 1.0] floats for WebGL / Three.js
+                    r = float(rgb[0] / 255.0) if isinstance(rgb[0], (int, float)) and rgb[0] > 1.0 else float(rgb[0])
+                    g = float(rgb[1] / 255.0) if isinstance(rgb[1], (int, float)) and rgb[1] > 1.0 else float(rgb[1])
+                    b = float(rgb[2] / 255.0) if isinstance(rgb[2], (int, float)) and rgb[2] > 1.0 else float(rgb[2])
+                    
                     active_ramp.append({
                         "pos": pos,
-                        "r": float(rgb[0]),
-                        "g": float(rgb[1]),
-                        "b": float(rgb[2])
+                        "r": r,
+                        "g": g,
+                        "b": b
                     })
         except Exception as e:
             print(f"[RockMorph] Error parsing active colormap for standalone export: {e}")
@@ -1956,17 +1974,57 @@ class Explorer3DPanel(BasePanel):
 
 
     def _save_export(self, data_url: str) -> None:
-        """Override to intercept STL binary model exports and delegate images to BasePanel."""
+        """
+        Override to intercept STL exports (including high-volume chunked streams),
+        and safely delegate standard image/PDF exports to BasePanel.
+        """
         try:
             fmt = os.path.splitext(self._pending_export_path)[1].lower().lstrip('.')
             
             if fmt == 'stl':
                 if ',' in data_url:
                     header, payload = data_url.split(',', 1)
-                    if 'base64' in header:
+                    
+                    # Case A: Chunked transmission to bypass QWebChannel limits on large meshes
+                    if ';chunk' in header:
+                        meta = {}
+                        for part in header.split(';'):
+                            if '=' in part:
+                                key, val = part.split('=', 1)
+                                meta[key] = int(val)
+                                
+                        idx = meta.get('index', 0)
+                        total = meta.get('total', 1)
+                        
+                        # Open file in write mode ('w') for the first chunk, append mode ('a') for the rest
+                        mode = 'w' if idx == 0 else 'a'
+                        
+                        from urllib.parse import unquote
+                        raw_ascii_stl = unquote(payload)
+                        with open(self._pending_export_path, mode, encoding='utf-8') as f:
+                            f.write(raw_ascii_stl)
+                            
+                        # Show non-blocking progress inside the QGIS message bar
+                        if idx == total - 1:
+                            self.show_info(tr(f"3D Model successfully exported to STL: {os.path.basename(self._pending_export_path)}"))
+                        else:
+                            self.show_info(tr(f"Exporting 3D Model: processing block {idx+1}/{total}..."))
+                        return
+                    
+                    # Case B: Legacy fallback (Direct Base64 encoded payload)
+                    elif 'base64' in header:
                         stl_bytes = base64.b64decode(payload)
                         with open(self._pending_export_path, 'wb') as f:
                             f.write(stl_bytes)
+                        self.show_info(tr(f"3D Model successfully exported to STL: {os.path.basename(self._pending_export_path)}"))
+                        return
+                    
+                    # Case C: Standard single raw payload
+                    else:
+                        from urllib.parse import unquote
+                        raw_ascii_stl = unquote(payload)
+                        with open(self._pending_export_path, 'w', encoding='utf-8') as f:
+                            f.write(raw_ascii_stl)
                         self.show_info(tr(f"3D Model successfully exported to STL: {os.path.basename(self._pending_export_path)}"))
                         return
                         

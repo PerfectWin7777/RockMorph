@@ -724,7 +724,11 @@ function _buildTerrain(data) {
     // console.log("[RockMorph 3D] Building terrain:", data.element_id,
     //     "— size:", data.width, "×", data.height,
     //     "— Z:", data.z_min, "→", data.z_max);
-
+    
+    // Determine the active color ramp using fallback cascading
+    const activeRamp = (typeof ACTIVE_SCENE_DATA !== "undefined" && ACTIVE_SCENE_DATA.style && ACTIVE_SCENE_DATA.style.active_ramp && ACTIVE_SCENE_DATA.style.active_ramp.length > 0)
+        ? ACTIVE_SCENE_DATA.style.active_ramp
+        : (COLORMAPS[currentColormapName] || COLORMAPS.viridis || null);
 
     // 1. Sweep and fully dispose of all old terrain, block, and vector layers [Vector Persistence Fix]
     const keysToRemove = [];
@@ -800,8 +804,7 @@ function _buildTerrain(data) {
 
             // Vertex color from current colormap
             const t = _normZ(rawZ ?? data.z_min, data);
-            const c = _sampleRamp(COLORMAPS[currentColormapName] || COLORMAPS.viridis,
-                currentColormapReverse ? 1 - t : t);
+            const c = _sampleRamp(activeRamp, currentColormapReverse ? 1 - t : t);
             colors.push(c.r, c.g, c.b);
 
             // Build index buffer, skip NoData quads
@@ -1176,9 +1179,20 @@ const COLORMAPS = typeof COLORMAPS_ALL !== "undefined" ? COLORMAPS_ALL : {};
 /**
  * Sample a colormap ramp at position t ∈ [0, 1].
  * Returns { r, g, b } in [0, 1].
+* Fallback to a grayscale ramp if colormap definitions are missing.
  */
 function _sampleRamp(stops, t) {
     t = Math.max(0, Math.min(1, t));
+
+    // Safeguard against missing, null, or empty colormap arrays
+    if (!stops || !Array.isArray(stops) || stops.length === 0) {
+        return { r: t, g: t, b: t }; // Neutral grayscale fallback
+    }
+
+    if (stops.length === 1) {
+        return { r: stops[0].r, g: stops[0].g, b: stops[0].b };
+    }
+
     for (let i = 0; i < stops.length - 1; i++) {
         if (t >= stops[i].pos && t <= stops[i + 1].pos) {
             const range = stops[i + 1].pos - stops[i].pos;
@@ -1421,7 +1435,8 @@ function _buildVectorFeature(descriptor) {
 
         // Sample custom palette
         const rampName = descriptor.vector_colormap || "terrain";
-        const ramp = COLORMAPS[rampName] || COLORMAPS.terrain || COLORMAPS.viridis;
+        // Safely fallback to the main terrain active ramp if global colormaps are missing
+        const ramp = COLORMAPS[rampName] || COLORMAPS.terrain || COLORMAPS.viridis || (typeof ACTIVE_SCENE_DATA !== "undefined" ? ACTIVE_SCENE_DATA.style.active_ramp : null);
         const sampled = _sampleRamp(ramp, norm);
 
         featureColor = "#" +
@@ -1975,10 +1990,23 @@ function _exportSTL() {
 
     // Perform a single, ultra-fast join
     const stl = lines.join("\n");
-    const dataURL = "data:model/stl;raw," + stl;
 
     if (typeof bridge !== "undefined") {
-        bridge.receive_export(dataURL);
+        // Chunk the STL text payload to bypass QWebChannel / Chromium IPC transport limits (usually 2MB)
+        const chunkSize = 1024 * 1024; // 1 MB chunks
+        const totalChunks = Math.ceil(stl.length / chunkSize);
+
+        for (let i = 0; i < totalChunks; i++) {
+            const start = i * chunkSize;
+            const end = Math.min(start + chunkSize, stl.length);
+            const chunk = stl.substring(start, end);
+
+            // Encode the chunk metadata inside the custom data URL header
+            const chunkDataURL = "data:model/stl;chunk;index=" + i + ";total=" + totalChunks + "," + chunk;
+            bridge.receive_export(chunkDataURL);
+        }
+    } else {
+        console.warn("[RockMorph] QWebChannel bridge offline. Export aborted.");
     }
 }
 
