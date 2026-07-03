@@ -1183,8 +1183,8 @@ class Explorer3DPanel(BasePanel):
 
     def _slot_add_vector_layer(self) -> None:
         """
-        Drape a vector layer onto the terrain surface.
-        All features are sent in a single JSON payload with clean dynamic styles.
+        Drape a vector layer onto the terrain surface using an asynchronous worker thread
+        to keep QGIS responsive on heavy geometries.
         """
         dem_layer = self.combo_raster.currentLayer()
         vec_layer = self.combo_vector.currentLayer()
@@ -1223,16 +1223,67 @@ class Explorer3DPanel(BasePanel):
             attribute_field = self.combo_vector_attribute.currentText()
             vector_colormap = self.combo_vector_colormap.currentText() or "terrain"
 
-        # 2. Extract vectors from engine using UI options
-        vectors = self.engine.prepare_vector_layer(
-            vec_layer, 
-            dem_layer, 
-            extrude_depth=extrude_depth,
-            attribute_field=attribute_field
-        )
+        # 2. Show progress panel feedback
+        self.set_loading_state(True, tr("Draping complex geometries onto 3D terrain..."), total=100)
+
+        # 3. Setup and dispatch the background task
+        params = {
+            "task_type": "prepare_vectors",
+            "vector_layer": vec_layer,
+            "dem_layer": dem_layer,
+            "extrude_depth": extrude_depth,
+            "attribute_field": attribute_field,
+            # Packaging UI parameters so they return to main thread on completion (stateless)
+            "style_params": {
+                "selected_drape_mode": selected_drape_mode,
+                "polygon_opacity": polygon_opacity,
+                "point_marker_size": point_marker_size,
+                "line_width": line_width,
+                "height_offset": height_offset,
+                "color_styling": color_styling,
+                "fixed_color_hex": fixed_color_hex,
+                "attribute_field": attribute_field,
+                "vector_colormap": vector_colormap,
+                "vec_layer_id": vec_layer.id(),
+                "vec_layer_name": vec_layer.name()
+            }
+        }
+        
+        self._vector_worker = ComputeWorker(self.engine, params)
+        self._vector_worker.progress.connect(self.update_progress)
+        self._vector_worker.finished.connect(self._slot_on_vectors_ready)
+        self._vector_worker.error.connect(self._slot_on_vectors_failed)
+        self._vector_worker.start()
+
+
+    def _slot_on_vectors_ready(self, result: dict) -> None:
+        """
+        Triggered on the main thread when ComputeWorker finishes vector draping.
+        Normalizes and injects vector features into WebGL viewport.
+        """
+        self.set_loading_state(False)
+        
+        vectors = result.get("vectors")
         if not vectors:
             self.show_info(tr("No features found in the selected layer."))
             return
+            
+        style_params = result.get("style_params")
+        if not style_params:
+            return
+            
+        # Extract style parameters returned by the worker
+        selected_drape_mode = style_params["selected_drape_mode"]
+        polygon_opacity = style_params["polygon_opacity"]
+        point_marker_size = style_params["point_marker_size"]
+        line_width = style_params["line_width"]
+        height_offset = style_params["height_offset"]
+        color_styling = style_params["color_styling"]
+        fixed_color_hex = style_params["fixed_color_hex"]
+        attribute_field = style_params["attribute_field"]
+        vector_colormap = style_params["vector_colormap"]
+        vec_layer_id = style_params["vec_layer_id"]
+        vec_layer_name = style_params["vec_layer_name"]
 
         # Calculate bounds in Python to allow immediate normalization in WebGL
         attr_min = 0.0
@@ -1245,12 +1296,10 @@ class Explorer3DPanel(BasePanel):
                 if attr_max <= attr_min:
                     attr_max = attr_min + 1.0
 
-        # 3. Serialize and package dynamic parameters for WebGL
+        # Serialize and package dynamic parameters for WebGL
         serialized_vectors = []
         for v in vectors:
             v_dict = v.to_dict()
-            
-            # Inject dynamic styling overrides
             v_dict["geom_type"] = selected_drape_mode
             v_dict["polygon_opacity"] = polygon_opacity
             v_dict["point_marker_size"] = point_marker_size
@@ -1265,10 +1314,10 @@ class Explorer3DPanel(BasePanel):
                 
             serialized_vectors.append(v_dict)
         
-        # Cache the vectors in Python for HTML export
+        # Cache vectors in Python for HTML export
         self._loaded_vectors.extend(serialized_vectors)
 
-        # 4. Single batch transaction
+        # Single batch transaction to WebGL
         self._js({
             "action": "add_vector_batch",
             "payload": serialized_vectors
@@ -1276,12 +1325,18 @@ class Explorer3DPanel(BasePanel):
 
         # Register in scene list
         self._add_layer_item(
-            label=f"💧  {vec_layer.name()}",
-            element_id=f"vector_{vec_layer.id()}"
+            label=f"💧  {vec_layer_name}",
+            element_id=f"vector_{vec_layer_id}"
         )
 
+    def _slot_on_vectors_failed(self, error_msg: str) -> None:
+        """
+        Triggered on the main thread if vector draping fails.
+        """
+        self.set_loading_state(False)
+        self.show_error(tr(f"Failed to drape vector layer: {error_msg}"))
 
-    
+        
     def _slot_selected_vector_changed(self) -> None:
         """Triggered when the selected vector layer changes. Populates field columns."""
         layer = self.combo_vector.currentLayer()

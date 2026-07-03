@@ -37,27 +37,55 @@ class Explorer3DEngine(BaseEngine):
     def compute(self, **kwargs) -> dict:
         """
         Runs in the background thread.
-        Prepares the raster digital elevation model (DEM) and returns its data structure.
+        Prepares either the raster DEM or a draped vector layer based on the task_type parameter.
         """
-        dem_layer = kwargs.get("dem_layer")
+        task_type = kwargs.get("task_type", "prepare_dem")
         progress_callback = kwargs.get("progress_callback")
         
-        if not dem_layer:
-            raise ValueError("No raster DEM layer provided to the compute engine.")
-
-        # Step 1: Report initialization progress
-        if progress_callback:
-            progress_callback(15, tr("Reading geospatial coordinates..."))
-
-        # Step 2: Execute the heavy GDAL raster extraction and downsampling
-        dem_data = self.prepare_dem(dem_layer)
-
-        # Step 3: Report near completion
-        if progress_callback:
-            progress_callback(90, tr("Assembling 3D mesh matrix..."))
-
-        # Return the resulting ThreeDRaster object back to the main thread
-        return {"dem_data": dem_data}
+        # ── TASK 1: DEM RASTER PREPARATION ─────────────────────────────────
+        if task_type == "prepare_dem":
+            dem_layer = kwargs.get("dem_layer")
+            if not dem_layer:
+                raise ValueError("No raster DEM layer provided to the compute engine.")
+                
+            if progress_callback:
+                progress_callback(15, tr("Reading geospatial coordinates..."))
+                
+            dem_data = self.prepare_dem(dem_layer)
+            
+            if progress_callback:
+                progress_callback(90, tr("Assembling 3D mesh matrix..."))
+                
+            return {"task_type": "dem", "dem_data": dem_data}
+            
+        # ── TASK 2: VECTOR LAYER DRAPING ───────────────────────────────────
+        elif task_type == "prepare_vectors":
+            vector_layer = kwargs.get("vector_layer")
+            dem_layer = kwargs.get("dem_layer")
+            extrude_depth = kwargs.get("extrude_depth", 0.0)
+            attribute_field = kwargs.get("attribute_field", "")
+            style_params = kwargs.get("style_params") # Carry style parameters back to UI
+            
+            if not vector_layer or not dem_layer:
+                raise ValueError("Both vector and raster layers are required for vector draping.")
+                
+            if progress_callback:
+                progress_callback(20, tr("Iterating features and projecting onto elevation grid..."))
+                
+            vectors = self.prepare_vector_layer(
+                vector_layer=vector_layer,
+                dem_layer=dem_layer,
+                extrude_depth=extrude_depth,
+                attribute_field=attribute_field
+            )
+            
+            return {
+                "task_type": "vectors", 
+                "vectors": vectors, 
+                "style_params": style_params
+            }
+            
+        return {}
     
 
     def prepare_dem(self, dem_layer: QgsRasterLayer, max_resolution: int = 400) -> ThreeDRaster:
