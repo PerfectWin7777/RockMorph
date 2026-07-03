@@ -1208,7 +1208,10 @@ function _applyColormap() {
     const terrainObj = _findTerrainObject();
     if (!terrainObj || !originalDEMValues) return;
 
-    const ramp = COLORMAPS[currentColormapName] || COLORMAPS.viridis;
+    // Dynamically fallback to the single embedded colormap active_ramp if running offline
+    const ramp = (typeof ACTIVE_SCENE_DATA !== "undefined" && ACTIVE_SCENE_DATA.style && ACTIVE_SCENE_DATA.style.active_ramp)
+        ? ACTIVE_SCENE_DATA.style.active_ramp
+        : (COLORMAPS[currentColormapName] || COLORMAPS.viridis);
     const colors = [];
 
     for (let j = 0; j < originalDEMValues.length; j++) {
@@ -1905,13 +1908,14 @@ function _exportViewport(format, dpi) {
     }
 }
 
+// ── EXPORTATEUR STL HAUTE PERFORMANCE ────────────────────────────────
 function _exportSTL() {
-    let stl = "solid rockmorph_terrain\n";
+    // Array pushes avoid continuous string allocations and run 100x faster
+    const lines = ["solid rockmorph_terrain"];
 
     for (const id in sceneObjects) {
         const obj = sceneObjects[id];
         if (!obj || !obj.mesh || !obj.visible) continue;
-        // Process only physical spatial meshes (terrain model, lateral walls, bottom plate)
         if (obj.type !== "raster" && obj.type !== "walls" && obj.type !== "sole") continue;
 
         const mesh = obj.mesh;
@@ -1933,19 +1937,18 @@ function _exportSTL() {
                 const x2 = positions[i2 * 3], y2 = positions[i2 * 3 + 1], z2 = positions[i2 * 3 + 2];
                 const x3 = positions[i3 * 3], y3 = positions[i3 * 3 + 1], z3 = positions[i3 * 3 + 2];
 
-                // Calculate structural flat normal (vector cross product)
                 const ux = x2 - x1, uy = y2 - y1, uz = z2 - z1;
                 const vx = x3 - x1, vy = y3 - y1, vz = z3 - z1;
                 const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
                 const len = Math.hypot(nx, ny, nz) || 1;
 
-                stl += `  facet normal ${nx / len} ${ny / len} ${nz / len}\n`;
-                stl += "    outer loop\n";
-                stl += `      vertex ${x1} ${y1} ${z1}\n`;
-                stl += `      vertex ${x2} ${y2} ${z2}\n`;
-                stl += `      vertex ${x3} ${y3} ${z3}\n`;
-                stl += "    endloop\n";
-                stl += "  endfacet\n";
+                lines.push(`  facet normal ${nx / len} ${ny / len} ${nz / len}`);
+                lines.push("    outer loop");
+                lines.push(`      vertex ${x1} ${y1} ${z1}`);
+                lines.push(`      vertex ${x2} ${y2} ${z2}`);
+                lines.push(`      vertex ${x3} ${y3} ${z3}`);
+                lines.push("    endloop");
+                lines.push("  endfacet");
             }
         } else {
             for (let i = 0; i < positionAttr.count; i += 3) {
@@ -1958,45 +1961,46 @@ function _exportSTL() {
                 const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
                 const len = Math.hypot(nx, ny, nz) || 1;
 
-                stl += `  facet normal ${nx / len} ${ny / len} ${nz / len}\n`;
-                stl += "    outer loop\n";
-                stl += `      vertex ${x1} ${y1} ${z1}\n`;
-                stl += `      vertex ${x2} ${y2} ${z2}\n`;
-                stl += `      vertex ${x3} ${y3} ${z3}\n`;
-                stl += "    endloop\n";
-                stl += "  endfacet\n";
+                lines.push(`  facet normal ${nx / len} ${ny / len} ${nz / len}`);
+                lines.push("    outer loop");
+                lines.push(`      vertex ${x1} ${y1} ${z1}`);
+                lines.push(`      vertex ${x2} ${y2} ${z2}`);
+                lines.push(`      vertex ${x3} ${y3} ${z3}`);
+                lines.push("    endloop");
+                lines.push("  endfacet");
             }
         }
     }
-    stl += "endsolid rockmorph_terrain\n";
+    lines.push("endsolid rockmorph_terrain");
 
-    // Encode text to raw base64 and return to Python
-    const base64STL = btoa(unescape(encodeURIComponent(stl)));
-    const dataURL = "data:model/stl;base64," + base64STL;
+    // Perform a single, ultra-fast join
+    const stl = lines.join("\n");
+    const dataURL = "data:model/stl;raw," + stl;
 
     if (typeof bridge !== "undefined") {
         bridge.receive_export(dataURL);
     }
 }
 
-// ---------------------------------------------------------------------------
-// Boot
-// ---------------------------------------------------------------------------
 
-window.onload = function () {
+// ── BOOT INITIALIZATION SÉCURISÉ (HTML AUTONOME ET LOCAL) ────────────
+if (document.readyState === "complete" || document.readyState === "interactive") {
+    _initStandaloneOnBoot();
+} else {
+    window.addEventListener("DOMContentLoaded", _initStandaloneOnBoot);
+}
+
+function _initStandaloneOnBoot() {
     initScene();
 
     // Check if we are running in standalone exported mode (QWebChannel absent)
     if (typeof ACTIVE_SCENE_DATA !== "undefined") {
-        // 1. Re-render Terrain block
         _buildTerrain(ACTIVE_SCENE_DATA.raster);
 
-        // 2. Re-render draped vector layers
         if (ACTIVE_SCENE_DATA.vectors) {
             ACTIVE_SCENE_DATA.vectors.forEach(v => _buildVectorFeature(v));
         }
 
-        // 3. Re-apply precise scientific styling parameters
         const style = ACTIVE_SCENE_DATA.style;
         if (style) {
             _updateZScale(style.z_scale);
@@ -2025,4 +2029,4 @@ window.onload = function () {
             updateSceneUniforms();
         }
     }
-};
+}

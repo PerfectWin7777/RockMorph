@@ -1827,11 +1827,17 @@ class Explorer3DPanel(BasePanel):
             "action": "export_stl"
         })
 
+   
     def _slot_export_interactive_html(self) -> None:
         """Export the active 3D scene as a standalone, double-clickable interactive HTML file."""
         if not self._active_dem_data:
-            self.show_error(tr("No active terrain loaded. Please render a MNT first."))
-            return
+            layer = self.combo_raster.currentLayer()
+            if layer:
+                dem_data = self.engine.prepare_dem(layer)
+                self._active_dem_data = dem_data.to_dict()
+            else:
+                self.show_error(tr("No active terrain loaded. Please render a MNT first."))
+                return
 
         path, _ = QFileDialog.getSaveFileName(
             self, tr("Export Interactive HTML"), "rockmorph_3d_scene.html", "HTML Files (*.html)"
@@ -1848,7 +1854,33 @@ class Explorer3DPanel(BasePanel):
         except Exception:
             pass
 
-        # 2. Compile full 3D scene dataset (vectors, textures, block styling, shader settings)
+        # 2. Extract ONLY the active colormap stops in Python to minimize HTML weight
+        current_cmap = self.combo_colormap.currentText() or "terrain"
+        active_ramp = []
+        try:
+            with open(json_file, "r", encoding="utf-8") as f:
+                colormaps_dict = json.load(f)
+            stops = colormaps_dict.get(current_cmap.lower()) or colormaps_dict.get("terrain")
+            if stops:
+                for item in stops:
+                    if isinstance(item, list) and len(item) == 2 and isinstance(item[1], list):
+                        pos = float(item[0])
+                        rgb = item[1]
+                    elif isinstance(item, list) and len(item) == 4:
+                        pos = float(item[0])
+                        rgb = item[1:4]
+                    else:
+                        continue
+                    active_ramp.append({
+                        "pos": pos,
+                        "r": float(rgb[0]),
+                        "g": float(rgb[1]),
+                        "b": float(rgb[2])
+                    })
+        except Exception as e:
+            print(f"[RockMorph] Error parsing active colormap for standalone export: {e}")
+
+        # 3. Compile the structured 3D scene dataset (Now featuring the lightweight active ramp)
         scene_data = {
             "raster": self._active_dem_data,
             "vectors": self._loaded_vectors,
@@ -1859,53 +1891,69 @@ class Explorer3DPanel(BasePanel):
                 "base_color": self._colors["base"],
                 "sky_top": self._colors["sky_top"],
                 "sky_bottom": self._colors["sky_bottom"],
-                "colormap": self.combo_colormap.currentText(),
+                "colormap": current_cmap,
                 "reverse_cmap": self.chk_reverse_cmap.isChecked(),
                 "color_mode": "colormap" if self.combo_symbology_render_mode.currentIndex() == 0 else ("classified" if self.combo_symbology_render_mode.currentIndex() == 1 else "solid"),
                 "solid_color": self.btn_solid_color.property("color_hex") or "#4a90d9",
                 "class_colors": self._class_colors,
                 "class_bounds": self._class_bounds,
+                "active_ramp": active_ramp,  # Direct, lightweight palette injection
                 "roughness": self.slider_roughness.value() / 100.0,
                 "slope_contrast": self.slider_slope_contrast.value() / 100.0,
                 "multidirectional": self.chk_multidirectional.isChecked(),
             }
         }
 
-        # 3. Read template and inline libraries if offline
+        # 4. Read template HTML
         web_dir = self._web_dir()
         template_path = os.path.join(web_dir, "explorer3d.html")
         with open(template_path, "r", encoding="utf-8") as f:
             html = f.read()
 
-        # Inject the structured dataset into the header
+        # Inject the single active dataset script into the header
         data_script = f"\n    <script>const ACTIVE_SCENE_DATA = {json.dumps(scene_data)};</script>\n"
         html = html.replace("<head>", f"<head>{data_script}")
 
-        if has_net:
-            # Inline lightweight high-speed CDN imports
-            html = html.replace('<script src="js/three.min.js"></script>', '<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>')
-            html = html.replace('<script src="js/TrackballControls.js"></script>', '<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TrackballControls.js"></script>')
-            # Strip unused bridging libraries
-            html = html.replace('<script src="js/qwebchannel.js"></script>', '')
-            html = html.replace('<script src="js/bridge.js"></script>', '')
-        else:
-            # Fully inlined offline bundle
-            for js_file in ["three.min.js", "TrackballControls.js", "colormaps_data.js", "explorer3d_render.js"]:
-                js_path = os.path.join(web_dir, "js", js_file)
-                if os.path.exists(js_path):
-                    with open(js_path, "r", encoding="utf-8") as f:
-                        js_content = f.read()
-                    html = html.replace(f'<script src="js/{js_file}"></script>', f'<script>{js_content}</script>')
-            html = html.replace('<script src="js/qwebchannel.js"></script>', '')
-            html = html.replace('<script src="js/bridge.js"></script>', '')
+        # 5. Regex-based script inliner (automatically clears offline bridging assets)
+        import re
+        pattern = re.compile(
+            r'<\s*script\s+src=["\']js/([^"\']+)["\']\s*>\s*<\s*/\s*script\s*>',
+            re.IGNORECASE
+        )
 
-        # 4. Save to disk
+        def replacer(match):
+            js_filename = match.group(1)
+            # Remove bridging and debugging files from standalone compilation
+            if js_filename in ["qwebchannel.js", "bridge.js", "lil-gui.umd.min.js", "OrbitControls.js", "colormaps_data.js"]:
+                return ""
+
+            if has_net:
+                if js_filename == "three.min.js":
+                    return '<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>'
+                elif js_filename == "TrackballControls.js":
+                    return '<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TrackballControls.js"></script>'
+
+            # Inline remaining local files
+            js_path = os.path.join(web_dir, "js", js_filename)
+            if os.path.exists(js_path):
+                try:
+                    with open(js_path, "r", encoding="utf-8") as js_f:
+                        return f'<script>\n{js_f.read()}\n</script>'
+                except Exception:
+                    pass
+            return ""
+
+        html = pattern.sub(replacer, html)
+
+        # 6. Save compiled bundle
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(html)
             self.show_info(tr(f"Standalone interactive HTML exported successfully → {os.path.basename(path)}"))
         except Exception as e:
             self.show_error(tr(f"HTML Export failed: {e}"))
+
+
 
     def _save_export(self, data_url: str) -> None:
         """Override to intercept STL binary model exports and delegate images to BasePanel."""
