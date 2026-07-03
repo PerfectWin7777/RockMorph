@@ -47,7 +47,7 @@ from PyQt5.QtWidgets import ( # type: ignore
     QDialogButtonBox, QGroupBox, QFileDialog,
     QSizePolicy
 )
-from PyQt5.QtCore import QCoreApplication, Qt, QByteArray,QSizeF  # type: ignore
+from PyQt5.QtCore import QCoreApplication, Qt, QByteArray, QSizeF, QRect # type: ignore
 from PyQt5.QtGui import QFont, QImage, QPainter            # type: ignore
 from PyQt5.QtSvg import QSvgRenderer                       # type: ignore
 from PyQt5.QtPrintSupport import QPrinter  # type: ignore
@@ -476,14 +476,28 @@ class RockMorphExporter:
             printer.setOutputFormat(QPrinter.PdfFormat)
             printer.setOutputFileName(path)
             
-            # Match PDF page size to the exact image aspect ratio (0.2646 mm per screen pixel)
-            printer.setPageSizeMM(QSizeF(
-                image.width() * 0.2646,
-                image.height() * 0.2646
-            ))
+            # Setup dynamic paper page size to match the viewport aspect ratio (0.2646 mm per pixel)
+            width_mm = image.width() * 0.2646
+            height_mm = image.height() * 0.2646
+            printer.setPageSizeMM(QSizeF(width_mm, height_mm))
             
             painter = QPainter(printer)
-            painter.drawImage(0, 0, image)
+            
+            # 1. Retrieve the high-resolution device viewport (the virtual printable page)
+            page_rect = painter.viewport()
+            
+            # 2. Scale the image to fit the page while keeping standard aspect ratio
+            scaled_size = image.size()
+            scaled_size.scale(page_rect.size(), Qt.KeepAspectRatio)
+            
+            # 3. Calculate offsets to perfectly center the drawing box in the page
+            x = (page_rect.width() - scaled_size.width()) // 2
+            y = (page_rect.height() - scaled_size.height()) // 2
+            
+            target_rect = QRect(x, y, scaled_size.width(), scaled_size.height())
+            
+            # 4. Render and flush to PDF
+            painter.drawImage(target_rect, image)
             painter.end()
             self._info(tr(f"PDF → {os.path.basename(path)}"))
         except Exception as e:
