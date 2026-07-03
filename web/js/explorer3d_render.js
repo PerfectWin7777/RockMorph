@@ -946,6 +946,8 @@ function _updateZScale(scale) {
             _updateCurtainGeometryZ(obj.mesh, obj.descriptor);
         } else if (obj.type === "point_marker" && obj.descriptor) {
             _updatePointMarkerZ(obj.mesh, obj.descriptor);
+        } else if (obj.type === "filled_polygon" && obj.descriptor) {
+            _updateFilledPolygonZ(obj.mesh, obj.descriptor);
         }
     }
 }
@@ -985,6 +987,40 @@ function _updatePointMarkerZ(mesh, descriptor) {
     const zDraped = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
     const floatOffset = modelMaxDim * 0.005; 
     mesh.position.z = zDraped + floatOffset;
+}
+
+function _updateFilledPolygonZ(mesh, descriptor) {
+    const posAttr = mesh.geometry.attributes.position;
+    const positions = posAttr.array;
+
+    const scaledBoundaries = [];
+    descriptor.vertices.forEach(([x, y, z]) => {
+        const zScaled = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
+        scaledBoundaries.push({
+            x: (x - spatialOffsets.x) * scaleFactor,
+            y: (y - spatialOffsets.y) * scaleFactor,
+            z: zScaled
+        });
+    });
+
+    for (let i = 0; i < posAttr.count; i++) {
+        const x = positions[i * 3];
+        const y = positions[i * 3 + 1];
+
+        let closestZ = scaledBoundaries[0].z;
+        let minDist = Infinity;
+        scaledBoundaries.forEach(v => {
+            const d = Math.hypot(v.x - x, v.y - y);
+            if (d < minDist) {
+                minDist = d;
+                closestZ = v.z;
+            }
+        });
+        positions[i * 3 + 2] = closestZ + modelMaxDim * 0.002;
+    }
+    posAttr.needsUpdate = true;
+    mesh.geometry.computeVertexNormals();
+    mesh.geometry.computeBoundingSphere();
 }
 
 
@@ -1233,9 +1269,35 @@ function _showLightGizmo(lightId, light) {
 function _buildVectorFeature(descriptor) {
     if (!descriptor.vertices || descriptor.vertices.length < 1) return;
 
-    // Handle point geometry (e.g. knickpoints, sample markers)
+    // 1. Evaluate Dynamic Color (Fixed vs Attribute-Mapped) [No Hardcoding]
+    let featureColor = descriptor.color || "#3498db";
+
+    if (descriptor.color_styling === "attribute" && descriptor.attribute_values && descriptor.attribute_bounds) {
+        const val = descriptor.attribute_values[0];
+        const minVal = descriptor.attribute_bounds.min;
+        const maxVal = descriptor.attribute_bounds.max;
+        const norm = (val - minVal) / (maxVal - minVal);
+
+        // Sample custom palette
+        const rampName = descriptor.vector_colormap || "terrain";
+        const ramp = COLORMAPS[rampName] || COLORMAPS.terrain || COLORMAPS.viridis;
+        const sampled = _sampleRamp(ramp, norm);
+
+        featureColor = "#" +
+            Math.round(sampled.r * 255).toString(16).padStart(2, "0") +
+            Math.round(sampled.g * 255).toString(16).padStart(2, "0") +
+            Math.round(sampled.b * 255).toString(16).padStart(2, "0");
+    }
+
+    descriptor.resolved_color = featureColor; // Cache for subsequent sub-mesh generations
+
+    // Route geometry types
     if (descriptor.geom_type === "point") {
         _buildPointMarker(descriptor);
+        return;
+    }
+    if (descriptor.geom_type === "filled") {
+        _buildFilledPolygon(descriptor);
         return;
     }
 
@@ -1254,13 +1316,12 @@ function _buildVectorFeature(descriptor) {
     geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
 
     const mat = new THREE.LineBasicMaterial({
-        color: descriptor.color || "#3498db",
+        color: descriptor.resolved_color,
         linewidth: 2
     });
     const line = new THREE.Line(geo, mat);
     scene.add(line);
 
-    // Register the vector object with its unscaled raw data for scale synchronization
     sceneObjects[descriptor.element_id] = {
         mesh: line,
         type: "vector",
@@ -1268,7 +1329,6 @@ function _buildVectorFeature(descriptor) {
         descriptor: descriptor
     };
 
-    // If an extrusion depth is present, construct a structural geological plane
     if (descriptor.extrude_depth && descriptor.extrude_depth > 0) {
         _buildExtrudedCurtain(descriptor, positions);
     }
@@ -1297,11 +1357,10 @@ function _buildExtrudedCurtain(descriptor, topPositions) {
     geo.setIndex(indices);
     geo.computeVertexNormals();
 
-    const mat = createStructuralMaterial(new THREE.Color(descriptor.color || "#e74c3c"));
+    const mat = createStructuralMaterial(new THREE.Color(descriptor.resolved_color));
     const mesh = new THREE.Mesh(geo, mat);
     scene.add(mesh);
 
-    // Register structural curtain with its descriptor for dynamic Z-scaling
     sceneObjects[descriptor.element_id + "_curtain"] = {
         mesh: mesh,
         type: "curtain",
@@ -1313,10 +1372,12 @@ function _buildExtrudedCurtain(descriptor, topPositions) {
 function _buildPointMarker(descriptor) {
     const [x, y, z] = descriptor.vertices[0];
     const zDraped = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
-    const floatOffset = modelMaxDim * 0.005; // Offset to prevent clipping
+    const floatOffset = modelMaxDim * 0.005;
 
-    const geo = new THREE.SphereGeometry(modelMaxDim * 0.015, 12, 12);
-    const mat = createStructuralMaterial(new THREE.Color(descriptor.color || "#f1c40f"));
+    // Apply point scale multiplier read from UI
+    const sizeMultiplier = descriptor.point_marker_size || 1.0;
+    const geo = new THREE.SphereGeometry(modelMaxDim * 0.015 * sizeMultiplier, 12, 12);
+    const mat = createStructuralMaterial(new THREE.Color(descriptor.resolved_color));
     const mesh = new THREE.Mesh(geo, mat);
 
     mesh.position.set(
@@ -1331,6 +1392,71 @@ function _buildPointMarker(descriptor) {
         type: "point_marker",
         visible: true,
         descriptor: descriptor
+    };
+}
+
+function _buildFilledPolygon(descriptor) {
+    if (!descriptor.vertices || descriptor.vertices.length < 3) return;
+
+    // 1. Construct 2D flat shape
+    const shape = new THREE.Shape();
+    const positions3D = [];
+
+    descriptor.vertices.forEach(([x, y, z], index) => {
+        const xLocal = (x - spatialOffsets.x) * scaleFactor;
+        const yLocal = (y - spatialOffsets.y) * scaleFactor;
+        const zLocal = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
+
+        if (index === 0) {
+            shape.moveTo(xLocal, yLocal);
+        } else {
+            shape.lineTo(xLocal, yLocal);
+        }
+        positions3D.push(new THREE.Vector3(xLocal, yLocal, zLocal));
+    });
+    shape.closePath();
+
+    const geo = new THREE.ShapeGeometry(shape);
+    const posAttr = geo.attributes.position;
+    const positions = posAttr.array;
+
+    // 2. Project vertices onto boundary elevations with a slight height offset to prevent z-fighting
+    for (let i = 0; i < posAttr.count; i++) {
+        const x = positions[i * 3];
+        const y = positions[i * 3 + 1];
+
+        let closestZ = positions3D[0].z;
+        let minDist = Infinity;
+        positions3D.forEach(v => {
+            const d = Math.hypot(v.x - x, v.y - y);
+            if (d < minDist) {
+                minDist = d;
+                closestZ = v.z;
+            }
+        });
+        positions[i * 3 + 2] = closestZ + modelMaxDim * 0.002;
+    }
+
+    geo.computeVertexNormals();
+
+    const color = new THREE.Color(descriptor.resolved_color);
+    const mat = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: descriptor.polygon_opacity || 0.5,
+        side: THREE.DoubleSide,
+        depthWrite: false // Prevents overlay sorting issues
+    });
+
+    const mesh = new THREE.Mesh(geo, mat);
+    scene.add(mesh);
+
+    sceneObjects[descriptor.element_id] = {
+        mesh: mesh,
+        type: "filled_polygon",
+        visible: true,
+        descriptor: descriptor,
+        positions3D: positions3D
     };
 }
 

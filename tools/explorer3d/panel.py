@@ -1063,28 +1063,86 @@ class Explorer3DPanel(BasePanel):
     def _slot_add_vector_layer(self) -> None:
         """
         Drape a vector layer onto the terrain surface.
-        All features are sent in a single JSON payload to prevent N JS round-trips.
+        All features are sent in a single JSON payload with clean dynamic styles.
         """
         dem_layer = self.combo_raster.currentLayer()
         vec_layer = self.combo_vector.currentLayer()
         if not vec_layer or not dem_layer or not self.is_3d_active:
             return
 
-        # Auto-detect structural layers to enable 3D extrusion curtains
-        extrude_depth = 0.0
-        vec_name_lower = vec_layer.name().lower()
-        if "fault" in vec_name_lower or "faille" in vec_name_lower:
-            extrude_depth = 15.0  # Default 15-meter vertical curtain
+        # 1. Gather styling parameters directly from UI elements [No Hardcoding]
+        drape_mode_idx = self.combo_drape_mode.currentIndex()
+        drape_modes = ["line", "curtain", "outline", "filled", "point"]
+        selected_drape_mode = drape_modes[drape_mode_idx]
 
-        vectors = self.engine.prepare_vector_layer(vec_layer, dem_layer, extrude_depth)
+        extrude_depth = 0.0
+        if selected_drape_mode == "curtain":
+            extrude_depth = float(self.slider_curtain_depth.value())
+
+        polygon_opacity = 1.0
+        if selected_drape_mode == "filled":
+            polygon_opacity = float(self.slider_polygon_opacity.value() / 100.0)
+
+        point_marker_size = 1.0
+        if selected_drape_mode == "point":
+            point_marker_size = float(self.slider_point_size.value() / 10.0)
+
+        # Color configurations
+        color_styling_idx = self.combo_color_styling.currentIndex()
+        color_styling = "fixed" if color_styling_idx == 0 else "attribute"
+
+        fixed_color_hex = self.btn_vector_fixed_color.property("color_hex") or "#3498db"
+        
+        attribute_field = ""
+        vector_colormap = "terrain"
+        if color_styling == "attribute":
+            attribute_field = self.combo_vector_attribute.currentText()
+            vector_colormap = self.combo_vector_colormap.currentText() or "terrain"
+
+        # 2. Extract vectors from engine using UI options
+        vectors = self.engine.prepare_vector_layer(
+            vec_layer, 
+            dem_layer, 
+            extrude_depth=extrude_depth,
+            attribute_field=attribute_field
+        )
         if not vectors:
             self.show_info(tr("No features found in the selected layer."))
             return
 
-        # Single batch transaction
+        # Calculate bounds in Python to allow immediate normalization in WebGL
+        attr_min = 0.0
+        attr_max = 1.0
+        if color_styling == "attribute":
+            valid_vals = [v.attribute_values[0] for v in vectors if v.attribute_values]
+            if valid_vals:
+                attr_min = min(valid_vals)
+                attr_max = max(valid_vals)
+                if attr_max <= attr_min:
+                    attr_max = attr_min + 1.0
+
+        # 3. Serialize and package dynamic parameters for WebGL
+        serialized_vectors = []
+        for v in vectors:
+            v_dict = v.to_dict()
+            
+            # Inject dynamic styling overrides
+            v_dict["geom_type"] = selected_drape_mode
+            v_dict["polygon_opacity"] = polygon_opacity
+            v_dict["point_marker_size"] = point_marker_size
+            v_dict["color_styling"] = color_styling
+            v_dict["vector_colormap"] = vector_colormap
+            v_dict["attribute_bounds"] = {"min": attr_min, "max": attr_max}
+            
+            if color_styling == "fixed":
+                v_dict["color"] = fixed_color_hex
+                
+            serialized_vectors.append(v_dict)
+
+        # 4. Single batch transaction
         self._js({
             "action": "add_vector_batch",
-            "payload": [v.to_dict() for v in vectors]
+            "payload": serialized_vectors
         })
 
         # Register in scene list
@@ -1092,6 +1150,8 @@ class Explorer3DPanel(BasePanel):
             label=f"💧  {vec_layer.name()}",
             element_id=f"vector_{vec_layer.id()}"
         )
+
+        
     
     def _slot_selected_vector_changed(self) -> None:
         """Triggered when the selected vector layer changes. Populates field columns."""
