@@ -341,9 +341,24 @@ function initScene() {
     container.appendChild(renderer.domElement);
 
     // Orbit controls
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls = new THREE.TrackballControls(camera, renderer.domElement);
+
+    controls.rotateSpeed = 2.1;
+    controls.zoomSpeed = 0.5;
+    controls.panSpeed = 0.15;
+
+    controls.staticMoving = false;
     controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
+    controls.dynamicDampingFactor = 0.15;
+
+    controls.minDistance = 50;
+    controls.maxDistance = 10000000;
+
+    controls.mouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,    // Left-click drag to rotate (orbit)
+        MIDDLE: THREE.MOUSE.PAN,     // Middle-click drag to pan (move flat)
+        RIGHT: THREE.MOUSE.DOLLY     // Right-click drag to zoom (dolly)
+    };
 
     // Apply the sky gradient now that both 'scene' and 'renderer' are fully initialized
     _applySkyGradient();
