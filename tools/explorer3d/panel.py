@@ -984,18 +984,25 @@ class Explorer3DPanel(BasePanel):
     # Symbology slots
 
     def _slot_render_mode_changed(self, index: int) -> None:
-        """Swap active configuration page and trigger 3D viewport update."""
+        """Swap active configuration page and guarantee that scale bounds are fully synchronized with WebGL."""
         self.stacked_symbology.setCurrentIndex(index)
         if not self.is_3d_active:
             return
-        if index == 0:
+            
+        if index == 0:  # Continuous Colormap
+            # First, force synchronize the Z-bounds state (Auto vs Custom) to JS to resolve state conflicts
+            self._slot_color_scale_mode_changed()
+            # Then, apply the colormap with updated bounds
             self._slot_update_colormap()
-        elif index == 1:
+            
+        elif index == 1:  # Classified
             self._rebuild_classified_ui()
-        elif index == 2:
+            
+        elif index == 2:  # Solid Color
             hex_color = self.btn_solid_color.property("color_hex") or "#4a90d9"
             self._js({"action": "set_solid_color", "payload": {"color": hex_color}})
 
+            
     def _rebuild_classified_ui(self) -> None:
         """Regenerate dynamic rows in the scroll panel, dividing the Z span into equal intervals while preserving custom colors."""
         min_z = self.active_dem_min_z if self.rad_scale_auto.isChecked() else self.spin_min_z.value()
