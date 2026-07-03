@@ -988,6 +988,64 @@ class Explorer3DPanel(BasePanel):
             self._slot_update_color_bounds()
     
     # Symbology slots
+    def _sample_active_colormap(self, position: float) -> str:
+        """
+        Sample a hex color from the active colormap loaded from colormaps.json.
+        Position is a float between 0.0 and 1.0.
+        """
+        position = max(0.0, min(1.0, position))
+        if self.chk_reverse_cmap.isChecked():
+            position = 1.0 - position
+
+        colormap_name = self.combo_colormap.currentText() or "terrain"
+
+        try:
+            # 1. Lazy load the colormaps file once to optimize performance
+            if not hasattr(self, "_colormaps_cache"):
+                if json_file.exists():
+                    with open(json_file, "r", encoding="utf-8") as f:
+                        self._colormaps_cache = json.load(f)
+                else:
+                    self._colormaps_cache = {}
+
+            # 2. Extract stops (Fallback directly to 'terrain' from the JSON)
+            stops = self._colormaps_cache.get(colormap_name) or self._colormaps_cache.get("terrain")
+            if not stops:
+                return "#27ae60"  # Clean fallback terrain green
+
+            # 3. Parse stops into standard (pos, (r, g, b)) tuples
+            parsed_stops = []
+            for pos, rgb in stops:
+                r = int(rgb[0] * 255) if isinstance(rgb[0], float) and rgb[0] <= 1.0 else int(rgb[0])
+                g = int(rgb[1] * 255) if isinstance(rgb[1], float) and rgb[1] <= 1.0 else int(rgb[1])
+                b = int(rgb[2] * 255) if isinstance(rgb[2], float) and rgb[2] <= 1.0 else int(rgb[2])
+                parsed_stops.append((float(pos), (r, g, b)))
+
+            parsed_stops.sort(key=lambda x: x[0])
+
+            # 4. Handle boundary endpoints
+            if position <= parsed_stops[0][0]:
+                c = parsed_stops[0][1]
+                return f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+            if position >= parsed_stops[-1][0]:
+                c = parsed_stops[-1][1]
+                return f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+
+            # 5. Simple linear interpolation
+            for i in range(len(parsed_stops) - 1):
+                p0, c0 = parsed_stops[i]
+                p1, c1 = parsed_stops[i + 1]
+                if p0 <= position <= p1:
+                    t = (position - p0) / (p1 - p0) if (p1 - p0) > 0 else 0.0
+                    r = int(c0[0] + (c1[0] - c0[0]) * t)
+                    g = int(c0[1] + (c1[1] - c0[1]) * t)
+                    b = int(c0[2] + (c1[2] - c0[2]) * t)
+                    return f"#{r:02x}{g:02x}{b:02x}"
+
+        except Exception as e:
+            print(f"[RockMorph] Error sampling colormap: {e}")
+
+        return "#27ae60"  # Safe default terrain green
 
     def _slot_render_mode_changed(self, index: int) -> None:
         """Swap active configuration page and show/hide bounds settings dynamically."""
@@ -1127,7 +1185,7 @@ class Explorer3DPanel(BasePanel):
         })
 
 
-        
+
     def _slot_pick_class_color(self) -> None:
         """Open native picker to customize a specific class's color."""
         button = self.sender()
