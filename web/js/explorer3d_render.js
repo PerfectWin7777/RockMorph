@@ -692,6 +692,11 @@ function processPythonCommand(command) {
             case "set_shading_mode":
                 _updateShadingMode(command.payload.mode);
                 break;
+
+            case "export_viewport":
+                _exportViewport(command.payload.format, command.payload.dpi);
+                break;
+            
            case "add_vector_batch":
                 if (Array.isArray(command.payload)) {
                     command.payload.forEach(featureDescriptor => {
@@ -1842,6 +1847,61 @@ function _updateCameraOverlayText(message) {
     const el = document.getElementById("camera-overlay");
     if (el) el.innerText = message;
 }
+
+
+
+// [Add at the bottom of explorer3d_render.js]
+function _exportViewport(format, dpi) {
+    const container = document.getElementById("viewport-container");
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    // 1. Force a clean, synchronous render pass of the primary 3D terrain
+    renderer.setViewport(0, 0, width, height);
+    renderer.setScissor(0, 0, width, height);
+    renderer.setScissorTest(false);
+    renderer.clear();
+    renderer.render(scene, camera);
+
+    // 2. Render the Orientation Marker triad over the captured buffer
+    if (axesSceneVisible && axesScene && axesCamera) {
+        const axesSize = 110;
+        const padding = 10;
+        const left = width - axesSize - padding;
+        const bottom = padding;
+
+        renderer.setViewport(left, bottom, axesSize, axesSize);
+        renderer.setScissor(left, bottom, axesSize, axesSize);
+        renderer.setScissorTest(true);
+
+        axesCamera.position.copy(camera.position).sub(controls.target).setLength(25);
+        axesCamera.up.copy(camera.up);
+        axesCamera.lookAt(0, 0, 0);
+
+        renderer.clearDepth();
+        renderer.render(axesScene, axesCamera);
+
+        renderer.setScissorTest(false);
+        renderer.setViewport(0, 0, width, height);
+    }
+
+    // 3. Extract the image buffer natively from GPU memory
+    let mimeType = "image/png";
+    if (format === "jpg" || format === "jpeg") {
+        mimeType = "image/jpeg";
+    }
+    
+    // Convert WebGL drawing buffer to Base64
+    const dataURL = renderer.domElement.toDataURL(mimeType, 0.95);
+
+    // 4. Return payload directly to the QWebChannel bridge
+    if (typeof bridge !== "undefined") {
+        bridge.receive_export(dataURL);
+    } else {
+        console.warn("[RockMorph] QWebChannel bridge offline. Export aborted.");
+    }
+}
+
 
 // ---------------------------------------------------------------------------
 // Boot
