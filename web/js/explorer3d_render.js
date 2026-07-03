@@ -557,9 +557,13 @@ function processPythonCommand(command) {
             case "set_shading_mode":
                 _updateShadingMode(command.payload.mode);
                 break;
-            // case "add_vector_batch":
-            //     _buildVectorFeature(command.payload.mode);
-
+           case "add_vector_batch":
+                if (Array.isArray(command.payload)) {
+                    command.payload.forEach(featureDescriptor => {
+                        _buildVectorFeature(featureDescriptor);
+                    });
+                }
+                break;
 
             default:
                 console.warn("[RockMorph 3D] Unknown action:", command.action);
@@ -910,7 +914,60 @@ function _updateZScale(scale) {
             wallGeo.attributes.normal.needsUpdate = true;
         }
     }
+
+
+    // --- Dynamic Vector Scale Updates ---
+    for (const id in sceneObjects) {
+        const obj = sceneObjects[id];
+        if (!obj || !obj.mesh) continue;
+
+        if (obj.type === "vector" && obj.descriptor) {
+            _updateVectorGeometryZ(obj.mesh, obj.descriptor);
+        } else if (obj.type === "curtain" && obj.descriptor) {
+            _updateCurtainGeometryZ(obj.mesh, obj.descriptor);
+        } else if (obj.type === "point_marker" && obj.descriptor) {
+            _updatePointMarkerZ(obj.mesh, obj.descriptor);
+        }
+    }
 }
+
+function _updateVectorGeometryZ(mesh, descriptor) {
+    const posAttr = mesh.geometry.attributes.position;
+    const positions = posAttr.array;
+    
+    let idx = 0;
+    descriptor.vertices.forEach(([x, y, z]) => {
+        positions[idx + 2] = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
+        idx += 3;
+    });
+    posAttr.needsUpdate = true;
+    mesh.geometry.computeBoundingSphere();
+}
+
+function _updateCurtainGeometryZ(mesh, descriptor) {
+    const posAttr = mesh.geometry.attributes.position;
+    const positions = posAttr.array;
+    
+    let idx = 0;
+    descriptor.vertices.forEach(([x, y, z]) => {
+        const zTop = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
+        const zBottom = zTop - (descriptor.extrude_depth || 0.0) * scaleFactor;
+        positions[idx + 2] = zTop;
+        positions[idx + 5] = zBottom;
+        idx += 6;
+    });
+    posAttr.needsUpdate = true;
+    mesh.geometry.computeVertexNormals();
+    mesh.geometry.computeBoundingSphere();
+}
+
+function _updatePointMarkerZ(mesh, descriptor) {
+    const [x, y, z] = descriptor.vertices[0];
+    const zDraped = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
+    const floatOffset = modelMaxDim * 0.005; 
+    mesh.position.z = zDraped + floatOffset;
+}
+
 
 // ---------------------------------------------------------------------------
 // COLORMAP SYSTEM
@@ -1155,23 +1212,44 @@ function _showLightGizmo(lightId, light) {
 // ---------------------------------------------------------------------------
 
 function _buildVectorFeature(descriptor) {
-    if (!descriptor.vertices || descriptor.vertices.length < 2) return;
+    if (!descriptor.vertices || descriptor.vertices.length < 1) return;
+
+    // Handle point geometry (e.g. knickpoints, sample markers)
+    if (descriptor.geom_type === "point") {
+        _buildPointMarker(descriptor);
+        return;
+    }
+
+    if (descriptor.vertices.length < 2) return;
 
     const positions = [];
     descriptor.vertices.forEach(([x, y, z]) => {
-        // Re-center to match terrain coordinate system and normalize
-        positions.push((x - spatialOffsets.x) * scaleFactor, (y - spatialOffsets.y) * scaleFactor, z * scaleFactor);
+        positions.push(
+            (x - spatialOffsets.x) * scaleFactor,
+            (y - spatialOffsets.y) * scaleFactor,
+            (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor
+        );
     });
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
 
-    const mat = new THREE.LineBasicMaterial({ color: descriptor.color || "#3498db", linewidth: 2 });
+    const mat = new THREE.LineBasicMaterial({
+        color: descriptor.color || "#3498db",
+        linewidth: 2
+    });
     const line = new THREE.Line(geo, mat);
     scene.add(line);
-    registerObject(descriptor.element_id, line, "vector");
 
-    // Extrude depth: build a vertical curtain below the line
+    // Register the vector object with its unscaled raw data for scale synchronization
+    sceneObjects[descriptor.element_id] = {
+        mesh: line,
+        type: "vector",
+        visible: true,
+        descriptor: descriptor
+    };
+
+    // If an extrusion depth is present, construct a structural geological plane
     if (descriptor.extrude_depth && descriptor.extrude_depth > 0) {
         _buildExtrudedCurtain(descriptor, positions);
     }
@@ -1182,9 +1260,9 @@ function _buildExtrudedCurtain(descriptor, topPositions) {
     for (let i = 0; i < topPositions.length; i += 3) {
         const x = topPositions[i];
         const y = topPositions[i + 1];
-        const z = topPositions[i + 2];
-        curtainPositions.push(x, y, z);
-        curtainPositions.push(x, y, (z - descriptor.extrude_depth) * scaleFactor);
+        const zTop = topPositions[i + 2];
+        curtainPositions.push(x, y, zTop);
+        curtainPositions.push(x, y, zTop - (descriptor.extrude_depth || 0.0) * scaleFactor);
     }
 
     const indices = [];
@@ -1200,11 +1278,41 @@ function _buildExtrudedCurtain(descriptor, topPositions) {
     geo.setIndex(indices);
     geo.computeVertexNormals();
 
-    // Use structural material for robust flat-shaded vertical curtains
     const mat = createStructuralMaterial(new THREE.Color(descriptor.color || "#e74c3c"));
     const mesh = new THREE.Mesh(geo, mat);
     scene.add(mesh);
-    registerObject(descriptor.element_id + "_curtain", mesh, "curtain");
+
+    // Register structural curtain with its descriptor for dynamic Z-scaling
+    sceneObjects[descriptor.element_id + "_curtain"] = {
+        mesh: mesh,
+        type: "curtain",
+        visible: true,
+        descriptor: descriptor
+    };
+}
+
+function _buildPointMarker(descriptor) {
+    const [x, y, z] = descriptor.vertices[0];
+    const zDraped = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
+    const floatOffset = modelMaxDim * 0.005; // Offset to prevent clipping
+
+    const geo = new THREE.SphereGeometry(modelMaxDim * 0.015, 12, 12);
+    const mat = createStructuralMaterial(new THREE.Color(descriptor.color || "#f1c40f"));
+    const mesh = new THREE.Mesh(geo, mat);
+
+    mesh.position.set(
+        (x - spatialOffsets.x) * scaleFactor,
+        (y - spatialOffsets.y) * scaleFactor,
+        zDraped + floatOffset
+    );
+
+    scene.add(mesh);
+    sceneObjects[descriptor.element_id] = {
+        mesh: mesh,
+        type: "point_marker",
+        visible: true,
+        descriptor: descriptor
+    };
 }
 
 // ---------------------------------------------------------------------------

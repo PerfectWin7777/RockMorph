@@ -111,10 +111,32 @@ class Explorer3DEngine(BaseEngine):
         extrude_depth: float = 0.0
     ) -> List[ThreeDVector]:
         """
-        Processes vector features (e.g., rivers, faults), reprojects them to the DEM CRS,
-        and samples the DEM to interpolate vertical Z coordinates for every vertex.
+        Processes vector features (rivers, faults, boundaries), reprojects them,
+        and projects them to the local coordinate system of the 3D terrain.
         """
         reader = RasterReader(dem_layer)
+        gt = reader.geo_transform
+        x_min = gt[0]
+        y_max = gt[3]
+        rows, cols = reader.shape
+        pixel_size_x = reader.pixel_size_x
+        pixel_size_y = reader.pixel_size_y
+        
+        x_max = x_min + cols * pixel_size_x
+        y_min = y_max - rows * pixel_size_y
+        
+        is_geographic = reader.is_geographic
+        
+        if is_geographic:
+            # Match the exact latitude-dependent metric calculation from prepare_dem
+            raw_y_coords = [y_max - j * pixel_size_y for j in range(rows)]
+            center_lat = (raw_y_coords[0] + raw_y_coords[-1]) / 2.0 if len(raw_y_coords) > 1 else raw_y_coords[0]
+            meters_per_degree_lat = 111320.0
+            meters_per_degree_lon = 111320.0 * math.cos(math.radians(center_lat))
+        else:
+            x_center = (x_min + x_max) / 2.0
+            y_center = (y_min + y_max) / 2.0
+
         features = []
 
         # Coordinate transformation setup
@@ -131,7 +153,10 @@ class Explorer3DEngine(BaseEngine):
             if geom is None or geom.isEmpty():
                 continue
 
-            # Handle each part of the geometry
+            # Identify structural features: Point (0), Line (1), Polygon (2)
+            geom_type_id = geom.type() 
+            
+            # Extract boundaries from geometries
             for part in geom.constParts():
                 vertices_3d = []
                 for vertex in part.vertices():
@@ -139,21 +164,38 @@ class Explorer3DEngine(BaseEngine):
                     if transform:
                         pt = transform.transform(pt)
 
-                    # Sample DEM elevation at current (X, Y) point
+                    # Sample DEM elevation
                     z_val = reader.sample_at(pt.x(), pt.y())
                     if np.isnan(z_val):
-                        z_val = 0.0  # Default fallback for out-of-bounds nodes
+                        z_val = 0.0
 
-                    vertices_3d.append([pt.x(), pt.y(), float(z_val)])
+                    # Convert coordinates to the identical metric/offset space of the DEM
+                    if is_geographic:
+                        x_local = (pt.x() - x_min) * meters_per_degree_lon
+                        y_local = (pt.y() - y_min) * meters_per_degree_lat
+                    else:
+                        x_local = pt.x() - x_center
+                        y_local = pt.y() - y_center
 
-                if len(vertices_3d) < 2:
+                    vertices_3d.append([x_local, y_local, float(z_val)])
+
+                if not vertices_3d:
+                    continue
+
+                # Deduplicate identical adjacent vertices
+                cleaned_vertices = []
+                for v in vertices_3d:
+                    if not cleaned_vertices or v != cleaned_vertices[-1]:
+                        cleaned_vertices.append(v)
+
+                if len(cleaned_vertices) < 1:
                     continue
 
                 features.append(ThreeDVector(
                     element_id=f"vector_{vector_layer.id()}_{feature.id()}",
                     element_type="vector",
-                    geom_type="line",
-                    vertices=vertices_3d,
+                    geom_type="line" if geom_type_id in (1, 2) else "point",
+                    vertices=cleaned_vertices,
                     color="#3498db" if "river" in vector_layer.name().lower() else "#e74c3c",
                     label=str(feature.id()),
                     extrude_depth=extrude_depth

@@ -918,20 +918,25 @@ class Explorer3DPanel(BasePanel):
     def _slot_add_vector_layer(self) -> None:
         """
         Drape a vector layer onto the terrain surface.
-        All features are sent in a single JSON payload to avoid N JS round-trips.
+        All features are sent in a single JSON payload to prevent N JS round-trips.
         """
-        layer = self.combo_raster.currentLayer()
         dem_layer = self.combo_raster.currentLayer()
         vec_layer = self.combo_vector.currentLayer()
         if not vec_layer or not dem_layer or not self.is_3d_active:
             return
 
-        vectors = self.engine.prepare_vector_layer(vec_layer, dem_layer)
+        # Auto-detect structural layers to enable 3D extrusion curtains
+        extrude_depth = 0.0
+        vec_name_lower = vec_layer.name().lower()
+        if "fault" in vec_name_lower or "faille" in vec_name_lower:
+            extrude_depth = 15.0  # Default 15-meter vertical curtain
+
+        vectors = self.engine.prepare_vector_layer(vec_layer, dem_layer, extrude_depth)
         if not vectors:
             self.show_info(tr("No features found in the selected layer."))
             return
 
-        # Single message — one serialized list of all features
+        # Single batch transaction
         self._js({
             "action": "add_vector_batch",
             "payload": [v.to_dict() for v in vectors]
@@ -1091,7 +1096,7 @@ class Explorer3DPanel(BasePanel):
                 return f"#{r:02x}{g:02x}{b:02x}"
         return "#228b22"
 
-        
+
 
     def _slot_render_mode_changed(self, index: int) -> None:
         """Swap active configuration page and show/hide bounds settings dynamically."""
