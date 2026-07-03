@@ -288,8 +288,18 @@ function unregisterObject(elementId) {
     const obj = sceneObjects[elementId];
     if (obj) {
         scene.remove(obj.mesh);
-        if (obj.mesh.geometry) obj.mesh.geometry.dispose();
-        if (obj.mesh.material) obj.mesh.material.dispose();
+
+        // Recursively dispose geometries and materials
+        if (obj.mesh.geometry) {
+            obj.mesh.geometry.dispose();
+        }
+        if (obj.mesh.material) {
+            if (Array.isArray(obj.mesh.material)) {
+                obj.mesh.material.forEach(mat => mat.dispose());
+            } else {
+                obj.mesh.material.dispose();
+            }
+        }
         delete sceneObjects[elementId];
     }
 }
@@ -547,6 +557,9 @@ function processPythonCommand(command) {
             case "set_shading_mode":
                 _updateShadingMode(command.payload.mode);
                 break;
+            // case "add_vector_batch":
+            //     _buildVectorFeature(command.payload.mode);
+
 
             default:
                 console.warn("[RockMorph 3D] Unknown action:", command.action);
@@ -561,14 +574,23 @@ function processPythonCommand(command) {
 // ---------------------------------------------------------------------------
 
 function _buildTerrain(data) {
-    console.log("[RockMorph 3D] Building terrain:", data.element_id,
-        "— size:", data.width, "×", data.height,
-        "— Z:", data.z_min, "→", data.z_max);
+    // console.log("[RockMorph 3D] Building terrain:", data.element_id,
+    //     "— size:", data.width, "×", data.height,
+    //     "— Z:", data.z_min, "→", data.z_max);
 
-    // Remove any existing terrain
-    unregisterObject(data.element_id);
+
+    // 1. Identify and cleanly unregister any pre-existing raster in the scene
+    for (const id in sceneObjects) {
+        if (sceneObjects[id].type === "raster") {
+            unregisterObject(id);
+        }
+    }
+
+    // 2. Clear block elements and reset reference variables
     unregisterObject("block_base_walls");
     unregisterObject("block_base_sole");
+    wallMesh = null;
+    wallVertexMappings = [];
 
     // Cache for Z-scale and colormap updates
     originalDEMValues = data.z_values;
