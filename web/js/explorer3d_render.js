@@ -132,13 +132,13 @@ const terrainFragmentShader = `
     void main() {
         vec3 normal = normalize(vNormal);
         vec3 worldNormal = normalize(vWorldNormal);
-        
+
         // Hemisphere Ambient Light (Cool sky / Warm ground reflection)
         vec3 skyColor = vec3(0.55, 0.68, 0.85);
         vec3 groundColor = vec3(0.20, 0.17, 0.13);
         float hemiMix = worldNormal.z * 0.5 + 0.5;
         vec3 ambient = mix(groundColor, skyColor, hemiMix) * uAmbientIntensity;
-        
+
         // Multidirectional Shading (GIS 4-Axis Mode) vs Single-Directional Shading
         vec3 L0 = normalize(uSunDirection);
         float diffuseTerm = 0.0;
@@ -158,20 +158,25 @@ const terrainFragmentShader = `
             diffuseTerm = max(dot(normal, L0), 0.0);
         }
 
-        // Apply Oren-Nayar retro-reflection factor
-        float roughness2 = uRoughness * uRoughness;
-        float orenNayarFactor = 1.0 - 0.5 * (roughness2 / (roughness2 + 0.33));
+        // Apply amplified Oren-Nayar retro-reflection factor for ultra-matte rock textures
+        float roughness2 = uRoughness * uRoughness * 1.8;
+        float orenNayarFactor = 1.0 - 0.75 * (roughness2 / (roughness2 + 0.25));
         float directDiffuse = diffuseTerm * orenNayarFactor;
-        
-        // 4. Slope shading accentuation (darken steep incisions based on normal Z tilt)
-        // High exponent scale (15.0) ensures high reactivity on moderate topography
-        float slopeFactor = pow(clamp(worldNormal.z, 0.0, 1.0), 1.0 + uSlopeContrast * 15.0);
-        
-        vec3 finalLighting = (ambient * slopeFactor) + (uSunColor * directDiffuse * uSunIntensity);
+
+        // Slope shading accentuation (darken steep incisions based on normal Z tilt)
+        // Elevated scale multiplier (25.0) ensures dramatic contrast on structural scarps
+        float slopeFactor = pow(clamp(worldNormal.z, 0.0, 1.0), 1.0 + uSlopeContrast * 25.0);
+
         vec3 baseTerrainColor = uUseVertexColors ? vColor : uSolidColor;
+        vec3 baseLighting = (ambient * slopeFactor) + (uSunColor * directDiffuse * uSunIntensity);
+
+        // Apply slope shadow globally to both ambient and diffuse components for maximum tectonic pop
+        vec3 finalLighting = baseLighting * mix(1.0, slopeFactor, uSlopeContrast * 0.75);
+
         gl_FragColor = vec4(baseTerrainColor * finalLighting, 1.0);
     }
 `;
+
 
 function createCustomMaterial(useVertexColors, solidColorObj) {
     return new THREE.ShaderMaterial({
@@ -221,16 +226,18 @@ const structuralFragmentShader = `
     void main() {
         vec3 normal = normalize(vNormal);
         vec3 worldNormal = normalize(vWorldNormal);
-        
+
         vec3 L = normalize(uSunDirection);
         float NdotL = max(dot(normal, L), 0.0);
-        
+
         // Pure hemispherical ambient fill using static world coordinates (Up is Z)
-        vec3 skyColor = vec3(0.55, 0.68, 0.85);
-        vec3 groundColor = vec3(0.20, 0.17, 0.13);
+        vec3 skyColor = vec3(0.65, 0.75, 0.90); // Brightened sky reflection
+        vec3 groundColor = vec3(0.35, 0.30, 0.25); // Warm ground bounce
         float hemiMix = worldNormal.z * 0.5 + 0.5;
-        vec3 ambient = mix(groundColor, skyColor, hemiMix) * uAmbientIntensity;
-        
+
+        // Boost ambient intensity specifically for vertical walls (+0.25 flat offset)
+        vec3 ambient = mix(groundColor, skyColor, hemiMix) * (uAmbientIntensity + 0.25);
+
         vec3 finalLighting = ambient + (uSunColor * NdotL * uSunIntensity);
         gl_FragColor = vec4(uSolidColor * finalLighting, 1.0);
     }
