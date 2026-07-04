@@ -1979,9 +1979,17 @@ function _createLegendTickLabel(parent, text, topPercent) {
 
 
 /**
- * Capture the WebGL viewport and compile a hybrid vector-raster SVG document
- * containing the 3D relief as background and the colorbar legend as editable vector paths.
+ * Convert float RGB values [0..1] to a standard hex color string (#RRGGBB)
+ * to ensure 100% compatibility with legacy vector parsers like Adobe Illustrator.
  */
+function _rgbToHex(r, g, b) {
+    const toHex = c => {
+        const hex = Math.round(c * 255).toString(16);
+        return hex.length === 1 ? "0" + hex : hex;
+    };
+    return "#" + toHex(r) + toHex(g) + toHex(b);
+}
+
 /**
  * Render and capture the 3D viewport.
  * Uses HTML5 2D canvas drawing to bake the legend directly into screenshot figures.
@@ -2034,45 +2042,84 @@ function _exportViewport(format, dpi) {
             const legendX = 25;
             const legendY = 25;
             const legendW = 120;
-            const legendH = 220;
+            const legendH = 240;
 
+            let colorBarElement = "";
+            let labelsElement = "";
+
+            // ── CASE 1: CONTINUOUS GRADIENT BAR ───────────────────────────
             if (colorMode === "colormap") {
                 const ramp = (typeof ACTIVE_SCENE_DATA !== "undefined" && ACTIVE_SCENE_DATA.style && ACTIVE_SCENE_DATA.style.active_ramp)
                     ? ACTIVE_SCENE_DATA.style.active_ramp
                     : (COLORMAPS[currentColormapName] || COLORMAPS.viridis);
 
+                const sortedStops = [];
                 ramp.forEach(stop => {
                     const pos = currentColormapReverse ? stop.pos : (1.0 - stop.pos);
-                    gradientStops += `        <stop offset="${Math.round(pos * 100)}%" stop-color="rgb(${Math.round(stop.r * 255)}, ${Math.round(stop.g * 255)}, ${Math.round(stop.b * 255)})" />\n`;
+                    const hexColor = _rgbToHex(stop.r, stop.g, stop.b);
+                    sortedStops.push({ offset: pos, color: hexColor });
                 });
+
+                // Sort stops strictly in ascending order (0.0 to 1.0) for Adobe Illustrator compliance
+                sortedStops.sort((a, b) => a.offset - b.offset);
+
+                // Compile XML stops using clean decimal offsets
+                sortedStops.forEach(stop => {
+                    gradientStops += `        <stop offset="${stop.offset.toFixed(3)}" stop-color="${stop.color}" />\n`;
+                });
+
+                colorBarElement = `<rect x="12" y="30" width="22" height="180" fill="url(#legend-grad)" stroke="#555" stroke-width="1" />`;
+                labelsElement += `            <text x="0" y="0" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${maxZ.toFixed(1)}m</text>\n`;
+                labelsElement += `            <text x="0" y="90" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${((minZ + maxZ) / 2).toFixed(1)}m</text>\n`;
+                labelsElement += `            <text x="0" y="180" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${minZ.toFixed(1)}m</text>\n`;
+            }
+            // ── CASE 2: CLASSIFIED BRACKETS BLOCKS ────────────────────────
+            else if (colorMode === "classified" && currentClassColors.length > 0) {
+                const numClasses = currentClassColors.length;
+                const blockHeight = 180 / numClasses;
+                let blocks = "";
+
+                for (let i = 0; i < numClasses; i++) {
+                    const idx = numClasses - 1 - i;
+                    blocks += `        <rect x="12" y="${30 + i * blockHeight}" width="22" height="${blockHeight}" fill="${currentClassColors[idx]}" stroke="none" />\n`;
+                }
+                // Outer boundary stroke around the blocks
+                blocks += `        <rect x="12" y="30" width="22" height="180" fill="none" stroke="#555" stroke-width="1" />`;
+                colorBarElement = blocks;
+
+                // Ticks for classified bounds
+                labelsElement += `            <text x="0" y="0" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${maxZ.toFixed(1)}m</text>\n`;
+                for (let i = 0; i < currentClassBounds.length; i++) {
+                    const boundVal = currentClassBounds[currentClassBounds.length - 1 - i];
+                    const yPos = ((i + 1) / numClasses) * 180;
+                    labelsElement += `            <text x="0" y="${yPos}" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${boundVal.toFixed(1)}m</text>\n`;
+                }
+                labelsElement += `            <text x="0" y="180" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${minZ.toFixed(1)}m</text>\n`;
             }
 
-            // Generate clean vector tags for Adobe Illustrator
+            // Generate clean, structured vector tags for Adobe Illustrator
             legendSVGGroup = `
     <g id="vector-colorbar" transform="translate(${legendX}, ${legendY})">
-        <rect width="${legendW}" height="${legendH}" rx="6" fill="#141414" fill-opacity="0.45" stroke="#444" stroke-width="1" />
+        <rect width="${legendW}" height="${legendH}" rx="6" fill="#141414" fill-opacity="0.45" stroke="rgba(255,255,255,0.1)" stroke-width="1" />
         <text x="${legendW / 2}" y="20" fill="#f0f0f0" font-family="monospace" font-size="11" font-weight="bold" text-anchor="middle">Elevation (m)</text>
-        <rect x="12" y="30" width="22" height="180" fill="url(#legend-grad)" stroke="#555" stroke-width="1" />
+        ${colorBarElement}
         <g id="legend-ticks" transform="translate(42, 35)">
-            <text x="0" y="0" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${maxZ.toFixed(1)}m</text>
-            <text x="0" y="90" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${((minZ + maxZ) / 2).toFixed(1)}m</text>
-            <text x="0" y="180" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${minZ.toFixed(1)}m</text>
-        </g>
+${labelsElement}        </g>
     </g>`;
         }
 
+        // Compile the SVG using decimal coordinates (x1=0 y1=0 x2=0 y2=1) for standard gradient units
         const svgContent = `<?xml version="1.0" encoding="utf-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}">
     <defs>
-        <linearGradient id="legend-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+        <linearGradient id="legend-grad" x1="0" y1="0" x2="0" y2="1">
 ${gradientStops}        </linearGradient>
     </defs>
-    <image href="${terrainDataURL}" width="${width}" height="${height}" x="0" y="0" />
+    <image xlink:href="${terrainDataURL}" width="${width}" height="${height}" x="0" y="0" />
     ${legendSVGGroup}
 </svg>`;
 
         if (typeof bridge !== "undefined") {
-            // Encode XML content for UTF-8 safety
             const svgEncoded = encodeURIComponent(svgContent);
 
             // Chunk the SVG payload to bypass QWebChannel transport limits (1MB chunks)
