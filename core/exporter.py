@@ -261,7 +261,7 @@ class RockMorphExporter:
             fmt = os.path.splitext(path)[1].lower().lstrip('.')
             
             # ── Direct Binary Image writing (Pre-rasterized WebGL streams) ──
-            if "data:image/" in svg_data_url:
+            if "data:image/png" in svg_data_url or "data:image/jpeg" in svg_data_url:
                 header, payload = svg_data_url.split(',', 1)
                 if 'base64' in header:
                     img_bytes = base64.b64decode(payload)
@@ -274,7 +274,7 @@ class RockMorphExporter:
                     elif fmt == 'pdf':
                         self._write_pdf_from_png_bytes(img_bytes, path)
                         return
-
+                    
             # ── Standard SVG Vector processing (Plotly) ────────────
             svg_bytes = self._extract_svg_bytes(svg_data_url)
 

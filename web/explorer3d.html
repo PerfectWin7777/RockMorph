@@ -36,6 +36,60 @@
             padding: 5px 8px;
             border-radius: 4px;
         }
+
+
+        /* Dynamic Elevation Legend Widget (Top-Left and Semi-transparent) */
+        #legend-overlay {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            background: rgba(20, 20, 20, 0.25); /* Soft translucent background */
+            backdrop-filter: blur(4px); /* Elegant modern glass effect */
+            color: #f0f0f0;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 11px;
+            pointer-events: none;
+            display: none; /* Hidden until DEM is loaded */
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+            border: 1px solid rgba(255, 255, 255, 0.1); /* Subtle boundary line */
+            z-index: 100;
+        }
+
+        #legend-title {
+            font-weight: bold;
+            margin-bottom: 8px;
+            text-align: center;
+            border-bottom: 1px solid #555;
+            padding-bottom: 5px;
+            font-size: 12px;
+        }
+
+        #legend-gradient-wrapper {
+            display: flex;
+            flex-direction: row;
+            align-items: stretch;
+        }
+
+        #legend-canvas {
+            border-radius: 2px;
+            border: 1px solid #555;
+        }
+
+        #legend-labels {
+            position: relative;
+            margin-left: 12px;
+            min-width: 65px;
+        }
+
+        .legend-tick {
+            position: absolute;
+            transform: translateY(-50%);
+            left: 0;
+            white-space: nowrap;
+        }
+
     </style>
 </head>
 
@@ -43,6 +97,18 @@
 
     <div id="viewport-container"></div>
     <div id="status-overlay">Scene Status: Empty (Awaiting DEM Layer)</div>
+
+    <div id="viewport-container"></div>
+    <div id="status-overlay">Scene Status: Empty (Awaiting DEM Layer)</div>
+    
+    <!-- Floating Dynamic Elevation Legend Widget [New] -->
+    <div id="legend-overlay">
+        <div id="legend-title">Elevation (m)</div>
+        <div id="legend-gradient-wrapper">
+            <canvas id="legend-canvas" width="22" height="180"></canvas>
+            <div id="legend-labels"></div>
+        </div>
+    </div>
 
     <!-- Load Local JS Dependencies (reused with file:/// paths injected by Python) [1.1.3] -->
     <script src="js/three.min.js"></script>

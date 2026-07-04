@@ -47,7 +47,7 @@ let spatialOffsets = { x: 0, y: 0, z: 0 };
 let baseExaggeration = 1.0;    // auto-computed once per DEM load
 let currentZScale = 1.5;
 let blockBaseVisible = true; // Authoritative visibility state for walls and sole
-
+let legendVisibleUserPref = true; // Authoritative user visibility preference for colorbar
 // Wall vertex index mappings for synchronized Z-scale updates.
 let wallVertexMappings = [];
 
@@ -566,6 +566,18 @@ function processPythonCommand(command) {
                     axesSceneVisible = isVisible;
                     break;
                 }
+                // Handle the dynamic Legend overlay visibility toggle [New]
+                if (elementId === "scene_legend") {
+                    legendVisibleUserPref = isVisible;
+                    const legend = document.getElementById("legend-overlay");
+                    if (legend) {
+                        legend.style.display = isVisible ? "block" : "none";
+                        // Force a redraw to synchronize state
+                        _updateLegendWidget();
+                    }
+                    break;
+                }
+
                 if (elementId === "block_base") {
                     blockBaseVisible = isVisible; // Cache user preference globally
                     ["block_base_walls", "block_base_sole"].forEach(subId => {
@@ -876,6 +888,8 @@ function _buildTerrain(data) {
     } else {
         _applyColormap();
     }
+
+    _updateLegendWidget();
 
     _updateStatus(`Scene: ${data.label || data.element_id} loaded (${width}×${height} vertices).`);
 }
@@ -1246,6 +1260,8 @@ function _applyColormap() {
     if (uniforms) {
         uniforms.uUseVertexColors.value = true;
     }
+
+    _updateLegendWidget();
 }
 
 /** Apply a flat solid color to the terrain (disables vertex colors). */
@@ -1257,6 +1273,7 @@ function _applySolidColor(hexColor) {
         uniforms.uUseVertexColors.value = false;
         uniforms.uSolidColor.value.set(hexColor);
     }
+    _updateLegendWidget();
 }
 
 
@@ -1296,6 +1313,8 @@ function _applyClassifiedColors() {
     if (uniforms) {
         uniforms.uUseVertexColors.value = true;
     }
+
+    _updateLegendWidget();
 }
 
 
@@ -1870,12 +1889,109 @@ function _updateCameraOverlayText(message) {
 }
 
 
+/**
+ * Dynamically redraw the color scale legend widget to match active symbology and bounds.
+ */
+function _updateLegendWidget() {
+    const legend = document.getElementById("legend-overlay");
+    if (!legend || !originalDEMValues) {
+        if (legend) legend.style.display = "none";
+        return;
+    }
+
+    // Hide legend if solid color mode is active OR if the user unchecked it in Python UI
+    if (colorMode === "solid" || !legendVisibleUserPref) {
+        legend.style.display = "none";
+        return;
+    }
+
+    legend.style.display = "block";
+    const canvas = document.getElementById("legend-canvas");
+    const labelsDiv = document.getElementById("legend-labels");
+    labelsDiv.innerHTML = ""; // Clear old ticks
+
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const minZ = colorBoundsAuto ? elevationStats.min : colorBoundsMin;
+    const maxZ = colorBoundsAuto ? elevationStats.max : colorBoundsMax;
+
+    // ── CASE 1: CONTINUOUS COLORMAP MODE ─────────────────────────────────
+    if (colorMode === "colormap") {
+        const ramp = (typeof ACTIVE_SCENE_DATA !== "undefined" && ACTIVE_SCENE_DATA.style && ACTIVE_SCENE_DATA.style.active_ramp)
+            ? ACTIVE_SCENE_DATA.style.active_ramp
+            : (COLORMAPS[currentColormapName] || COLORMAPS.viridis);
+
+        if (!ramp || ramp.length === 0) return;
+
+        // Draw vertical linear gradient (top is maxZ, bottom is minZ)
+        const grad = ctx.createLinearGradient(0, 0, 0, h);
+        ramp.forEach(stop => {
+            const pos = currentColormapReverse ? stop.pos : (1.0 - stop.pos);
+            grad.addColorStop(pos, `rgb(${Math.round(stop.r * 255)}, ${Math.round(stop.g * 255)}, ${Math.round(stop.b * 255)})`);
+        });
+
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+
+        // Generate standard publishing ticks (Max, Mid-point, Min)
+        _createLegendTickLabel(labelsDiv, `${maxZ.toFixed(1)}m`, 0);
+        _createLegendTickLabel(labelsDiv, `${((minZ + maxZ) / 2).toFixed(1)}m`, 50);
+        _createLegendTickLabel(labelsDiv, `${minZ.toFixed(1)}m`, 100);
+    }
+    // ── CASE 2: CLASSIFIED INTERVALS MODE ────────────────────────────────
+    else if (colorMode === "classified" && currentClassColors.length > 0) {
+        const numClasses = currentClassColors.length;
+        const blockHeight = h / numClasses;
+
+        // Draw discrete class color blocks
+        for (let i = 0; i < numClasses; i++) {
+            // Reverse order to draw highest values at the top of the canvas
+            const idx = numClasses - 1 - i;
+            ctx.fillStyle = currentClassColors[idx];
+            ctx.fillRect(0, i * blockHeight, w, blockHeight);
+        }
+
+        // Generate discrete ticks for boundaries
+        _createLegendTickLabel(labelsDiv, `${maxZ.toFixed(1)}m`, 0);
+        for (let i = 0; i < currentClassBounds.length; i++) {
+            const boundVal = currentClassBounds[currentClassBounds.length - 1 - i];
+            const percent = ((i + 1) / numClasses) * 100;
+            _createLegendTickLabel(labelsDiv, `${boundVal.toFixed(1)}m`, percent);
+        }
+        _createLegendTickLabel(labelsDiv, `${minZ.toFixed(1)}m`, 100);
+    }
+}
+
+/**
+ * Generate and position an absolute-positioned tick label alongside the canvas.
+ */
+function _createLegendTickLabel(parent, text, topPercent) {
+    const tick = document.createElement("div");
+    tick.className = "legend-tick";
+    tick.innerText = text;
+    tick.style.top = `${topPercent}%`;
+    parent.appendChild(tick);
+}
+
+
+
+/**
+ * Capture the WebGL viewport and compile a hybrid vector-raster SVG document
+ * containing the 3D relief as background and the colorbar legend as editable vector paths.
+ */
+/**
+ * Render and capture the 3D viewport.
+ * Uses HTML5 2D canvas drawing to bake the legend directly into screenshot figures.
+ */
 function _exportViewport(format, dpi) {
     const container = document.getElementById("viewport-container");
     const width = container.clientWidth;
     const height = container.clientHeight;
 
-    // 1. Temporarily hide spatial helpers during render to ensure a clean model export
+    // 1. Temporarily hide layout helpers during rendering
     const gridObj = sceneObjects["scene_grid"];
     let tempGridVisible = false;
     if (gridObj) {
@@ -1885,39 +2001,202 @@ function _exportViewport(format, dpi) {
     const tempAxesVisible = axesSceneVisible;
     axesSceneVisible = false;
 
-    // 2. Resolve background clear color based on format
-    // WebGL transparency maps to black in JPEG; we force a solid white background instead
+    // 2. Resolve background clearing
     if (format === "jpg" || format === "jpeg") {
         renderer.setClearColor(0xffffff, 1.0);
     }
 
-    // 3. Force clean synchronous render pass of the terrain model
+    // 3. Render the clean WebGL frame
     renderer.setViewport(0, 0, width, height);
     renderer.setScissor(0, 0, width, height);
     renderer.setScissorTest(false);
     renderer.clear();
     renderer.render(scene, camera);
 
-    // 4. Capture the WebGL context as a high-quality data URL
+    // 4. Capture the raw WebGL canvas
+    const webglCanvas = renderer.domElement;
+
+    // 5. Restore screen visibility helpers
+    if (gridObj) gridObj.mesh.visible = tempGridVisible;
+    axesSceneVisible = tempAxesVisible;
+    renderer.setClearColor(0x000000, 0.0);
+    _animate(); // Resume loop
+
+    // ── CASE A: VECTOR SVG EXPORT (For Adobe Illustrator) ────────────────
+    if (format === "svg") {
+        const terrainDataURL = webglCanvas.toDataURL("image/png");
+        let legendSVGGroup = "";
+        let gradientStops = "";
+
+        if (legendVisibleUserPref && colorMode !== "solid" && originalDEMValues) {
+            const minZ = colorBoundsAuto ? elevationStats.min : colorBoundsMin;
+            const maxZ = colorBoundsAuto ? elevationStats.max : colorBoundsMax;
+            const legendX = 25;
+            const legendY = 25;
+            const legendW = 120;
+            const legendH = 220;
+
+            if (colorMode === "colormap") {
+                const ramp = (typeof ACTIVE_SCENE_DATA !== "undefined" && ACTIVE_SCENE_DATA.style && ACTIVE_SCENE_DATA.style.active_ramp)
+                    ? ACTIVE_SCENE_DATA.style.active_ramp
+                    : (COLORMAPS[currentColormapName] || COLORMAPS.viridis);
+
+                ramp.forEach(stop => {
+                    const pos = currentColormapReverse ? stop.pos : (1.0 - stop.pos);
+                    gradientStops += `        <stop offset="${Math.round(pos * 100)}%" stop-color="rgb(${Math.round(stop.r * 255)}, ${Math.round(stop.g * 255)}, ${Math.round(stop.b * 255)})" />\n`;
+                });
+            }
+
+            // Generate clean vector tags for Adobe Illustrator
+            legendSVGGroup = `
+    <g id="vector-colorbar" transform="translate(${legendX}, ${legendY})">
+        <rect width="${legendW}" height="${legendH}" rx="6" fill="#141414" fill-opacity="0.45" stroke="#444" stroke-width="1" />
+        <text x="${legendW / 2}" y="20" fill="#f0f0f0" font-family="monospace" font-size="11" font-weight="bold" text-anchor="middle">Elevation (m)</text>
+        <rect x="12" y="30" width="22" height="180" fill="url(#legend-grad)" stroke="#555" stroke-width="1" />
+        <g id="legend-ticks" transform="translate(42, 35)">
+            <text x="0" y="0" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${maxZ.toFixed(1)}m</text>
+            <text x="0" y="90" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${((minZ + maxZ) / 2).toFixed(1)}m</text>
+            <text x="0" y="180" fill="#f0f0f0" font-family="monospace" font-size="10" alignment-baseline="middle">${minZ.toFixed(1)}m</text>
+        </g>
+    </g>`;
+        }
+
+        const svgContent = `<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+    <defs>
+        <linearGradient id="legend-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+${gradientStops}        </linearGradient>
+    </defs>
+    <image href="${terrainDataURL}" width="${width}" height="${height}" x="0" y="0" />
+    ${legendSVGGroup}
+</svg>`;
+
+        if (typeof bridge !== "undefined") {
+            // Encode XML content for UTF-8 safety
+            const svgEncoded = encodeURIComponent(svgContent);
+
+            // Chunk the SVG payload to bypass QWebChannel transport limits (1MB chunks)
+            const chunkSize = 1024 * 1024;
+            const totalChunks = Math.ceil(svgEncoded.length / chunkSize);
+
+            for (let i = 0; i < totalChunks; i++) {
+                const start = i * chunkSize;
+                const end = Math.min(start + chunkSize, svgEncoded.length);
+                const chunk = svgEncoded.substring(start, end);
+
+                const chunkDataURL = "data:image/svg+xml;chunk;index=" + i + ";total=" + totalChunks + "," + chunk;
+                bridge.receive_export(chunkDataURL);
+            }
+        } else {
+            console.warn("[RockMorph] QWebChannel bridge offline. Export aborted.");
+        }
+        return;
+    }
+
+    // ── CASE B: RASTER EXPORTS (PNG / JPG / PDF) ─────────────────────────
+    // We create a temporary 2D canvas to merge WebGL and the Legend perfectly
+    const mergeCanvas = document.createElement("canvas");
+    mergeCanvas.width = width;
+    mergeCanvas.height = height;
+    const mergeCtx = mergeCanvas.getContext("2d");
+
+    // Step 1: Draw the 3D terrain as base layer
+    mergeCtx.drawImage(webglCanvas, 0, 0);
+
+    // Step 2: Overlay the colorbar legend natively on top using Canvas 2D API
+    if (legendVisibleUserPref && colorMode !== "solid" && originalDEMValues) {
+        const minZ = colorBoundsAuto ? elevationStats.min : colorBoundsMin;
+        const maxZ = colorBoundsAuto ? elevationStats.max : colorBoundsMax;
+
+        const legendX = 25;
+        const legendY = 25;
+        const legendW = 110;
+        const legendH = 240;
+
+        // Draw translucent container
+        mergeCtx.fillStyle = "rgba(20, 20, 20, 0.45)";
+        mergeCtx.beginPath();
+        if (mergeCtx.roundRect) {
+            mergeCtx.roundRect(legendX, legendY, legendW, legendH, 6);
+        } else {
+            mergeCtx.rect(legendX, legendY, legendW, legendH);
+        }
+        mergeCtx.fill();
+        mergeCtx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+        mergeCtx.lineWidth = 1;
+        mergeCtx.stroke();
+
+        // Draw Title text
+        mergeCtx.fillStyle = "#f0f0f0";
+        mergeCtx.font = "bold 11px Courier New, Courier, monospace";
+        mergeCtx.textAlign = "center";
+        mergeCtx.textBaseline = "alphabetic";
+        mergeCtx.fillText("Elevation (m)", legendX + legendW / 2, legendY + 20);
+
+        // Draw Colorbar
+        const barX = legendX + 12;
+        const barY = legendY + 30;
+        const barW = 22;
+        const barH = 180;
+
+        if (colorMode === "colormap") {
+            const ramp = (typeof ACTIVE_SCENE_DATA !== "undefined" && ACTIVE_SCENE_DATA.style && ACTIVE_SCENE_DATA.style.active_ramp)
+                ? ACTIVE_SCENE_DATA.style.active_ramp
+                : (COLORMAPS[currentColormapName] || COLORMAPS.viridis);
+
+            const grad = mergeCtx.createLinearGradient(0, barY, 0, barY + barH);
+            ramp.forEach(stop => {
+                const pos = currentColormapReverse ? stop.pos : (1.0 - stop.pos);
+                grad.addColorStop(pos, `rgb(${Math.round(stop.r * 255)}, ${Math.round(stop.g * 255)}, ${Math.round(stop.b * 255)})`);
+            });
+            mergeCtx.fillStyle = grad;
+            mergeCtx.fillRect(barX, barY, barW, barH);
+        } else if (colorMode === "classified" && currentClassColors.length > 0) {
+            const numClasses = currentClassColors.length;
+            const blockHeight = barH / numClasses;
+            for (let i = 0; i < numClasses; i++) {
+                const idx = numClasses - 1 - i;
+                mergeCtx.fillStyle = currentClassColors[idx];
+                mergeCtx.fillRect(barX, barY + i * blockHeight, barW, blockHeight);
+            }
+        }
+
+        // Draw colorbar border
+        mergeCtx.strokeStyle = "#555";
+        mergeCtx.strokeRect(barX, barY, barW, barH);
+
+        // Draw text labels and ticks
+        mergeCtx.fillStyle = "#f0f0f0";
+        mergeCtx.font = "10px Courier New, Courier, monospace";
+        mergeCtx.textAlign = "left";
+        mergeCtx.textBaseline = "middle";
+
+        const labelX = barX + barW + 8;
+        if (colorMode === "colormap") {
+            mergeCtx.fillText(`${maxZ.toFixed(1)}m`, labelX, barY);
+            mergeCtx.fillText(`${((minZ + maxZ) / 2).toFixed(1)}m`, labelX, barY + barH / 2);
+            mergeCtx.fillText(`${minZ.toFixed(1)}m`, labelX, barY + barH);
+        } else if (colorMode === "classified") {
+            const numClasses = currentClassColors.length;
+            mergeCtx.fillText(`${maxZ.toFixed(1)}m`, labelX, barY);
+            for (let i = 0; i < currentClassBounds.length; i++) {
+                const boundVal = currentClassBounds[currentClassBounds.length - 1 - i];
+                const yPos = barY + ((i + 1) / numClasses) * barH;
+                mergeCtx.fillText(`${boundVal.toFixed(1)}m`, labelX, yPos);
+            }
+            mergeCtx.fillText(`${minZ.toFixed(1)}m`, labelX, barY + barH);
+        }
+    }
+
+    // Capture the final merged canvas and return the clean dataURL
     let mimeType = "image/png";
     if (format === "jpg" || format === "jpeg") {
         mimeType = "image/jpeg";
     }
-    const dataURL = renderer.domElement.toDataURL(mimeType, 0.95);
+    const finalDataURL = mergeCanvas.toDataURL(mimeType, 0.95);
 
-    // 5. Restore screen visibility states and reset transparency backdrop
-    if (gridObj) {
-        gridObj.mesh.visible = tempGridVisible;
-    }
-    axesSceneVisible = tempAxesVisible;
-    renderer.setClearColor(0x000000, 0.0); // Restore original transparency
-
-    // Force rendering update to show helpers back on the interactive screen
-    _animate();
-
-    // 6. Return data URL to the inherited python bridge
     if (typeof bridge !== "undefined") {
-        bridge.receive_export(dataURL);
+        bridge.receive_export(finalDataURL);
     } else {
         console.warn("[RockMorph] QWebChannel bridge offline. Export aborted.");
     }

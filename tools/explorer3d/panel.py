@@ -227,6 +227,7 @@ class Explorer3DPanel(BasePanel):
 
         self._add_layer_item(tr("🌐  Reference Grid"), element_id="scene_grid")
         self._add_layer_item(tr("📍  Orientation Axes (X, Y, Z)"), element_id="scene_axes")
+        self._add_layer_item(tr("🎨  Colorbar Legend"), element_id="scene_legend")
 
 
     # ── Navigation widgets ───────────────────────────────────────────────
@@ -1873,6 +1874,7 @@ class Explorer3DPanel(BasePanel):
         menu = QMenu(self)
         png_action = menu.addAction(tr("Export as PNG Image (.png)..."))
         jpg_action = menu.addAction(tr("Export as JPEG Image (.jpg)..."))
+        svg_action = menu.addAction(tr("Export as SVG Vector Graphic (.svg)..."))  
         pdf_action = menu.addAction(tr("Export as PDF Document (.pdf)..."))
         
         chosen = menu.exec_(self.btn_export_img.mapToGlobal(self.btn_export_img.rect().bottomLeft()))
@@ -1882,6 +1884,8 @@ class Explorer3DPanel(BasePanel):
         fmt = "png"
         if chosen == jpg_action:
             fmt = "jpg"
+        elif chosen == svg_action:  # Handle SVG selection
+            fmt = "svg"
         elif chosen == pdf_action:
             fmt = "pdf"
             
@@ -1893,7 +1897,7 @@ class Explorer3DPanel(BasePanel):
         self._pending_export_path = path
         self._pending_export_dpi = dpi
         
-        # 3. Request the WebGL engine thread to render and return the viewport image
+        # 3. Request the WebGL engine thread to render and return the viewport image with legend
         self._js({
             "action": "export_viewport",
             "payload": {"format": fmt, "dpi": dpi}
@@ -2064,17 +2068,17 @@ class Explorer3DPanel(BasePanel):
 
     def _save_export(self, data_url: str) -> None:
         """
-        Override to intercept STL exports (including high-volume chunked streams),
-        and safely delegate standard image/PDF exports to BasePanel.
+        Override to intercept STL and SVG exports (including high-volume chunked streams),
+        and safely delegate standard raster image/PDF exports to BasePanel.
         """
         try:
             fmt = os.path.splitext(self._pending_export_path)[1].lower().lstrip('.')
             
-            if fmt == 'stl':
+            if fmt in ('stl', 'svg'):
                 if ',' in data_url:
                     header, payload = data_url.split(',', 1)
                     
-                    # Case A: Chunked transmission to bypass QWebChannel limits on large meshes
+                    # Case A: Generic Chunked assembly to bypass QWebChannel limits on large text files (SVG, STL)
                     if ';chunk' in header:
                         meta = {}
                         for part in header.split(';'):
@@ -2089,15 +2093,15 @@ class Explorer3DPanel(BasePanel):
                         mode = 'w' if idx == 0 else 'a'
                         
                         from urllib.parse import unquote
-                        raw_ascii_stl = unquote(payload)
+                        decoded_text = unquote(payload)
                         with open(self._pending_export_path, mode, encoding='utf-8') as f:
-                            f.write(raw_ascii_stl)
+                            f.write(decoded_text)
                             
                         # Show non-blocking progress inside the QGIS message bar
                         if idx == total - 1:
-                            self.show_info(tr(f"3D Model successfully exported to STL: {os.path.basename(self._pending_export_path)}"))
+                            self.show_info(tr(f"File successfully exported to {fmt.upper()}: {os.path.basename(self._pending_export_path)}"))
                         else:
-                            self.show_info(tr(f"Exporting 3D Model: processing block {idx+1}/{total}..."))
+                            self.show_info(tr(f"Exporting {fmt.upper()}: processing block {idx+1}/{total}..."))
                         return
                     
                     # Case B: Legacy fallback (Direct Base64 encoded payload)
