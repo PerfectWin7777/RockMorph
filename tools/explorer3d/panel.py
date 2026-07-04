@@ -31,6 +31,8 @@ from qgis.PyQt.QtWebEngineWidgets import QWebEnginePage  # type: ignore
 from qgis.core import QgsMapLayerProxyModel  # type: ignore
 from qgis.gui import QgsMapLayerComboBox  # type: ignore
 
+from PyQt5.QtWebEngineWidgets import QWebEngineView # type: ignore
+
 from ...base.base_panel import BasePanel, ComputeWorker
 from .engine import Explorer3DEngine
 
@@ -200,9 +202,16 @@ class Explorer3DPanel(BasePanel):
         root.addStretch()
 
         # ── QGIS canvas wiring ───────────────────────────────────────────
-        # ── QGIS canvas wiring ───────────────────────────────────────────
         self.canvas_2d = self.iface.mapCanvas()
         self.central_container = self.canvas_2d.parentWidget()
+         # Give the webview a unique object name to identify orphaned instances
+        self.webview.setObjectName("rockmorph_3d_webview")
+
+        # Clean up any orphaned webviews from previous plugin reloads to prevent memory leaks and overlapping text
+        for child in self.central_container.findChildren(QWebEngineView, "rockmorph_3d_webview"):
+            if child != self.webview:
+                child.setParent(None)
+                child.deleteLater()
         
         # Make the webview a direct overlay child of the central container
         # instead of inserting it into QGIS's strict grid layout.
@@ -2260,4 +2269,6 @@ class Explorer3DPanel(BasePanel):
         if self.central_container:
             self.central_container.removeEventFilter(self)
         if self.webview:
+            # Safely detach and schedule the widget for deletion
             self.webview.setParent(None)
+            self.webview.deleteLater()
