@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Mountain Front Sinuosity (Smf) Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #ffffff;
+            color: #333;
+            font-family: 'Times New Roman', serif;
+            height: auto;
+            /* Let the height adapt naturally to the plots */
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            /* Allow scrolling if container is tight */
+        }
+
+        #empty-state {
+            height: 300px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #aaa;
+            font-size: 13px;
+            gap: 8px;
+        }
+
+        #empty-state.hidden {
+            display: none;
+        }
+
+        #dashboard-container {
+            display: none;
+            flex-direction: column;
+            width: 100%;
+            padding: 8px;
+            gap: 8px;
+        }
+
+        .plot-container {
+            width: 100%;
+            height: 210px;
+            /* Comfortably fits both plots in the QWebView */
+            border: 1px solid #eaeaea;
+            border-radius: 4px;
+        }
+
+        #stats-bar {
+            padding: 5px 12px;
+            background: #f5f5f5;
+            border-top: 1px solid #ddd;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 18px;
+            font-size: 11px;
+            font-family: Arial, sans-serif;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            min-width: 80px;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            color: #222;
+            font-weight: bold;
+            font-size: 11px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="empty-state">
+        <span style="font-size:32px">⛰️</span>
+        <span>Configure inputs and click Compute S_mf</span>
+    </div>
+
+    <div id="dashboard-container">
+        <!-- Chart 1: Smf Ratios distribution for all scarps -->
+        <div id="plot-bars" class="plot-container"></div>
+        <!-- Chart 2: Topographic profile along the active scarp line -->
+        <div id="plot-profile" class="plot-container"></div>
+    </div>
+
+    <div id="stats-bar">
+        <div class="stat-item">
+            <span class="stat-label">Scarp ID</span>
+            <span class="stat-value" id="stat-scarp">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Geomorphic Unit</span>
+            <span class="stat-value" id="stat-unit">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Sinuous Lf</span>
+            <span class="stat-value" id="stat-lf">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Baseline Lr</span>
+            <span class="stat-value" id="stat-lr">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">S_mf Index</span>
+            <span class="stat-value" id="stat-smf">—</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Tectonic Class</span>
+            <span class="stat-value" id="stat-class">—</span>
+        </div>
+    </div>
+
+    <!-- Qt WebChannel & Plotly dependencies patched on loading -->
+    <script src="js/qwebchannel.js"></script>
+    <script src="js/plotly.min.js"></script>
+    <script src="js/bridge.js"></script>
+
+    <script>
+        var _cachedResults = [];
+
+        function updatePlot(jsonData) {
+            var data = JSON.parse(jsonData);
+            var results = data.results || [];
+
+            if (!results.length) {
+                clearPlot();
+                return;
+            }
+
+            _cachedResults = results;
+
+            document.getElementById('empty-state').classList.add('hidden');
+            document.getElementById('dashboard-container').style.display = 'flex';
+
+            _renderBarChart(results, data.active_fid);
+            _renderProfileChart(results, data.active_fid);
+            _updateStatusBar(results, data.active_fid);
+        }
+
+        function clearPlot() {
+            _cachedResults = [];
+            document.getElementById('empty-state').classList.remove('hidden');
+            document.getElementById('dashboard-container').style.display = 'none';
+
+            var statIds = ['stat-scarp', 'stat-unit', 'stat-lf', 'stat-lr', 'stat-smf', 'stat-class'];
+            statIds.forEach(function (id) {
+                document.getElementById(id).textContent = '—';
+            });
+        }
+
+        function _renderBarChart(results, activeFid) {
+            var labels = [];
+            var values = [];
+            var colors = [];
+
+            results.forEach(function (r) {
+                labels.push(r.label);
+                values.push(r.smf);
+
+                var color = '#2ecc71'; // Class 3 Green
+                if (r.class === 1) {
+                    color = '#e74c3c'; // Class 1 Red
+                } else if (r.class === 2) {
+                    color = '#e67e22'; // Class 2 Orange
+                }
+                colors.push(color);
+            });
+
+            var trace = {
+                x: labels,
+                y: values,
+                type: 'bar',
+                marker: {
+                    color: colors,
+                    line: {
+                        color: '#2c3e50',
+                        width: results.map(r => r.fid === activeFid ? 2 : 0)
+                    }
+                },
+                hovertemplate: '<b>%{x}</b><br>S_mf: %{y:.3f}<extra></extra>'
+            };
+
+            var layout = {
+                title: {
+                    text: 'Mountain Front Sinuosity (S_mf) Distribution',
+                    font: { family: 'Times New Roman', size: 12 }
+                },
+                margin: { t: 30, b: 35, l: 45, r: 25 },
+                template: 'plotly_white',
+                xaxis: {
+                    title: 'Segment ID',
+                    font: { family: 'Times New Roman', size: 11 },
+                    tickfont: { family: 'Times New Roman', size: 10 }
+                },
+                yaxis: {
+                    title: 'S_mf Ratio',
+                    font: { family: 'Times New Roman', size: 11 },
+                    tickfont: { family: 'Times New Roman', size: 10 },
+                    range: [1.0, Math.max(2.5, Math.max.apply(null, values) + 0.2)]
+                },
+                shapes: [
+                    {
+                        type: 'line',
+                        xref: 'paper', x0: 0, x1: 1,
+                        yref: 'y', y0: 1.4, y1: 1.4,
+                        line: { color: '#e67e22', width: 1.5, dash: 'dash' }
+                    },
+                    {
+                        type: 'line',
+                        xref: 'paper', x0: 0, x1: 1,
+                        yref: 'y', y0: 1.8, y1: 1.8,
+                        line: { color: '#2ecc71', width: 1.5, dash: 'dash' }
+                    }
+                ]
+            };
+
+            var gd = document.getElementById('plot-bars');
+            Plotly.react(gd, [trace], layout, { responsive: true, displayModeBar: false });
+
+            gd.on('plotly_click', function (data) {
+                if (data.points && data.points.length > 0) {
+                    var clickedIdx = data.points[0].pointIndex;
+                    var item = results[clickedIdx];
+                    if (item) {
+                        onBridgeReady(function (bridge) {
+                            bridge.receive_click_id(item.fid);
+                        });
+                    }
+                }
+            });
+        }
+
+        function _renderProfileChart(results, activeFid) {
+            var activeScarp = results.find(r => r.fid === activeFid) || results[0];
+            if (!activeScarp || !activeScarp.distances || !activeScarp.distances.length) {
+                return;
+            }
+
+            var distancesKm = activeScarp.distances.map(d => d / 1000.0);
+
+            var trace = {
+                x: distancesKm,
+                y: activeScarp.elevations,
+                type: 'scatter',
+                mode: 'lines',
+                line: { color: '#2980b9', width: 2 },
+                fill: 'tozeroy',
+                fillcolor: 'rgba(41, 128, 185, 0.1)',
+                hovertemplate: 'Distance: %{x:.2f} km<br>Elevation: %{y:.1f} m<extra></extra>'
+            };
+
+            var layout = {
+                title: {
+                    text: 'Topographic Longitudinal Profile along Scarp ' + activeScarp.label,
+                    font: { family: 'Times New Roman', size: 11 }
+                },
+                margin: { t: 30, b: 35, l: 45, r: 25 },
+                template: 'plotly_white',
+                xaxis: {
+                    title: 'Distance along front (km)',
+                    font: { family: 'Times New Roman', size: 10 },
+                    tickfont: { family: 'Times New Roman', size: 9 }
+                },
+                yaxis: {
+                    title: 'Elevation (m)',
+                    font: { family: 'Times New Roman', size: 10 },
+                    tickfont: { family: 'Times New Roman', size: 9 }
+                }
+            };
+
+            Plotly.react('plot-profile', [trace], layout, { responsive: true, displayModeBar: false });
+        }
+
+        function _updateStatusBar(results, activeFid) {
+            var activeScarp = results.find(r => r.fid === activeFid) || results[0];
+            if (!activeScarp) return;
+
+            document.getElementById('stat-scarp').textContent = activeScarp.label || '—';
+            document.getElementById('stat-unit').textContent = activeScarp.unit || 'Global';
+            document.getElementById('stat-lf').textContent = activeScarp.lf_km.toFixed(2) + ' km';
+            document.getElementById('stat-lr').textContent = activeScarp.lr_km.toFixed(2) + ' km';
+            document.getElementById('stat-smf').textContent = activeScarp.smf.toFixed(3);
+
+            var classText = 'Class ' + activeScarp.class;
+            if (activeScarp.class === 1) {
+                classText += ' (Active)';
+            } else if (activeScarp.class === 2) {
+                classText += ' (Moderate)';
+            } else {
+                classText += ' (Inactive)';
+            }
+            document.getElementById('stat-class').textContent = classText;
+        }
+    </script>
+</body>
+
+</html>
