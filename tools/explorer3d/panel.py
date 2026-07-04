@@ -725,7 +725,7 @@ class Explorer3DPanel(BasePanel):
             props_layout,
             tr("Direct sun intensity:"),
             "slider_light_intensity",
-            min_val=0, max_val=30, default=15,
+            min_val=0, max_val=60, default=25,
             tooltip=tr("Power of the primary sun (0 = fully overcast, 3.0 = direct sunlight).")
         )
 

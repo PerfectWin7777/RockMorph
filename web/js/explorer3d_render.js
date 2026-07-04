@@ -103,11 +103,13 @@ const terrainVertexShader = `
     varying vec3 vNormal;
     varying vec3 vColor;
     varying vec3 vWorldNormal;
+    varying vec2 vUv; // Pass UV coordinates to fragment shader
 
     void main() {
         vNormal = normalize(normalMatrix * normal);
         vWorldNormal = normalize(normal);
         vColor = color;
+        vUv = uv; // Capture default plane geometry UVs
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }
 `;
@@ -125,20 +127,41 @@ const terrainFragmentShader = `
     uniform float uSlopeContrast;
     uniform bool uMultidirectional;
 
+    // Heightmap textures and dimensions [New]
+    uniform sampler2D uHeightmap;
+    uniform vec2 uTextureSize;
+    uniform float uZScale;
+
     varying vec3 vNormal;
     varying vec3 vWorldNormal;
     varying vec3 vColor;
+    varying vec2 vUv;
 
     void main() {
-        vec3 normal = normalize(vNormal);
-        vec3 worldNormal = normalize(vWorldNormal);
+        // Calculate offset step (one texel size)
+        vec2 texelSize = 1.0 / uTextureSize;
 
+        // Sample raw elevations of the 4 direct neighbors
+        float hL = texture2D(uHeightmap, vUv + vec2(-texelSize.x, 0.0)).r;
+        float hR = texture2D(uHeightmap, vUv + vec2(texelSize.x, 0.0)).r;
+        float hB = texture2D(uHeightmap, vUv + vec2(0.0, -texelSize.y)).r;
+        float hT = texture2D(uHeightmap, vUv + vec2(0.0, texelSize.y)).r;
+
+        // Compute local gradients on-the-fly (scaled to prevent spikes)
+        float scale = 30.0 * uZScale;
+        float dX = (hR - hL) * scale;
+        float dY = (hT - hB) * scale;
+
+        // Generate analytical high-fidelity normal vector
+        vec3 worldNormal = normalize(vec3(-dX, -dY, 1.0));
+        vec3 normal = worldNormal;
+        
         // Hemisphere Ambient Light (Cool sky / Warm ground reflection)
         vec3 skyColor = vec3(0.55, 0.68, 0.85);
         vec3 groundColor = vec3(0.20, 0.17, 0.13);
         float hemiMix = worldNormal.z * 0.5 + 0.5;
         vec3 ambient = mix(groundColor, skyColor, hemiMix) * uAmbientIntensity;
-
+        
         // Multidirectional Shading (GIS 4-Axis Mode) vs Single-Directional Shading
         vec3 L0 = normalize(uSunDirection);
         float diffuseTerm = 0.0;
@@ -158,27 +181,26 @@ const terrainFragmentShader = `
             diffuseTerm = max(dot(normal, L0), 0.0);
         }
 
-        // Apply amplified Oren-Nayar retro-reflection factor for ultra-matte rock textures
+        // Apply amplified Oren-Nayar retro-reflection factor
         float roughness2 = uRoughness * uRoughness * 1.8;
         float orenNayarFactor = 1.0 - 0.75 * (roughness2 / (roughness2 + 0.25));
         float directDiffuse = diffuseTerm * orenNayarFactor;
-
+        
         // Slope shading accentuation (darken steep incisions based on normal Z tilt)
-        // Elevated scale multiplier (25.0) ensures dramatic contrast on structural scarps
         float slopeFactor = pow(clamp(worldNormal.z, 0.0, 1.0), 1.0 + uSlopeContrast * 25.0);
-
+        
         vec3 baseTerrainColor = uUseVertexColors ? vColor : uSolidColor;
         vec3 baseLighting = (ambient * slopeFactor) + (uSunColor * directDiffuse * uSunIntensity);
-
+        
         // Apply slope shadow globally to both ambient and diffuse components for maximum tectonic pop
         vec3 finalLighting = baseLighting * mix(1.0, slopeFactor, uSlopeContrast * 0.75);
-
+        
         gl_FragColor = vec4(baseTerrainColor * finalLighting, 1.0);
     }
 `;
 
 
-function createCustomMaterial(useVertexColors, solidColorObj) {
+function createCustomMaterial(useVertexColors, solidColorObj, heightTexture, width, height) {
     return new THREE.ShaderMaterial({
         vertexShader: terrainVertexShader,
         fragmentShader: terrainFragmentShader,
@@ -192,7 +214,11 @@ function createCustomMaterial(useVertexColors, solidColorObj) {
             uUseVertexColors: { value: useVertexColors },
             uRoughness: { value: globalRoughness },
             uSlopeContrast: { value: globalSlopeContrast },
-            uMultidirectional: { value: globalMultidirectional }
+            uMultidirectional: { value: globalMultidirectional },
+            // Analytical Heightmap Shading Uniforms [New]
+            uHeightmap: { value: heightTexture || null },
+            uTextureSize: { value: new THREE.Vector2(width || 100, height || 100) },
+            uZScale: { value: currentZScale }
         },
         side: THREE.DoubleSide
     });
@@ -852,7 +878,24 @@ function _buildTerrain(data) {
     }
 
     // ShaderMaterial customized with standard parameters
-    const material = createCustomMaterial(true, null);
+    // ── Generate High-Fidelity Float32 Heightmap Texture for GPU Shading ──
+    const floatData = new Float32Array(width * height);
+    let floatIdx = 0;
+    // Scan rows from bottom to top (j = height - 1 down to 0) to align with WebGL UV vertical axis
+    for (let j = height - 1; j >= 0; j--) {
+        for (let i = 0; i < width; i++) {
+            const rawZ = data.z_values[j][i];
+            const normZ = (rawZ - data.z_min) / (data.z_max - data.z_min || 1.0);
+            floatData[floatIdx++] = isNaN(normZ) ? 0.0 : normZ;
+        }
+    }
+    const heightTexture = new THREE.DataTexture(floatData, width, height, THREE.RedFormat, THREE.FloatType);
+    heightTexture.minFilter = THREE.LinearFilter;
+    heightTexture.magFilter = THREE.LinearFilter;
+    heightTexture.needsUpdate = true;
+
+    // ShaderMaterial customized with standard parameters and heightmap texture
+    const material = createCustomMaterial(true, null, heightTexture, width, height);
 
     const terrainMesh = new THREE.Mesh(geometry, material);
     scene.add(terrainMesh);
@@ -1084,6 +1127,11 @@ function _updateZScale(scale) {
         if (wallGeo.attributes.normal) {
             wallGeo.attributes.normal.needsUpdate = true;
         }
+    }
+
+    // Sync the Z-Scale uniform value with the GPU fragment shader
+    if (terrainObj.mesh.material && terrainObj.mesh.material.uniforms && terrainObj.mesh.material.uniforms.uZScale) {
+        terrainObj.mesh.material.uniforms.uZScale.value = scale;
     }
 
 
