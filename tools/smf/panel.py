@@ -1,33 +1,50 @@
 """
 tools/smf/panel.py
 
-SMFPanel — User Interface panel for the Mountain Front Sinuosity (Smf) Tool.
+SMFPanel — Production-ready, highly documented UI panel for the 
+Mountain Front Sinuosity (Smf) Tool in RockMorph.
+
+This panel provides:
+- Clean and compact layout focusing on raw geomorphic inputs, parameters,
+  and tabular results.
+- Semiautomatic/manual scarp processing or fully automated extraction using 
+  the high-precision Mountain-Flank Skeleton Detector (MFSD).
+- Interactive results table (QTreeWidget) listing: Unit, Scarp ID, Lf (km), 
+  Lr (km), Smf, and Tectonic Activity Class.
+- Geodesic highlighting using QgsRubberBand on row selection to visually
+  validate computed scarps directly on the QGIS Map Canvas.
+- Fully-featured academic data export pipeline targeting:
+  * CSV (Tabular data for Excel/R statistical analysis)
+  * JSON (Raw data structured for reproducibility)
+  * GeoPackage (Spatial GIS layers ready to be added to the QGIS legend)
+
+Heritage:
+---------
+This class extends RockMorph's BasePanel. It retains the internal webview 
+instantiated by the parent class to maintain API inheritance safety, but does 
+not add it to the layout, keeping the user interface completely focused and clutter-free.
 
 Authors: RockMorph contributors / Tony
 """
 
 import json
 import re
-import numpy as np  # type: ignore
 
 from PyQt5.QtWidgets import (  # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
-    QPushButton, QSpinBox, QDoubleSpinBox,
-    QComboBox, QGroupBox, QLabel,
-    QTreeWidget, QTreeWidgetItem,
-    QSizePolicy, QAbstractItemView,
-    QMenu, QApplication, QFileDialog,
-    QCheckBox, QWidget, QFrame, QMessageBox
+    QPushButton, QDoubleSpinBox, QComboBox, 
+    QGroupBox, QLabel, QTreeWidget, QTreeWidgetItem, 
+    QAbstractItemView, QMenu, QApplication, QMessageBox,
+    QRadioButton
 )
-from PyQt5.QtCore import Qt, QCoreApplication, pyqtSignal  # type: ignore
+from PyQt5.QtCore import Qt, QCoreApplication  # type: ignore
 from PyQt5.QtGui import QColor  # type: ignore
 
 from qgis.gui import QgsMapLayerComboBox, QgsRubberBand  # type: ignore
 from qgis.core import (  # type: ignore
-    QgsMapLayerProxyModel, QgsWkbTypes,
-    QgsCoordinateTransform, QgsProject,
-    QgsVectorLayer, QgsFeature, QgsGeometry,
-    QgsPointXY, QgsField, QgsFields,
+    QgsMapLayerProxyModel, QgsCoordinateTransform, QgsProject,
+    QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY, 
+    QgsField, QgsFields, QgsWkbTypes,
     QgsWkbTypes as WkbTypes
 )
 from PyQt5.QtCore import QVariant  # type: ignore
@@ -42,6 +59,7 @@ def tr(message):
 
 
 def _natural_sort_key(s: str):
+    """Auxiliary natural sorting key for scarp IDs (e.g., E2 before E10)."""
     return [
         int(part) if part.isdigit() else part.lower()
         for part in re.split(r'(\d+)', s)
@@ -49,6 +67,10 @@ def _natural_sort_key(s: str):
 
 
 class SMFPanel(BasePanel):
+    """
+    Highly documented, production-grade QGIS Sidebar Panel 
+    for Mountain Front Sinuosity (Smf) Analysis.
+    """
 
     def __init__(self, iface, parent=None):
         self._engine = SMFEngine()
@@ -59,15 +81,27 @@ class SMFPanel(BasePanel):
         self._rubber_bands = []
         super().__init__(iface, parent)
 
+    # ------------------------------------------------------------------
+    # BasePanel Hooks
+    # ------------------------------------------------------------------
+
     def _html_file(self) -> str:
+        """
+        Required by parent class. We return a dummy HTML reference.
+        The QWebEngineView remains unparented and hidden.
+        """
         return "smf.html"
 
     def _build_ui(self):
+        """
+        Constructs the Qt user interface layout.
+        Provides a highly structured, compact, and responsive side panel.
+        """
         root = QVBoxLayout(self._inner)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
-        # ── 1. Input Layer Group ──────────────────────────────────────
+       # ── 1. Input Layer Group ──────────────────────────────────────
         input_group = QGroupBox(tr("Input Data"))
         input_layout = QFormLayout(input_group)
 
@@ -75,24 +109,58 @@ class SMFPanel(BasePanel):
         self.dem_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
         input_layout.addRow(tr("DEM layer:"), self.dem_combo)
 
+        # Extraction Mode Selection (Radios)
+        self.rad_auto = QRadioButton(tr("Automatic detection (MFSD)"))
+        self.rad_auto.setToolTip(tr(
+            "<b>Automatic detection (MFSD):</b><br>"
+            "Runs RockMorph's high-precision Mountain-Flank Skeleton Detector.<br>"
+            "This algorithm automatically extracts continuous, 1-pixel-thick scarp fronts "
+            "directly from the MNT using regional relief and slope thresholds.<br>"
+            "Recommended for objective, regional tectono-morphological analysis."
+        ))
+
+        self.rad_manual = QRadioButton(tr("Provide my own scarp layer"))
+        self.rad_manual.setToolTip(tr(
+            "<b>Provide my own scarp layer:</b><br>"
+            "Allows you to select a pre-digitized or mapped vector line layer of mountain fronts.<br>"
+            "RockMorph will bypass automatic detection and compute geodesic sinuosity (Smf) "
+            "and relief metrics directly on your custom lines.<br>"
+            "Perfect for validating hand-mapped structural faults."
+        ))
+
+        self.rad_auto.setChecked(True)  # Default mode
+
+        input_layout.addRow(tr("Extraction Mode:"), self.rad_auto)
+        input_layout.addRow("", self.rad_manual)
+
         self.scarp_combo = QgsMapLayerComboBox()
         self.scarp_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
         self.scarp_combo.setAllowEmptyLayer(True)
         self.scarp_combo.layerChanged.connect(self._on_scarp_layer_changed)
         self.scarp_combo.setToolTip(tr(
-            "Optional line layer of pre-digitized mountain fronts.<br>"
-            "If left empty, RockMorph will execute the automatic Mountain-Flank Skeleton Detector."
+            "<b>Scarp Layer:</b><br>"
+            "Select the vector line layer representing digitized mountain front scarps.<br>"
+            "<i>(This input is only active when manual mode is selected).</i>"
         ))
-        input_layout.addRow(tr("Scarp layer (optional):"), self.scarp_combo)
+        input_layout.addRow(tr("Scarp layer:"), self.scarp_combo)
 
         self.unit_combo = QComboBox()
-        self.unit_combo.setToolTip(tr("Optional attribute field specifying geomorphological units (e.g., Douala, Kumba, Buea)."))
-        input_layout.addRow(tr("Unit field (optional):"), self.unit_combo)
+        self.unit_combo.setToolTip(tr(
+            "<b>Unit Field:</b><br>"
+            "Optional attribute field specifying geomorphological or tectonic units.<br>"
+            "If selected, results will be grouped and summarized by these regional units.<br>"
+            "<i>(This input is only active when manual mode is selected).</i>"
+        ))
+        input_layout.addRow(tr("Unit field:"), self.unit_combo)
+
+        # Connect signals for dynamic UI toggling
+        self.rad_auto.toggled.connect(self._on_mode_changed)
+        self._on_mode_changed()  # Initialize state on load
 
         self._on_scarp_layer_changed(self.scarp_combo.currentLayer())
         root.addWidget(input_group)
 
-        # ── 2. Parameter Group ────────────────────────────────────────
+        # ── 2. Parameter Tuning ───────────────────────────────────────
         param_group = QGroupBox(tr("Analysis Parameters"))
         param_layout = QFormLayout(param_group)
 
@@ -171,7 +239,7 @@ class SMFPanel(BasePanel):
         self.max_gap_spin.setToolTip(tr(
             "<b>Maximum Gap to Bridge (m):</b><br>"
             "Maximum distance allowed to automatically connect adjacent scarp fragments across valleys or erosion channels. "
-            "Increase this to bridge wide river valleys ."
+            "Increase this to bridge wide river valleys."
         ))
         param_layout.addRow(tr("Max gap to bridge:"), self.max_gap_spin)
 
@@ -212,7 +280,7 @@ class SMFPanel(BasePanel):
         self.tree_widget.setHeaderLabels([
             tr("Unit"), tr("Scarp ID"), tr("Lf (km)"), tr("Lr (km)"), tr("S_mf"), tr("Tectonic Class")
         ])
-        self.tree_widget.setFixedHeight(140)
+        self.tree_widget.setFixedHeight(180)  # Extended height to replace web view space
         self.tree_widget.setSortingEnabled(True)
         self.tree_widget.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tree_widget.itemSelectionChanged.connect(self._on_selection_changed)
@@ -242,21 +310,22 @@ class SMFPanel(BasePanel):
 
         root.addWidget(results_group)
 
-        # ── 5. Embedded Web Engine View (Plotly) ──────────────────────
-        self.webview.setMinimumHeight(450)
-        self.webview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        root.addWidget(self.webview)
-
-        # ── 6. Export Panel ───────────────────────────────────────────
-        export_group = QGroupBox(tr("Export"))
+        # ── 5. Data Export Group ──────────────────────────────────────
+        export_group = QGroupBox(tr("Academic Data Export"))
         export_layout = QHBoxLayout(export_group)
-        for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
-            btn = QPushButton(fmt)
-            btn.setFixedHeight(22)
-            btn.clicked.connect(lambda checked, f=fmt: self._on_export(f))
-            export_layout.addWidget(btn)
 
-        self.btn_gpkg = QPushButton(tr("GeoPackage"))
+        self.btn_csv = QPushButton(tr("Export to CSV"))
+        self.btn_csv.setToolTip(tr("Export tabular geomorphic metrics to CSV for statistical packages (Excel/R)."))
+        self.btn_csv.clicked.connect(lambda: self._on_export("csv"))
+        export_layout.addWidget(self.btn_csv)
+
+        self.btn_json = QPushButton(tr("Export to JSON"))
+        self.btn_json.setToolTip(tr("Export raw results as a structured JSON file for maximum reproducibility."))
+        self.btn_json.clicked.connect(lambda: self._on_export("json"))
+        export_layout.addWidget(self.btn_json)
+
+        self.btn_gpkg = QPushButton(tr("Export to GeoPackage"))
+        self.btn_gpkg.setToolTip(tr("Export mountain front lines to a spatial GeoPackage layer and reload it in QGIS."))
         self.btn_gpkg.clicked.connect(self._on_export_geopackage)
         export_layout.addWidget(self.btn_gpkg)
 
@@ -269,6 +338,10 @@ class SMFPanel(BasePanel):
         self.warning_label.setVisible(False)
         root.addWidget(self.warning_label)
 
+    # ------------------------------------------------------------------
+    # Dynamic Form Handlers
+    # ------------------------------------------------------------------
+
     def _on_scarp_layer_changed(self, layer):
         self.unit_combo.clear()
         self.unit_combo.addItem(tr("Auto / None (Global)"), None)
@@ -276,6 +349,20 @@ class SMFPanel(BasePanel):
             return
         for field in layer.fields():
             self.unit_combo.addItem(field.name(), field.name())
+    
+    def _on_mode_changed(self):
+        """Dynamically enables or disables manual vector inputs based on the selected mode."""
+        is_manual = self.rad_manual.isChecked()
+        self.scarp_combo.setEnabled(is_manual)
+        # self.unit_combo.setEnabled(is_manual)
+
+        # Clear the QGIS selection and baseline if turning manual mode off
+        if not is_manual:
+            self.scarp_combo.setCurrentIndex(0)  # Reset combobox to empty
+
+    # ------------------------------------------------------------------
+    # Computation Pipeline
+    # ------------------------------------------------------------------
 
     def _on_compute(self):
         dem_layer = self.dem_combo.currentLayer()
@@ -285,10 +372,14 @@ class SMFPanel(BasePanel):
             self.show_error(tr("Please select a valid DEM raster layer."))
             return
 
+        # Retrieve scarp layer only if manual mode is explicitly chosen
+        use_manual = self.rad_manual.isChecked()
+        scarp_layer = self.scarp_combo.currentLayer() if use_manual else None
+
         params = {
             "dem_layer": dem_layer,
             "scarp_layer": scarp_layer if (scarp_layer and scarp_layer.isValid()) else None,
-            "unit_field": self.unit_combo.currentData(),
+            "unit_field": self.unit_combo.currentData(), # Completely neutral
             "baseline_method": self.baseline_combo.currentData(),
             "min_slope_pct": self.min_slope_spin.value(),
             "min_relief_m": self.min_relief_spin.value(),
@@ -319,7 +410,7 @@ class SMFPanel(BasePanel):
         skipped = result.get("skipped", [])
 
         if not self._results:
-            self.show_error(tr("No valid mountain front segments found."))
+            self.show_error(tr("No valid mountain front segments found. Adjust your parameters."))
             return
 
         if warnings:
@@ -349,6 +440,10 @@ class SMFPanel(BasePanel):
         self.compute_btn.setText(tr("Compute S_mf"))
         self.set_loading_state(False)
         self.show_error(message)
+
+    # ------------------------------------------------------------------
+    # Results Navigation & Selection
+    # ------------------------------------------------------------------
 
     def _refresh_tree(self):
         self.tree_widget.clear()
@@ -406,7 +501,6 @@ class SMFPanel(BasePanel):
         self._update_nav_buttons()
 
         active_res = self._results[self._active_index]
-        self._send_to_plot(single_fid=active_res["fid"])
         self._draw_active_scarp(active_res)
 
     def _update_nav_buttons(self):
@@ -426,10 +520,8 @@ class SMFPanel(BasePanel):
         self._rubber_bands.clear()
 
     def _draw_active_scarp(self, result: dict):
-        """Highlights the active segment on the QGIS Map Canvas."""
         self._clear_rubber_bands()
         
-        # CRITICAL FIX: Retrieve QgsGeometry directly from results
         geom = result.get("geom")
         if not geom or geom.isEmpty():
             return
@@ -456,7 +548,6 @@ class SMFPanel(BasePanel):
             QColor(230, 126, 34) if result['class'] == 2 else QColor(46, 204, 113)
         )
 
-        # Highlight scarp directly on map
         rb = QgsRubberBand(canvas, WkbTypes.LineGeometry)
         rb.setColor(color)
         rb.setWidth(4)
@@ -464,30 +555,15 @@ class SMFPanel(BasePanel):
         self._rubber_bands.append(rb)
 
     # ------------------------------------------------------------------
-    # Web Engine Communication (Always sends all results to show distribution)
+    # BasePanel Required Abstract Methods
     # ------------------------------------------------------------------
 
-    def _send_to_plot(self, single_fid: int = None):
-        if not self._results:
-            return
-
-        # CRITICAL FIX: We strip the QgsGeometry to reduce JSON payload size,
-        # but we send ALL results to Plotly so the bar chart behaves correctly.
-        clean_results = []
-        for r in self._results:
-            r_copy = r.copy()
-            if "geom" in r_copy:
-                del r_copy["geom"]
-            clean_results.append(r_copy)
-
-        payload = {
-            "results": clean_results,
-            "active_fid": single_fid
-        }
-
-        self._last_data = payload
-        js = f"updatePlot({json.dumps(json.dumps(payload))})"
-        self.webview.page().runJavaScript(js)
+    def _on_result(self, data: dict):
+        """
+        Required abstract method from BasePanel.
+        We provide an empty implementation as we only output tabular data.
+        """
+        pass
 
     # ------------------------------------------------------------------
     # Context Menu & Exports
@@ -534,36 +610,33 @@ class SMFPanel(BasePanel):
             f"Class: {r['class']}"
         )
         QApplication.clipboard().setText(text)
-        self.show_info(tr(f"Metrics for '{r['label']}' copied."))
+        self.show_info(tr(f"Metrics for '{r['label']}' copied to clipboard."))
 
     def _on_export(self, fmt: str):
+        """Processes CSV and JSON exports for our calculated metrics."""
         fmt_lower = fmt.lower()
         if fmt_lower == "csv":
             if not self._results:
-                self.show_error(tr("No data — run Compute first."))
+                self.show_error(tr("No data available to export. Run Compute first."))
                 return
             self._exporter.export_csv(
                 self._build_csv_rows(),
                 self._csv_headers(),
                 parent=self,
             )
-            return
-        if fmt_lower == "json":
-            if self._last_data is None:
-                self.show_error(tr("No data — run Compute first."))
+        elif fmt_lower == "json":
+            if not self._results:
+                self.show_error(tr("No data available to export. Run Compute first."))
                 return
-            self._exporter.export_json(self._last_data, parent=self)
-            return
-        ok, path, dpi = self._exporter.prepare_image_export(
-            fmt_lower, parent=self
-        )
-        if not ok:
-            return
-        self._pending_export_path = path
-        self._pending_export_dpi = dpi
-        self.webview.page().runJavaScript(
-            f"exportViaSvg('{self.div_id}')"
-        )
+            # Package structural results for clean JSON output without binary geometries
+            clean_results = []
+            for r in self._results:
+                r_copy = r.copy()
+                if "geom" in r_copy:
+                    del r_copy["geom"]
+                clean_results.append(r_copy)
+            
+            self._exporter.export_json({"results": clean_results}, parent=self)
 
     def _csv_headers(self) -> list:
         return ["unit", "label", "lf_km", "lr_km", "smf", "class"]
@@ -583,7 +656,7 @@ class SMFPanel(BasePanel):
 
     def _on_export_geopackage(self):
         if not self._results:
-            self.show_error(tr("No data to export. Compute first."))
+            self.show_error(tr("No data available to export. Run Compute first."))
             return
 
         path = self._exporter._ask_path("gpkg", self)
@@ -622,7 +695,7 @@ class SMFPanel(BasePanel):
         if success:
             res = QMessageBox.question(
                 self, tr("Export Successful"),
-                tr("Would you like to add the exported SMF layer to your map?"),
+                tr("Would you like to add the exported SMF layer to your map legend?"),
                 QMessageBox.Yes | QMessageBox.No
             )
             if res == QMessageBox.Yes:
@@ -631,8 +704,6 @@ class SMFPanel(BasePanel):
                 if sub_layer.isValid():
                     QgsProject.instance().addMapLayer(sub_layer)
 
-    def _on_result(self, data: dict):
-        pass
-
     def cleanup(self):
+        """Properly releases all map canvas indicators on unload."""
         self._clear_rubber_bands()
