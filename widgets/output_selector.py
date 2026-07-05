@@ -1,16 +1,18 @@
 """
 widgets/output_selector.py — Reusable Output Selection Widget for RockMorph
 
-Provides a clean QCheckBox combined with a collapsible QLineEdit and browse QPushButton
-to manage temporary (in-memory) or physical file outputs dynamically [2].
+Provides a clean QCheckBox (for optional outputs) or a QLabel (for mandatory outputs) 
+combined with a collapsible QLineEdit and browse QPushButton to manage temporary 
+(in-memory) or physical file outputs dynamically [2].
 
 Authors: RockMorph contributors
 """
 
-import tempfile
 import os
+import tempfile
 from PyQt5.QtWidgets import (QWidget, # type: ignore
-QHBoxLayout, QVBoxLayout, QCheckBox, QLineEdit, QPushButton, QFileDialog
+QHBoxLayout, QVBoxLayout, QCheckBox, QLineEdit, QPushButton, QFileDialog,
+QLabel
                               )
 from PyQt5.QtCore import pyqtSignal, Qt, QCoreApplication # type: ignore
 
@@ -20,23 +22,26 @@ def tr(message: str) -> str:
 
 class OutputSelectorWidget(QWidget):
     """
-    A unified, reusable widget that exposes a checkbox, and dynamically displays
-    a path field with a file browser only if checked [2].
+    A unified, reusable widget that manages output selection.
+    Supports optional checkbox-toggled paths or mandatory permanent paths [2].
     """
-    stateChanged = pyqtSignal(bool) # Emitted when checked state changes
+    stateChanged = pyqtSignal(bool)
 
     def __init__(
         self,
         label_text: str,
         default_filename: str,
         file_filter: str,
-        is_checked: bool = False,
+        is_checked: bool = True,
+        show_checkbox: bool = True,  # If False, displays as a mandatory path (no checkbox) [2]
         parent=None
     ):
         super().__init__(parent)
         self.default_filename = default_filename
         self.file_filter = file_filter
+        self.show_checkbox = show_checkbox
 
+        # Generate a real, dynamic system temporary file path
         temp_dir = tempfile.gettempdir()
         self.default_temp_path = os.path.join(temp_dir, default_filename).replace("\\", "/")
 
@@ -47,16 +52,22 @@ class OutputSelectorWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        # 1. Primary Checkbox
-        self.checkbox = QCheckBox(label_text)
-        self.checkbox.setChecked(is_checked)
-        self.checkbox.toggled.connect(self._on_toggled)
-        layout.addWidget(self.checkbox)
+        # 1. Label or Checkbox Header
+        if self.show_checkbox:
+            self.checkbox = QCheckBox(label_text)
+            self.checkbox.setChecked(is_checked)
+            self.checkbox.toggled.connect(self._on_toggled)
+            layout.addWidget(self.checkbox)
+        else:
+            self.label = QLabel(label_text)
+            self.label.setStyleSheet("font-weight: bold; color: #2c3e50;")
+            layout.addWidget(self.label)
 
-        # 2. Path Selection Container (Collapsible) [2]
+        # 2. Path Selection Container
         self.path_container = QWidget()
         path_layout = QHBoxLayout(self.path_container)
-        path_layout.setContentsMargins(18, 0, 0, 0) # Indent for visual hierarchy
+        # Only indent path inputs if there is a checkbox on top [2]
+        path_layout.setContentsMargins(18 if self.show_checkbox else 0, 0, 0, 0)
         path_layout.setSpacing(6)
 
         self.txt_path = QLineEdit()
@@ -65,7 +76,6 @@ class OutputSelectorWidget(QWidget):
         self.txt_path.setStyleSheet("""
             QLineEdit {
                 background-color: #f5f5f5;
-                
                 border: 1px solid #ccc;
                 border-radius: 4px;
                 padding: 3px 6px;
@@ -83,15 +93,19 @@ class OutputSelectorWidget(QWidget):
 
         layout.addWidget(self.path_container)
 
-        # Apply initial collapsed/expanded state
-        self.path_container.setVisible(is_checked)
+        # Visibility logic
+        if self.show_checkbox:
+            self.path_container.setVisible(is_checked)
+        else:
+            self.path_container.setVisible(True) # Always visible for mandatory outputs
 
     def _on_toggled(self, checked: bool):
-        self.path_container.setVisible(checked)
-        self.stateChanged.emit(checked)
+        if self.show_checkbox:
+            self.path_container.setVisible(checked)
+            self.stateChanged.emit(checked)
 
     def _on_browse(self):
-        """Opens a QFileDialog to select a physical save location [2]."""
+        """Opens a QFileDialog to select a physical save location."""
         path, _ = QFileDialog.getSaveFileName(
             self,
             tr("Save Output Layer"),
@@ -100,7 +114,6 @@ class OutputSelectorWidget(QWidget):
         )
         if path:
             self.txt_path.setText(path)
-            # Make text readable (normal style) since it is now a real path
             self.txt_path.setStyleSheet("""
                 QLineEdit {
                     background-color: #fff;
@@ -115,17 +128,19 @@ class OutputSelectorWidget(QWidget):
     # ── Public APIs ──
 
     def isChecked(self) -> bool:
+        if not self.show_checkbox:
+            return True # Mandatory outputs are always active [2]
         return self.checkbox.isChecked()
 
     def setChecked(self, state: bool):
-        self.checkbox.setChecked(state)
+        if self.show_checkbox:
+            self.checkbox.setChecked(state)
 
     def filePath(self) -> str:
         """
-        Returns the absolute file path, or 'TEMPORARY_OUTPUT' if the user
-        retains the default in-memory behavior [2].
+        Returns the absolute file path. If the checkbox is unchecked,
+        returns 'TEMPORARY_OUTPUT' for in-memory layer generation [2].
         """
-        text = self.txt_path.text().strip()
-        if text == tr("Temporary Memory Layer") or not text:
+        if self.show_checkbox and not self.checkbox.isChecked():
             return "TEMPORARY_OUTPUT"
-        return text
+        return self.txt_path.text().strip()

@@ -49,12 +49,6 @@ TOOL_REGISTRY = {
                 "class_name": "FluvialPanel",
                 "desc": tr("Computes geomorphic indices like continuous k_sn and Chi-plots.")
             },
-            "watershed": {
-                "name": tr("Watershed Extraction"),
-                "module_path": "rockmorph.tools.watershed.panel",
-                "class_name": "WatershedPanel",
-                "desc": tr("Automated catchment boundary and hydrological routing extraction.")
-            },
             "smf": {
                 "name": tr("Mountain Front Sinuosity (Smf)"),
                 "module_path": "rockmorph.tools.smf.panel",
@@ -90,6 +84,12 @@ TOOL_REGISTRY = {
                 "module_path": "rockmorph.tools.hypsometry.panel",
                 "class_name": "HypsometryPanel",
                 "desc": tr("Computes basin-scale hypsometric curves and integral values.")
+            },
+            "watershed": {
+                "name": tr("Watershed Subdivision"),
+                "module_path": "rockmorph.tools.watershed.panel",
+                "class_name": "WatershedPanel",
+                "desc": tr("Hierarchically subdivides watersheds into ranked sub-basins based on confluences or area thresholds.")
             }
         }
     },

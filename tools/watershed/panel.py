@@ -56,10 +56,12 @@ from qgis.core import (                         # type: ignore
     QgsCategorizedSymbolRenderer,
     QgsRendererCategory,
     QgsFillSymbol,
+    QgsVectorFileWriter
 )
 from PyQt5.QtCore import QVariant              # type: ignore
 
 from ...base.base_panel import BasePanel, ComputeWorker
+from ...widgets.output_selector import OutputSelectorWidget
 from ...core.exporter import RockMorphExporter
 from .engine import WatershedEngine
 
@@ -341,22 +343,24 @@ class WatershedPanel(BasePanel):
         root.addWidget(results_group)
 
         # ── Map output ────────────────────────────────────────────────
-        map_group  = QGroupBox(tr("Map Output"))
-        map_layout = QFormLayout(map_group)
+        # ── GroupBox: Output Settings (Refactored with OutputSelectorWidget) ──
+        map_group = QGroupBox(tr("Output Settings"))
+        map_layout = QVBoxLayout(map_group)
+        map_layout.setSpacing(6)
 
-        self.layer_name_edit = QLineEdit("Watershed_subbasins")
-        self.layer_name_edit.setToolTip(tr(
-            "Name of the in-memory vector layer added to the QGIS project."
-        ))
-        map_layout.addRow(tr("Layer name:"), self.layer_name_edit)
+        # Mandatory Output: show_checkbox is set to False [2]
+        self.chk_out_subbasins = OutputSelectorWidget(
+            label_text=tr("Output Sub-basin Polygons File:"),
+            default_filename="watershed_subbasins.gpkg",
+            file_filter="GeoPackage (*.gpkg);;Shapefile (*.shp)",
+            is_checked=True,
+            show_checkbox=False
+        )
+        map_layout.addWidget(self.chk_out_subbasins)
 
         self.chk_zoom = QCheckBox(tr("Zoom to result after compute"))
         self.chk_zoom.setChecked(True)
-        map_layout.addRow("", self.chk_zoom)
-
-        add_btn = QPushButton(tr("Add / Refresh layer on map"))
-        add_btn.clicked.connect(self._add_layer_to_map)
-        map_layout.addRow("", add_btn)
+        map_layout.addWidget(self.chk_zoom)
 
         root.addWidget(map_group)
 
@@ -489,9 +493,9 @@ class WatershedPanel(BasePanel):
         self._lbl_n_subbasins.setText(str(len(subbasins)))
         self._lbl_encoding.setText(encoding.upper())
 
-        # Add polygons to QGIS map
+        # Automatically load the layer onto the map [2]
         self._add_layer_to_map()
-
+        
         # Zoom to result
         if self.chk_zoom.isChecked() and self._map_layer and self._map_layer.isValid():
             canvas = self.iface.mapCanvas()
@@ -617,9 +621,11 @@ class WatershedPanel(BasePanel):
         fdir_layer = self.fdir_combo.currentLayer()
         crs_wkt    = fdir_layer.crs().toWkt() if fdir_layer else "EPSG:4326"
 
-        layer_name = self.layer_name_edit.text().strip() or "Watershed_subbasins"
+        # Read the file path from our widget [2]
+        target_path = self.chk_out_subbasins.filePath()
+        layer_name  = os.path.basename(target_path) if target_path != "TEMPORARY_OUTPUT" else "Watershed_subbasins"
 
-        # Remove existing layer with the same name from the project
+        # Remove existing layer from the project map canvas
         existing = QgsProject.instance().mapLayersByName(layer_name)
         for lyr in existing:
             QgsProject.instance().removeMapLayer(lyr.id())
@@ -664,10 +670,25 @@ class WatershedPanel(BasePanel):
         pr.addFeatures(features)
         vl.updateExtents()
 
-        # Apply categorized symbology by rank
+        # Apply the dynamic coloring symbology
         self._apply_symbology(vl)
 
-        # Register in QGIS project
+        # Write to physical disk file if selected by the user [2]
+        if target_path != "TEMPORARY_OUTPUT":
+            options = QgsVectorFileWriter.SaveVectorOptions()
+            options.driverName = "GPKG" if target_path.endswith(".gpkg") else "ESRI Shapefile"
+            
+            QgsVectorFileWriter.writeAsVectorFormatV3(
+                vl,
+                target_path,
+                QgsProject.instance().transformContext(),
+                options
+            )
+            # Re-read layer from the physical path for rendering
+            vl = QgsVectorLayer(target_path, layer_name, "ogr")
+            self._apply_symbology(vl)
+
+        # Add to the project map canvas registry
         QgsProject.instance().addMapLayer(vl)
         self._map_layer = vl
 
