@@ -1571,15 +1571,15 @@ function _showLightGizmo(lightId, light) {
 function _buildVectorFeature(descriptor) {
     if (!descriptor.vertices || descriptor.vertices.length < 1) return;
 
-    // 1. Evaluate Dynamic Color (Fixed vs Attribute-Mapped) [No Hardcoding]
+    // 1. Evaluate Dynamic Color (Fixed vs Attribute-Mapped)
     let featureColor = descriptor.color || "#3498db";
 
     if (descriptor.color_styling === "attribute" && descriptor.attribute_values && descriptor.attribute_bounds) {
         const val = descriptor.attribute_values[0];
         const minVal = descriptor.attribute_bounds.min;
         const maxVal = descriptor.attribute_bounds.max;
-        const norm = (val - minVal) / (maxVal - minVal);
-
+        const norm = (val - minVal) / (maxVal - minVal || 1.0);
+        
         // Sample custom palette
         const rampName = descriptor.vector_colormap || "terrain";
         // Safely fallback to the main terrain active ramp if global colormaps are missing
@@ -1592,15 +1592,25 @@ function _buildVectorFeature(descriptor) {
             Math.round(sampled.b * 255).toString(16).padStart(2, "0");
     }
 
-    descriptor.resolved_color = featureColor; // Cache for subsequent sub-mesh generations
+    descriptor.resolved_color = featureColor;
 
-    // Route geometry types
+    // 2. Evaluate Dynamic Width/Size scaling (Fixed vs Attribute-Scaled) [New]
+    let factor = 1.0;
+    if (descriptor.width_styling === "attribute" && descriptor.attribute_values && descriptor.attribute_bounds) {
+        const val = descriptor.attribute_values[0];
+        const minVal = descriptor.attribute_bounds.min;
+        const maxVal = descriptor.attribute_bounds.max;
+        factor = (val - minVal) / (maxVal - minVal || 1.0);
+        factor = Math.max(0.0, Math.min(1.0, factor)); // Clamp strictly to [0..1]
+    }
+
+    // Route geometry types with dynamic size factors applied
     if (descriptor.geom_type === "point") {
-        _buildPointMarker(descriptor);
+        _buildPointMarker(descriptor, factor);
         return;
     }
     if (descriptor.geom_type === "filled") {
-        _buildFilledPolygon(descriptor);
+        _buildFilledPolygon(descriptor, factor);
         return;
     }
 
@@ -1619,9 +1629,14 @@ function _buildVectorFeature(descriptor) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
 
+    // Scale line width dynamically based on the attribute factor
+    const activeLineWidth = (descriptor.width_styling === "attribute")
+        ? 1.0 + factor * ((descriptor.line_width || 2) - 1.0)
+        : (descriptor.line_width || 2);
+
     const mat = new THREE.LineBasicMaterial({
         color: descriptor.resolved_color,
-        linewidth: descriptor.line_width || 2
+        linewidth: activeLineWidth
     });
     const line = new THREE.Line(geo, mat);
     scene.add(line);
@@ -1634,14 +1649,20 @@ function _buildVectorFeature(descriptor) {
     };
 
     if (descriptor.extrude_depth && descriptor.extrude_depth > 0) {
-        _buildExtrudedCurtain(descriptor, positions);
+        _buildExtrudedCurtain(descriptor, positions, factor);
     }
 }
 
-function _buildExtrudedCurtain(descriptor, topPositions) {
+function _buildExtrudedCurtain(descriptor, topPositions, factor) {
     const curtainPositions = [];
-    // Scale real-world depth meters to match exaggerated terrain vertical axis [Fix 3]
-    const scaledDepth = (descriptor.extrude_depth || 0.0) * baseExaggeration * currentZScale * scaleFactor;
+    const baseDepth = descriptor.extrude_depth || 0.0;
+
+    // Scale curtain vertical depth dynamically based on the attribute factor (e.g. fault displacement)
+    const activeDepth = (descriptor.width_styling === "attribute")
+        ? factor * baseDepth
+        : baseDepth;
+
+    const scaledDepth = activeDepth * baseExaggeration * currentZScale * scaleFactor;
 
     for (let i = 0; i < topPositions.length; i += 3) {
         const x = topPositions[i];
@@ -1676,13 +1697,17 @@ function _buildExtrudedCurtain(descriptor, topPositions) {
     };
 }
 
-function _buildPointMarker(descriptor) {
+function _buildPointMarker(descriptor, factor) {
     const [x, y, z] = descriptor.vertices[0];
     const zDraped = (z - spatialOffsets.z) * baseExaggeration * currentZScale * scaleFactor;
     const floatOffset = modelMaxDim * 0.005;
 
-    // Apply point scale multiplier read from UI
-    const sizeMultiplier = descriptor.point_marker_size || 1.0;
+    // Scale point marker size dynamically based on the attribute factor
+    const baseSize = descriptor.point_marker_size || 1.0;
+    const sizeMultiplier = (descriptor.width_styling === "attribute")
+        ? 0.3 + factor * (baseSize - 0.3)
+        : baseSize;
+
     const geo = new THREE.SphereGeometry(modelMaxDim * 0.015 * sizeMultiplier, 12, 12);
     const mat = createStructuralMaterial(new THREE.Color(descriptor.resolved_color));
     const mesh = new THREE.Mesh(geo, mat);
@@ -1702,9 +1727,8 @@ function _buildPointMarker(descriptor) {
     };
 }
 
-function _buildFilledPolygon(descriptor) {
+function _buildFilledPolygon(descriptor, factor) {
     if (!descriptor.vertices || descriptor.vertices.length < 3) return;
-
     // 1. Construct 2D flat shape
     const shape = new THREE.Shape();
     const positions3D = [];
@@ -1726,7 +1750,6 @@ function _buildFilledPolygon(descriptor) {
     const geo = new THREE.ShapeGeometry(shape);
     const posAttr = geo.attributes.position;
     const positions = posAttr.array;
-
     // 2. Project vertices onto boundary elevations with a slight height offset to prevent z-fighting
     for (let i = 0; i < posAttr.count; i++) {
         const x = positions[i * 3];
@@ -1746,13 +1769,19 @@ function _buildFilledPolygon(descriptor) {
 
     geo.computeVertexNormals();
 
+    // Scale polygon opacity dynamically based on the attribute factor
+    const baseOpacity = descriptor.polygon_opacity || 0.5;
+    const activeOpacity = (descriptor.width_styling === "attribute")
+        ? 0.15 + factor * (baseOpacity - 0.15)
+        : baseOpacity;
+
     const color = new THREE.Color(descriptor.resolved_color);
     const mat = new THREE.MeshBasicMaterial({
         color: color,
         transparent: true,
-        opacity: descriptor.polygon_opacity || 0.5,
+        opacity: activeOpacity,
         side: THREE.DoubleSide,
-        depthWrite: false // Prevents overlay sorting issues
+        depthWrite: false
     });
 
     const mesh = new THREE.Mesh(geo, mat);
@@ -1835,14 +1864,16 @@ function _applyDynamicVectorStyle(style) {
         desc.point_marker_size = style.point_marker_size;
         desc.height_offset = style.height_offset;
         desc.color_styling = style.color_styling;
+        desc.width_styling = style.width_styling; // Sync the new sizing mode
         desc.vector_colormap = style.vector_colormap;
 
+        // Recalculate dynamic color (same as before)
         let resolvedColor = style.fixed_color || "#3498db";
         if (style.color_styling === "attribute" && desc.attribute_values && desc.attribute_bounds) {
             const val = desc.attribute_values[0];
             const minVal = desc.attribute_bounds.min;
             const maxVal = desc.attribute_bounds.max;
-            const norm = (val - minVal) / (maxVal - minVal);
+            const norm = (val - minVal) / (maxVal - minVal || 1.0);
 
             const ramp = COLORMAPS[style.vector_colormap] || COLORMAPS.terrain || COLORMAPS.viridis;
             const sampled = _sampleRamp(ramp, norm);
@@ -1855,29 +1886,48 @@ function _applyDynamicVectorStyle(style) {
 
         desc.color = resolvedColor;
 
+        // Recalculate dynamic sizing factor
+        let factor = 1.0;
+        if (style.width_styling === "attribute" && desc.attribute_values && desc.attribute_bounds) {
+            const val = desc.attribute_values[0];
+            const minVal = desc.attribute_bounds.min;
+            const maxVal = desc.attribute_bounds.max;
+            factor = (val - minVal) / (maxVal - minVal || 1.0);
+            factor = Math.max(0.0, Math.min(1.0, factor));
+        }
+
         if (obj.type === "vector") {
             if (mesh.material.color) {
                 mesh.material.color.set(resolvedColor);
             }
-            mesh.material.linewidth = style.line_width || 2;
+            // Recalculate dynamic linewidth in real-time
+            const activeLineWidth = (style.width_styling === "attribute")
+                ? 1.0 + factor * (style.line_width - 1.0)
+                : style.line_width;
+
+            mesh.material.linewidth = activeLineWidth;
             mesh.material.needsUpdate = true;
             _updateVectorGeometryZ(mesh, desc);
         }
         else if (obj.type === "curtain") {
-            // Defensive Check: Update uniforms if using custom ShaderMaterial, color if basic
             if (mesh.material.uniforms && mesh.material.uniforms.uSolidColor) {
                 mesh.material.uniforms.uSolidColor.value.set(resolvedColor);
             } else if (mesh.material.color) {
                 mesh.material.color.set(resolvedColor);
             }
             mesh.material.needsUpdate = true;
-            _updateCurtainGeometryZ(mesh, desc);
+            _updateCurtainGeometryZ(mesh, desc); // uZScale inside this helper will automatically scale curtain depth
         }
         else if (obj.type === "filled_polygon") {
             if (mesh.material.color) {
                 mesh.material.color.set(resolvedColor);
             }
-            mesh.material.opacity = style.polygon_opacity || 0.5;
+            // Recalculate dynamic opacity in real-time
+            const activeOpacity = (style.width_styling === "attribute")
+                ? 0.15 + factor * (style.polygon_opacity - 0.15)
+                : style.polygon_opacity;
+
+            mesh.material.opacity = activeOpacity;
             mesh.material.needsUpdate = true;
             _updateFilledPolygonZ(mesh, desc);
         }
@@ -1888,7 +1938,12 @@ function _applyDynamicVectorStyle(style) {
                 mesh.material.color.set(resolvedColor);
             }
             mesh.material.needsUpdate = true;
-            const sizeMultiplier = style.point_marker_size || 1.0;
+
+            // Recalculate dynamic point size scale in real-time
+            const sizeMultiplier = (style.width_styling === "attribute")
+                ? 0.3 + factor * (style.point_marker_size - 0.3)
+                : style.point_marker_size;
+
             mesh.scale.setScalar(sizeMultiplier);
             _updatePointMarkerZ(mesh, desc);
         }

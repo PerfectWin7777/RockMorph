@@ -518,6 +518,15 @@ class Explorer3DPanel(BasePanel):
         ])
         vector_style_layout.addWidget(self.combo_color_styling)
 
+        # Thickness/Size Scaling Selector [New]
+        vector_style_layout.addWidget(QLabel(tr("Thickness/Size scaling method:")))
+        self.combo_width_styling = QComboBox()
+        self.combo_width_styling.addItems([
+            tr("Fixed Constant Size"),
+            tr("Scale Size by Attribute Value")
+        ])
+        vector_style_layout.addWidget(self.combo_width_styling)
+
         # Dynamic Color Settings Stack
         self.stacked_color_settings = QStackedWidget()
 
@@ -1005,6 +1014,7 @@ class Explorer3DPanel(BasePanel):
         self.slider_polygon_opacity.valueChanged.connect(self._slot_style_parameter_changed)
         self.slider_point_size.valueChanged.connect(self._slot_style_parameter_changed)
         self.combo_color_styling.currentIndexChanged.connect(self._slot_style_parameter_changed)
+        self.combo_width_styling.currentIndexChanged.connect(self._slot_style_parameter_changed)
         self.combo_vector_attribute.currentIndexChanged.connect(self._slot_style_parameter_changed)
         self.combo_vector_colormap.currentIndexChanged.connect(self._slot_style_parameter_changed)
         self.slider_height_offset.valueChanged.connect(self._slot_style_parameter_changed)
@@ -1244,11 +1254,9 @@ class Explorer3DPanel(BasePanel):
 
         fixed_color_hex = self.btn_vector_fixed_color.property("color_hex") or "#3498db"
         
-        attribute_field = ""
-        vector_colormap = "terrain"
-        if color_styling == "attribute":
-            attribute_field = self.combo_vector_attribute.currentText()
-            vector_colormap = self.combo_vector_colormap.currentText() or "terrain"
+        # Always extract the current selected attribute field to ensure the data is cached in WebGL
+        attribute_field = self.combo_vector_attribute.currentText()
+        vector_colormap = self.combo_vector_colormap.currentText() or "terrain"
 
         # 2. Show progress panel feedback
         self.set_loading_state(True, tr("Draping complex geometries onto 3D terrain..."), total=100)
@@ -1268,6 +1276,7 @@ class Explorer3DPanel(BasePanel):
                 "line_width": line_width,
                 "height_offset": height_offset,
                 "color_styling": color_styling,
+                "width_styling": "fixed" if self.combo_width_styling.currentIndex() == 0 else "attribute", # Pass the sizing mode
                 "fixed_color_hex": fixed_color_hex,
                 "attribute_field": attribute_field,
                 "vector_colormap": vector_colormap,
@@ -1306,6 +1315,7 @@ class Explorer3DPanel(BasePanel):
         line_width = style_params["line_width"]
         height_offset = style_params["height_offset"]
         color_styling = style_params["color_styling"]
+        width_styling = style_params["width_styling"]
         fixed_color_hex = style_params["fixed_color_hex"]
         attribute_field = style_params["attribute_field"]
         vector_colormap = style_params["vector_colormap"]
@@ -1333,6 +1343,7 @@ class Explorer3DPanel(BasePanel):
             v_dict["line_width"] = line_width
             v_dict["height_offset"] = height_offset
             v_dict["color_styling"] = color_styling
+            v_dict["width_styling"] = width_styling
             v_dict["vector_colormap"] = vector_colormap
             v_dict["attribute_bounds"] = {"min": attr_min, "max": attr_max}
             
@@ -1437,6 +1448,10 @@ class Explorer3DPanel(BasePanel):
 
         line_width = float(self.slider_line_width.value())
         height_offset = float(self.slider_height_offset.value())
+        
+        # Sizing and Colors modes
+        width_styling_idx = self.combo_width_styling.currentIndex()
+        width_styling = "fixed" if width_styling_idx == 0 else "attribute"
 
         # Colors
         color_styling_idx = self.combo_color_styling.currentIndex()
@@ -1456,6 +1471,7 @@ class Explorer3DPanel(BasePanel):
                 "line_width": line_width,
                 "height_offset": height_offset,
                 "color_styling": color_styling,
+                "width_styling": width_styling,
                 "fixed_color": fixed_color_hex,
                 "attribute_field": attribute_field,
                 "vector_colormap": vector_colormap
