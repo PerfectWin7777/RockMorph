@@ -1571,46 +1571,54 @@ function _showLightGizmo(lightId, light) {
 function _buildVectorFeature(descriptor) {
     if (!descriptor.vertices || descriptor.vertices.length < 1) return;
 
-    // 1. Evaluate Dynamic Color (Fixed vs Attribute-Mapped)
+    // ── 1. INDEPENDENT COLOR CALCULATION ──
     let featureColor = descriptor.color || "#3498db";
 
+    // Check if color is driven by an attribute
     if (descriptor.color_styling === "attribute" && descriptor.attribute_values && descriptor.attribute_bounds) {
+        // Extract the color value (index 0)
         const val = descriptor.attribute_values[0];
         const minVal = descriptor.attribute_bounds.min;
         const maxVal = descriptor.attribute_bounds.max;
         const norm = (val - minVal) / (maxVal - minVal || 1.0);
-        
-        // Sample custom palette
+
         const rampName = descriptor.vector_colormap || "terrain";
-        // Safely fallback to the main terrain active ramp if global colormaps are missing
-        const ramp = COLORMAPS[rampName] || COLORMAPS.terrain || COLORMAPS.viridis || (typeof ACTIVE_SCENE_DATA !== "undefined" ? ACTIVE_SCENE_DATA.style.active_ramp : null);
-        const sampled = _sampleRamp(ramp, norm);
+        const ramp = COLORMAPS[rampName] || COLORMAPS.terrain || COLORMAPS.viridis;
+        const sampled = _sampleRamp(ramp, Math.max(0, Math.min(1, norm)));
 
         featureColor = "#" +
             Math.round(sampled.r * 255).toString(16).padStart(2, "0") +
             Math.round(sampled.g * 255).toString(16).padStart(2, "0") +
             Math.round(sampled.b * 255).toString(16).padStart(2, "0");
     }
-
     descriptor.resolved_color = featureColor;
 
-    // 2. Evaluate Dynamic Width/Size scaling (Fixed vs Attribute-Scaled) [New]
-    let factor = 1.0;
+    // ── 2. INDEPENDENT WIDTH/SIZE CALCULATION ──
+    let scaleMultiplier = 1.0;
+
+    // Check if dimension size is driven by an attribute
     if (descriptor.width_styling === "attribute" && descriptor.attribute_values && descriptor.attribute_bounds) {
-        const val = descriptor.attribute_values[0];
-        const minVal = descriptor.attribute_bounds.min;
-        const maxVal = descriptor.attribute_bounds.max;
-        factor = (val - minVal) / (maxVal - minVal || 1.0);
-        factor = Math.max(0.0, Math.min(1.0, factor)); // Clamp strictly to [0..1]
+        // Extract the size value (index 1)
+        const sizeVal = descriptor.attribute_values[1];
+        const minSizeVal = descriptor.attribute_bounds.min_size || 0.0;
+        const maxSizeVal = descriptor.attribute_bounds.max_size || 1.0;
+        const normSize = (sizeVal - minSizeVal) / (maxSizeVal - minSizeVal || 1.0);
+
+        // Scale proportionally within limits up to max_size_scale (e.g., up to 5.0x)
+        const maxLimit = descriptor.max_size_scale || 5.0;
+        scaleMultiplier = 1.0 + Math.max(0, Math.min(1, normSize)) * (maxLimit - 1.0);
+    } else {
+        // Fall back to the constant base size slider (scaled to WebGL coordinates)
+        scaleMultiplier = descriptor.base_fixed_size || 1.5;
     }
 
-    // Route geometry types with dynamic size factors applied
+    // ── 3. GEOMETRY GENERATION WITH ASSIGNED ATTRIBUTES ──
     if (descriptor.geom_type === "point") {
-        _buildPointMarker(descriptor, factor);
+        _buildPointMarker(descriptor, scaleMultiplier);
         return;
     }
     if (descriptor.geom_type === "filled") {
-        _buildFilledPolygon(descriptor, factor);
+        _buildFilledPolygon(descriptor, scaleMultiplier); 
         return;
     }
 
@@ -1629,14 +1637,10 @@ function _buildVectorFeature(descriptor) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
 
-    // Scale line width dynamically based on the attribute factor
-    const activeLineWidth = (descriptor.width_styling === "attribute")
-        ? 1.0 + factor * ((descriptor.line_width || 2) - 1.0)
-        : (descriptor.line_width || 2);
-
     const mat = new THREE.LineBasicMaterial({
         color: descriptor.resolved_color,
-        linewidth: activeLineWidth
+        // Line-width is scaled independently of color variables
+        linewidth: Math.max(1, scaleMultiplier)
     });
     const line = new THREE.Line(geo, mat);
     scene.add(line);
@@ -1648,8 +1652,8 @@ function _buildVectorFeature(descriptor) {
         descriptor: descriptor
     };
 
-    if (descriptor.extrude_depth && descriptor.extrude_depth > 0) {
-        _buildExtrudedCurtain(descriptor, positions, factor);
+    if (descriptor.geom_type === "curtain") {
+        _buildExtrudedCurtain(descriptor, positions, scaleMultiplier);
     }
 }
 
@@ -1843,6 +1847,11 @@ function _applyDynamicVectorStyle(style) {
             desc.color_styling = style.color_styling;
             desc.vector_colormap = style.vector_colormap;
             desc.color = style.fixed_color;
+            desc.width_styling = style.width_styling;
+            desc.base_fixed_size = style.base_fixed_size;
+            desc.max_size_scale = style.max_size_scale;
+            desc.size_attribute = style.size_attribute;
+
             _buildVectorFeature(desc);
         });
         return;

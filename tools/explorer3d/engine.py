@@ -63,7 +63,10 @@ class Explorer3DEngine(BaseEngine):
             vector_layer = kwargs.get("vector_layer")
             dem_layer = kwargs.get("dem_layer")
             extrude_depth = kwargs.get("extrude_depth", 0.0)
-            attribute_field = kwargs.get("attribute_field", "")
+            
+            # Extract decoupled styling fields instead of the old single attribute field
+            color_attribute = kwargs.get("color_attribute", "")
+            size_attribute = kwargs.get("size_attribute", "")
             style_params = kwargs.get("style_params") # Carry style parameters back to UI
             
             if not vector_layer or not dem_layer:
@@ -72,11 +75,13 @@ class Explorer3DEngine(BaseEngine):
             if progress_callback:
                 progress_callback(20, tr("Iterating features and projecting onto elevation grid..."))
                 
+            # Pass both attributes to the updated geometry pipeline
             vectors = self.prepare_vector_layer(
                 vector_layer=vector_layer,
                 dem_layer=dem_layer,
                 extrude_depth=extrude_depth,
-                attribute_field=attribute_field
+                color_attribute=color_attribute,
+                size_attribute=size_attribute
             )
             
             return {
@@ -167,11 +172,12 @@ class Explorer3DEngine(BaseEngine):
         vector_layer: QgsVectorLayer,
         dem_layer: QgsRasterLayer,
         extrude_depth: float = 0.0,
-        attribute_field: str = ""
+        color_attribute: str = "",
+        size_attribute: str = ""
     ) -> List[ThreeDVector]:
         """
-        Processes vector features, projects them, and retrieves optional attribute values
-        for custom scientific colormap categorization.
+        Processes vector features, projects them with clamping, removes duplicate vertices,
+        and retrieves independent attribute values for both color and size styling [1.13.2].
         """
         reader = RasterReader(dem_layer)
         gt = reader.geo_transform
@@ -195,10 +201,9 @@ class Explorer3DEngine(BaseEngine):
             x_center = (x_min + x_max) / 2.0
             y_center = (y_min + y_max) / 2.0
 
-        # Retrieve index of the selected attribute field [No Hardcoding]
-        attr_index = -1
-        if attribute_field:
-            attr_index = vector_layer.fields().indexOf(attribute_field)
+        # Retrieve distinct field indices for color and size variables
+        color_attr_idx = vector_layer.fields().indexOf(color_attribute) if color_attribute else -1
+        size_attr_idx = vector_layer.fields().indexOf(size_attribute) if size_attribute else -1
 
         features = []
 
@@ -216,18 +221,26 @@ class Explorer3DEngine(BaseEngine):
             if geom is None or geom.isEmpty():
                 continue
 
-            geom_type_id = geom.type() 
-            
-            # Extract feature attribute value if valid
-            attribute_val = None
-            if attr_index != -1:
-                val = feature.attribute(attr_index)
+            # Extract distinct color attribute value
+            color_val = 0.0
+            if color_attr_idx != -1:
+                val = feature.attribute(color_attr_idx)
                 try:
-                    attribute_val = float(val) if val is not None else 0.0
+                    color_val = float(val) if val is not None else 0.0
                 except (ValueError, TypeError):
-                    attribute_val = 0.0
+                    color_val = 0.0
 
-            attr_values = [attribute_val] if attribute_val is not None else None
+            # Extract distinct size attribute value
+            size_val = 0.0
+            if size_attr_idx != -1:
+                val = feature.attribute(size_attr_idx)
+                try:
+                    size_val = float(val) if val is not None else 0.0
+                except (ValueError, TypeError):
+                    size_val = 0.0
+
+            # Pack both variables for WebGL decoding
+            attr_values = [color_val, size_val]
 
             for part in geom.constParts():
                 vertices_3d = []
@@ -235,7 +248,7 @@ class Explorer3DEngine(BaseEngine):
                     # 1. Start with the raw vertex in the Vector layer's CRS
                     pt = QgsPointXY(vertex.x(), vertex.y())
 
-                    # 2. Reproject to the DEM's CRS first [Order of Operations Fix]
+                    # 2. Reproject to the DEM's CRS first
                     if transform:
                         try:
                             pt = transform.transform(pt)
@@ -243,7 +256,7 @@ class Explorer3DEngine(BaseEngine):
                             # Skip corrupted or non-transformable coordinates safely
                             continue
 
-                    # 3. Apply the half-pixel clamping now that pt is in DEM CRS [Order of Operations Fix]
+                    # 3. Apply the half-pixel clamping now that pt is in DEM CRS
                     half_pixel_x = pixel_size_x * 0.5
                     half_pixel_y = pixel_size_y * 0.5
 
@@ -269,6 +282,7 @@ class Explorer3DEngine(BaseEngine):
                 if not vertices_3d:
                     continue
 
+                # Clean duplicate consecutive vertices to avoid rendering artifacts in WebGL
                 cleaned_vertices = []
                 for v in vertices_3d:
                     if not cleaned_vertices or v != cleaned_vertices[-1]:

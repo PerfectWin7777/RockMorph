@@ -233,6 +233,7 @@ class Explorer3DPanel(BasePanel):
         # Initial UI state
         self._slot_view_mode_changed()        
         self._slot_selected_raster_changed()
+        self._slot_selected_vector_changed()
 
         self._add_layer_item(tr("🌐  Reference Grid"), element_id="scene_grid")
         self._add_layer_item(tr("📍  Orientation Axes (X, Y, Z)"), element_id="scene_axes")
@@ -424,10 +425,13 @@ class Explorer3DPanel(BasePanel):
         # 4. Collapse-ready Vector Styling Settings Group Box
         self.group_vector_style = QGroupBox(tr("Vector Styling Settings"))
         vector_style_layout = QVBoxLayout(self.group_vector_style)
-        vector_style_layout.setSpacing(6)
+        vector_style_layout.setSpacing(10)
 
-        # Drape Mode Selector
-        vector_style_layout.addWidget(QLabel(tr("Drape visualization mode:")))
+        # ── SECTION 1: GEOMETRY & DRAPE MODE ──
+        lbl_geom_sec = QLabel(tr("1. Geometry & Drape Mode"))
+        lbl_geom_sec.setStyleSheet("font-weight: bold; color: #2c3e50;")
+        vector_style_layout.addWidget(lbl_geom_sec)
+
         self.combo_drape_mode = QComboBox()
         self.combo_drape_mode.addItems([
             tr("Line (Default)"),
@@ -438,39 +442,27 @@ class Explorer3DPanel(BasePanel):
         ])
         vector_style_layout.addWidget(self.combo_drape_mode)
 
-        # Dynamic Mode-Specific Settings Stack
-        self.stacked_vector_settings = QStackedWidget()
+        # Dynamic parameter stack depending on the drape mode
+        self.stacked_geom_settings = QStackedWidget()
 
-        # Page 0: Line/Outline settings [Line Width Slider] 
+        # Page 0: Line/Outline settings (Empty or base line options)
         page_line = QWidget()
-        page_layout = QVBoxLayout(page_line)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        layout_line = QHBoxLayout()
-        layout_line.setContentsMargins(0, 0, 0, 0)
-        page_layout.addWidget(QLabel(tr("Line Width:")))
-        self.slider_line_width = QSlider(Qt.Horizontal)
-        self.slider_line_width.setRange(1, 10)
-        self.slider_line_width.setValue(2)
-        layout_line.addWidget(self.slider_line_width)
-        self.lbl_line_width_val = QLabel("2 px")
-        layout_line.addWidget(self.lbl_line_width_val)
-        page_layout.addLayout(layout_line)
-        self.stacked_vector_settings.addWidget(page_line)
+        self.stacked_geom_settings.addWidget(page_line)
 
-        # Page 1: Curtain depth slider
+        # Page 1: Curtain depth slider (specific to Curtain)
         page_curtain = QWidget()
         layout_curtain = QHBoxLayout(page_curtain)
         layout_curtain.setContentsMargins(0, 0, 0, 0)
         layout_curtain.addWidget(QLabel(tr("Depth:")))
         self.slider_curtain_depth = QSlider(Qt.Horizontal)
-        self.slider_curtain_depth.setRange(1, 2000)
-        self.slider_curtain_depth.setValue(250)
+        self.slider_curtain_depth.setRange(1, 10000)
+        self.slider_curtain_depth.setValue(500)
         layout_curtain.addWidget(self.slider_curtain_depth)
-        self.lbl_curtain_depth_val = QLabel("250 m")
+        self.lbl_curtain_depth_val = QLabel("500 m")
         layout_curtain.addWidget(self.lbl_curtain_depth_val)
-        self.stacked_vector_settings.addWidget(page_curtain)
+        self.stacked_geom_settings.addWidget(page_curtain)
 
-        # Page 2: Polygon opacity slider
+        # Page 2: Polygon opacity slider (specific to Filled Polygon)
         page_opacity = QWidget()
         layout_opacity = QHBoxLayout(page_opacity)
         layout_opacity.setContentsMargins(0, 0, 0, 0)
@@ -481,36 +473,30 @@ class Explorer3DPanel(BasePanel):
         layout_opacity.addWidget(self.slider_polygon_opacity)
         self.lbl_polygon_opacity_val = QLabel("50 %")
         layout_opacity.addWidget(self.lbl_polygon_opacity_val)
-        self.stacked_vector_settings.addWidget(page_opacity)
+        self.stacked_geom_settings.addWidget(page_opacity)
 
-        # Page 3: Point size slider
+        # Page 3: Point marker size base scale (specific to Point)
         page_point = QWidget()
-        layout_point = QHBoxLayout(page_point)
-        layout_point.setContentsMargins(0, 0, 0, 0)
-        layout_point.addWidget(QLabel(tr("Marker Size:")))
-        self.slider_point_size = QSlider(Qt.Horizontal)
-        self.slider_point_size.setRange(1, 50)
-        self.slider_point_size.setValue(15)
-        layout_point.addWidget(self.slider_point_size)
-        self.lbl_point_size_val = QLabel("1.5 m")
-        layout_point.addWidget(self.lbl_point_size_val)
-        self.stacked_vector_settings.addWidget(page_point)
+        self.stacked_geom_settings.addWidget(page_point)
 
-        vector_style_layout.addWidget(self.stacked_vector_settings)
+        vector_style_layout.addWidget(self.stacked_geom_settings)
 
+        # Vertical offset (applicable to all modes)
         vector_style_layout.addWidget(QLabel(tr("Vertical height offset:")))
         row_offset = QHBoxLayout()
         self.slider_height_offset = QSlider(Qt.Horizontal)
-        self.slider_height_offset.setRange(-200, 1000)  
-        self.slider_height_offset.setValue(10)         
+        self.slider_height_offset.setRange(-200, 1000)
+        self.slider_height_offset.setValue(10)
         row_offset.addWidget(self.slider_height_offset)
         self.lbl_height_offset_val = QLabel("10 m")
         row_offset.addWidget(self.lbl_height_offset_val)
         vector_style_layout.addLayout(row_offset)
 
+        # ── SECTION 2: COLORIZATION (Decoupled) ──
+        lbl_color_sec = QLabel(tr("2. Colorization Method"))
+        lbl_color_sec.setStyleSheet("font-weight: bold; color: #2c3e50;")
+        vector_style_layout.addWidget(lbl_color_sec)
 
-        # Color Styling Selector
-        vector_style_layout.addWidget(QLabel(tr("Coloring method:")))
         self.combo_color_styling = QComboBox()
         self.combo_color_styling.addItems([
             tr("Fixed Uniform Color"),
@@ -518,19 +504,9 @@ class Explorer3DPanel(BasePanel):
         ])
         vector_style_layout.addWidget(self.combo_color_styling)
 
-        # Thickness/Size Scaling Selector [New]
-        vector_style_layout.addWidget(QLabel(tr("Thickness/Size scaling method:")))
-        self.combo_width_styling = QComboBox()
-        self.combo_width_styling.addItems([
-            tr("Fixed Constant Size"),
-            tr("Scale Size by Attribute Value")
-        ])
-        vector_style_layout.addWidget(self.combo_width_styling)
-
-        # Dynamic Color Settings Stack
         self.stacked_color_settings = QStackedWidget()
 
-        # Page 0: Simple fixed color picker
+        # Page 0: Fixed Color Picker
         page_fixed_color = QWidget()
         layout_fixed = QVBoxLayout(page_fixed_color)
         layout_fixed.setContentsMargins(0, 0, 0, 0)
@@ -538,27 +514,93 @@ class Explorer3DPanel(BasePanel):
         layout_fixed.addWidget(self.btn_vector_fixed_color)
         self.stacked_color_settings.addWidget(page_fixed_color)
 
-        # Page 1: Attribute categorization + colormap selector
+        # Page 1: Attribute Color (completely independent dropdown)
         page_attribute_color = QWidget()
         layout_attrib = QVBoxLayout(page_attribute_color)
         layout_attrib.setContentsMargins(0, 0, 0, 0)
         layout_attrib.setSpacing(4)
 
-        row_attr = QHBoxLayout()
-        row_attr.addWidget(QLabel(tr("Attribute Field:")))
-        self.combo_vector_attribute = QComboBox()
-        row_attr.addWidget(self.combo_vector_attribute)
-        layout_attrib.addLayout(row_attr)
+        row_attr_c = QHBoxLayout()
+        row_attr_c.addWidget(QLabel(tr("Color Field:")))
+        self.combo_color_attribute = QComboBox()
+        row_attr_c.addWidget(self.combo_color_attribute)
+        layout_attrib.addLayout(row_attr_c)
 
         row_cmap = QHBoxLayout()
         row_cmap.addWidget(QLabel(tr("Palette Ramp:")))
         self.combo_vector_colormap = QComboBox()
-        self.combo_vector_colormap.addItems(["terrain", "viridis", "magma", "plasma", "cividis"])
+        self.combo_vector_colormap.addItems([
+            # Perceptually Uniform Sequential (Best for continuous data & colorblind-friendly)
+            "viridis", "plasma", "inferno", "magma", "cividis", "turbo",
+            
+            # Diverging (Best for highlights relative to a central value/zero)
+            "coolwarm", "bwr", "RdBu", "seismic",
+            
+            # Sequential & Thematic (Best for geographical or density data)
+            "terrain", "ocean", "YlGnBu",
+            
+            # Qualitative (Best for distinct categories or distinct vector groups)
+            "tab10", "Set2"
+        ])
+
+
         row_cmap.addWidget(self.combo_vector_colormap)
         layout_attrib.addLayout(row_cmap)
 
         self.stacked_color_settings.addWidget(page_attribute_color)
         vector_style_layout.addWidget(self.stacked_color_settings)
+
+        # ── SECTION 3: SIZE & THICKNESS SCALING (Decoupled) ──
+        lbl_size_sec = QLabel(tr("3. Dimension & Thickness Scaling"))
+        lbl_size_sec.setStyleSheet("font-weight: bold; color: #2c3e50;")
+        vector_style_layout.addWidget(lbl_size_sec)
+
+        self.combo_width_styling = QComboBox()
+        self.combo_width_styling.addItems([
+            tr("Fixed Constant Size"),
+            tr("Scale Size by Attribute Value")
+        ])
+        vector_style_layout.addWidget(self.combo_width_styling)
+
+        self.stacked_width_settings = QStackedWidget()
+
+        # Page 0: Fixed Constant Size (Line width / Point size slider)
+        page_fixed_width = QWidget()
+        layout_fixed_w = QHBoxLayout(page_fixed_width)
+        layout_fixed_w.setContentsMargins(0, 0, 0, 0)
+        layout_fixed_w.addWidget(QLabel(tr("Size:")))
+        self.slider_fixed_size = QSlider(Qt.Horizontal)
+        self.slider_fixed_size.setRange(1, 50)
+        self.slider_fixed_size.setValue(15)
+        layout_fixed_w.addWidget(self.slider_fixed_size)
+        self.lbl_fixed_size_val = QLabel("1.5")
+        layout_fixed_w.addWidget(self.lbl_fixed_size_val)
+        self.stacked_width_settings.addWidget(page_fixed_width)
+
+        # Page 1: Attribute Sizing (completely independent dropdown)
+        page_attribute_size = QWidget()
+        layout_attrib_s = QVBoxLayout(page_attribute_size)
+        layout_attrib_s.setContentsMargins(0, 0, 0, 0)
+        layout_attrib_s.setSpacing(4)
+
+        row_attr_s = QHBoxLayout()
+        row_attr_s.addWidget(QLabel(tr("Sizing Field:")))
+        self.combo_size_attribute = QComboBox()
+        row_attr_s.addWidget(self.combo_size_attribute)
+        layout_attrib_s.addLayout(row_attr_s)
+
+        row_max_w = QHBoxLayout()
+        row_max_w.addWidget(QLabel(tr("Max Size Limit:")))
+        self.slider_max_size_scale = QSlider(Qt.Horizontal)
+        self.slider_max_size_scale.setRange(10, 100)
+        self.slider_max_size_scale.setValue(50)
+        row_max_w.addWidget(self.slider_max_size_scale)
+        self.lbl_max_size_scale_val = QLabel("5.0 ×")
+        row_max_w.addWidget(self.lbl_max_size_scale_val)
+        layout_attrib_s.addLayout(row_max_w)
+
+        self.stacked_width_settings.addWidget(page_attribute_size)
+        vector_style_layout.addWidget(self.stacked_width_settings)
 
         layout.addWidget(self.group_vector_style)
         # layout.addStretch()
@@ -990,42 +1032,46 @@ class Explorer3DPanel(BasePanel):
         # ── Vector Layer Interactivity & Styling ─────────────────────────
         self.combo_vector.currentIndexChanged.connect(self._slot_selected_vector_changed)
         self.combo_drape_mode.currentIndexChanged.connect(self._slot_drape_mode_changed)
-        self.combo_color_styling.currentIndexChanged.connect(self.stacked_color_settings.setCurrentIndex)
         
+        # Connect independent style method combo-boxes to their respective sub-panels
+        self.combo_color_styling.currentIndexChanged.connect(self.stacked_color_settings.setCurrentIndex)
+        self.combo_width_styling.currentIndexChanged.connect(self.stacked_width_settings.setCurrentIndex)
+        self.btn_vector_fixed_color.clicked.connect(
+            lambda: self._slot_pick_color_for("vector_fixed", self.btn_vector_fixed_color)
+        )
+
+        # Real-time UI label updates
         self.slider_curtain_depth.valueChanged.connect(
             lambda v: self.lbl_curtain_depth_val.setText(f"{v} m")
         )
         self.slider_polygon_opacity.valueChanged.connect(
             lambda v: self.lbl_polygon_opacity_val.setText(f"{v} %")
         )
-        self.slider_point_size.valueChanged.connect(
-            lambda v: self.lbl_point_size_val.setText(f"{v/10.0:.1f} m")
+        self.slider_fixed_size.valueChanged.connect(
+            lambda v: self.lbl_fixed_size_val.setText(f"{v/10.0:.1f}")
         )
-        
-        self.btn_vector_fixed_color.clicked.connect(
-            lambda: self._slot_pick_color_for("vector_fixed", self.btn_vector_fixed_color)
-        )
-        self.btn_delete_object.clicked.connect(self._slot_delete_scene_object)
-
-        # Connect dynamic triggers to the debouncer [New]
-        self.combo_drape_mode.currentIndexChanged.connect(self._slot_style_parameter_changed)
-        self.slider_line_width.valueChanged.connect(self._slot_style_parameter_changed)
-        self.slider_curtain_depth.valueChanged.connect(self._slot_style_parameter_changed)
-        self.slider_polygon_opacity.valueChanged.connect(self._slot_style_parameter_changed)
-        self.slider_point_size.valueChanged.connect(self._slot_style_parameter_changed)
-        self.combo_color_styling.currentIndexChanged.connect(self._slot_style_parameter_changed)
-        self.combo_width_styling.currentIndexChanged.connect(self._slot_style_parameter_changed)
-        self.combo_vector_attribute.currentIndexChanged.connect(self._slot_style_parameter_changed)
-        self.combo_vector_colormap.currentIndexChanged.connect(self._slot_style_parameter_changed)
-        self.slider_height_offset.valueChanged.connect(self._slot_style_parameter_changed)
-        
-        # Connect labels
-        self.slider_line_width.valueChanged.connect(
-            lambda v: self.lbl_line_width_val.setText(f"{v} px")
+        self.slider_max_size_scale.valueChanged.connect(
+            lambda v: self.lbl_max_size_scale_val.setText(f"{v/10.0:.1f} ×")
         )
         self.slider_height_offset.valueChanged.connect(
             lambda v: self.lbl_height_offset_val.setText(f"{v} m")
         )
+
+        # Trigger real-time style recalculation with debounce on change events
+        self.combo_drape_mode.currentIndexChanged.connect(self._slot_style_parameter_changed)
+        self.slider_curtain_depth.valueChanged.connect(self._slot_style_parameter_changed)
+        self.slider_polygon_opacity.valueChanged.connect(self._slot_style_parameter_changed)
+        self.slider_fixed_size.valueChanged.connect(self._slot_style_parameter_changed)
+        self.slider_max_size_scale.valueChanged.connect(self._slot_style_parameter_changed)
+        self.slider_height_offset.valueChanged.connect(self._slot_style_parameter_changed)
+        
+        self.combo_color_styling.currentIndexChanged.connect(self._slot_style_parameter_changed)
+        self.combo_color_attribute.currentIndexChanged.connect(self._slot_style_parameter_changed)
+        self.combo_vector_colormap.currentIndexChanged.connect(self._slot_style_parameter_changed)
+        
+        self.combo_width_styling.currentIndexChanged.connect(self._slot_style_parameter_changed)
+        self.combo_size_attribute.currentIndexChanged.connect(self._slot_style_parameter_changed)
+
         
         # ── Page 2 — Symbology ───────────────────────────────────────────
         self.combo_symbology_render_mode.currentIndexChanged.connect(self._slot_render_mode_changed)
@@ -1245,7 +1291,7 @@ class Explorer3DPanel(BasePanel):
         if selected_drape_mode == "point":
             point_marker_size = float(self.slider_point_size.value() / 10.0)
         
-        line_width = float(self.slider_line_width.value())
+        line_width = float(self.slider_fixed_size.value() / 10.0)
         height_offset = float(self.slider_height_offset.value())
 
         # Color configurations
@@ -1253,22 +1299,25 @@ class Explorer3DPanel(BasePanel):
         color_styling = "fixed" if color_styling_idx == 0 else "attribute"
 
         fixed_color_hex = self.btn_vector_fixed_color.property("color_hex") or "#3498db"
-        
-        # Always extract the current selected attribute field to ensure the data is cached in WebGL
-        attribute_field = self.combo_vector_attribute.currentText()
+        # Extract attribute fields directly from UI dropdowns
+        color_attribute = self.combo_color_attribute.currentText()
+        size_attribute = self.combo_size_attribute.currentText()
         vector_colormap = self.combo_vector_colormap.currentText() or "terrain"
+
 
         # 2. Show progress panel feedback
         self.set_loading_state(True, tr("Draping complex geometries onto 3D terrain..."), total=100)
 
         # 3. Setup and dispatch the background task
+        
+        # Setup and dispatch the background task with independent attribute fields
         params = {
             "task_type": "prepare_vectors",
             "vector_layer": vec_layer,
             "dem_layer": dem_layer,
             "extrude_depth": extrude_depth,
-            "attribute_field": attribute_field,
-            # Packaging UI parameters so they return to main thread on completion (stateless)
+            "color_attribute": color_attribute, 
+            "size_attribute": size_attribute,   
             "style_params": {
                 "selected_drape_mode": selected_drape_mode,
                 "polygon_opacity": polygon_opacity,
@@ -1276,9 +1325,10 @@ class Explorer3DPanel(BasePanel):
                 "line_width": line_width,
                 "height_offset": height_offset,
                 "color_styling": color_styling,
-                "width_styling": "fixed" if self.combo_width_styling.currentIndex() == 0 else "attribute", # Pass the sizing mode
+                "width_styling": "fixed" if self.combo_width_styling.currentIndex() == 0 else "attribute",
                 "fixed_color_hex": fixed_color_hex,
-                "attribute_field": attribute_field,
+                "color_attribute": color_attribute,
+                "size_attribute": size_attribute,
                 "vector_colormap": vector_colormap,
                 "vec_layer_id": vec_layer.id(),
                 "vec_layer_name": vec_layer.name()
@@ -1317,7 +1367,6 @@ class Explorer3DPanel(BasePanel):
         color_styling = style_params["color_styling"]
         width_styling = style_params["width_styling"]
         fixed_color_hex = style_params["fixed_color_hex"]
-        attribute_field = style_params["attribute_field"]
         vector_colormap = style_params["vector_colormap"]
         vec_layer_id = style_params["vec_layer_id"]
         vec_layer_name = style_params["vec_layer_name"]
@@ -1376,27 +1425,28 @@ class Explorer3DPanel(BasePanel):
 
 
     def _slot_selected_vector_changed(self) -> None:
-        """Triggered when the selected vector layer changes. Populates field columns."""
+        """Triggered when the active vector layer changes. Populates field columns."""
         layer = self.combo_vector.currentLayer()
-        self.combo_vector_attribute.clear()
+        self.combo_color_attribute.clear()
+        self.combo_size_attribute.clear()
         if not layer:
             return
         
-        # Pull field names from the QGIS Vector layer provider
         fields = layer.fields()
         for field in fields:
-            self.combo_vector_attribute.addItem(field.name())
+            self.combo_color_attribute.addItem(field.name())
+            self.combo_size_attribute.addItem(field.name())
 
     def _slot_drape_mode_changed(self, index: int) -> None:
         """Swap configuration pages based on the chosen drape visualization."""
         if index == 1:    # Curtain
-            self.stacked_vector_settings.setCurrentIndex(1)
+            self.stacked_geom_settings.setCurrentIndex(1)
         elif index == 3:  # Polygon Filled
-            self.stacked_vector_settings.setCurrentIndex(2)
+            self.stacked_geom_settings.setCurrentIndex(2)
         elif index == 4:  # Point Markers
-            self.stacked_vector_settings.setCurrentIndex(3)
+            self.stacked_geom_settings.setCurrentIndex(3)
         else:             # Line (0) or Polygon Outline (2)
-            self.stacked_vector_settings.setCurrentIndex(0)
+            self.stacked_geom_settings.setCurrentIndex(0)
             
         # Trigger an immediate style preview update
         self._slot_style_parameter_changed()
@@ -1418,47 +1468,34 @@ class Explorer3DPanel(BasePanel):
             if len(vector_items) == 1:
                 current_item = vector_items[0]
                 self.list_layers.setCurrentItem(current_item)
-
+                
         if not current_item or not self.is_3d_active:
             return
 
         element_id = current_item.data(Qt.UserRole)
-        # Skip if system layout layers are selected
-        if not element_id or element_id in ["block_base", "scene_grid", "scene_axes"]:
+        if not element_id or element_id in ["block_base", "scene_grid", "scene_axes", "scene_legend"]:
             return
             
-        
-        # Read values from widgets
         drape_mode_idx = self.combo_drape_mode.currentIndex()
         drape_modes = ["line", "curtain", "outline", "filled", "point"]
         selected_drape_mode = drape_modes[drape_mode_idx]
 
-        # Explicitly isolate parameter values to prevent attribute leakage [Fix 1]
-        extrude_depth = 0.0
-        if selected_drape_mode == "curtain":
-            extrude_depth = float(self.slider_curtain_depth.value())
-
-        polygon_opacity = 1.0
-        if selected_drape_mode == "filled":
-            polygon_opacity = float(self.slider_polygon_opacity.value() / 100.0)
-
-        point_marker_size = 1.0
-        if selected_drape_mode == "point":
-            point_marker_size = float(self.slider_point_size.value() / 10.0)
-
-        line_width = float(self.slider_line_width.value())
+        # Geometry specific properties
+        extrude_depth = float(self.slider_curtain_depth.value()) if selected_drape_mode == "curtain" else 0.0
+        polygon_opacity = float(self.slider_polygon_opacity.value() / 100.0) if selected_drape_mode == "filled" else 1.0
         height_offset = float(self.slider_height_offset.value())
-        
-        # Sizing and Colors modes
-        width_styling_idx = self.combo_width_styling.currentIndex()
-        width_styling = "fixed" if width_styling_idx == 0 else "attribute"
 
-        # Colors
-        color_styling_idx = self.combo_color_styling.currentIndex()
-        color_styling = "fixed" if color_styling_idx == 0 else "attribute"
+        # Decoupled Colors Settings
+        color_styling = "fixed" if self.combo_color_styling.currentIndex() == 0 else "attribute"
         fixed_color_hex = self.btn_vector_fixed_color.property("color_hex") or "#3498db"
-        attribute_field = self.combo_vector_attribute.currentText()
+        color_attribute = self.combo_color_attribute.currentText()
         vector_colormap = self.combo_vector_colormap.currentText() or "terrain"
+
+        # Decoupled Sizing/Dimensions Settings
+        width_styling = "fixed" if self.combo_width_styling.currentIndex() == 0 else "attribute"
+        base_fixed_size = float(self.slider_fixed_size.value() / 10.0)
+        max_size_scale = float(self.slider_max_size_scale.value() / 10.0)
+        size_attribute = self.combo_size_attribute.currentText()
 
         self._js({
             "action": "update_vector_style",
@@ -1467,14 +1504,17 @@ class Explorer3DPanel(BasePanel):
                 "geom_type": selected_drape_mode,
                 "extrude_depth": extrude_depth,
                 "polygon_opacity": polygon_opacity,
-                "point_marker_size": point_marker_size,
-                "line_width": line_width,
                 "height_offset": height_offset,
                 "color_styling": color_styling,
-                "width_styling": width_styling,
                 "fixed_color": fixed_color_hex,
-                "attribute_field": attribute_field,
-                "vector_colormap": vector_colormap
+                "color_attribute": color_attribute,
+                "vector_colormap": vector_colormap,
+                "width_styling": width_styling,
+                "base_fixed_size": base_fixed_size,
+                "line_width": base_fixed_size,         
+                "point_marker_size": base_fixed_size,   
+                "max_size_scale": max_size_scale,
+                "size_attribute": size_attribute
             }
         })
 
