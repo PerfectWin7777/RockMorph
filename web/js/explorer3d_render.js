@@ -827,6 +827,9 @@ function _buildTerrain(data) {
     );
 
     const positions = geometry.attributes.position.array;
+    // ── Generate High-Fidelity Float32 Heightmap Texture for GPU Shading ──
+
+    const floatData = new Float32Array(width * height);
     const colors = [];
     const indices = [];
 
@@ -837,6 +840,10 @@ function _buildTerrain(data) {
 
     let vi = 0;
     for (let j = 0; j < height; j++) {
+        // Pre-calculate the mirrored row offset to align texture with WebGL UV coordinates (Y-Flip)
+        const mirroredY = height - 1 - j;
+        const rowOffset = mirroredY * width;
+
         for (let i = 0; i < width; i++) {
             const rawZ = data.z_values[j][i];
             let z = 0;
@@ -852,6 +859,10 @@ function _buildTerrain(data) {
             const c = _sampleRamp(activeRamp, currentColormapReverse ? 1 - t : t);
             colors.push(c.r, c.g, c.b);
 
+            // Populate the Float32 heightmap texture array directly by writing to the mirrored row
+            const normZ = (rawZ - data.z_min) / (data.z_max - data.z_min || 1.0);
+            floatData[rowOffset + i] = isNaN(normZ) ? 0.0 : normZ;
+
             // Build index buffer, skip NoData quads
             if (j < height - 1 && i < width - 1) {
                 const vTL = j * width + i;
@@ -866,8 +877,8 @@ function _buildTerrain(data) {
             }
         }
     }
-    
-    geometry.attributes.position.needsUpdate = true; 
+
+    geometry.attributes.position.needsUpdate = true;
 
     geometry.setIndex(indices);
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
@@ -877,18 +888,7 @@ function _buildTerrain(data) {
         geometry.attributes.normal.needsUpdate = true;
     }
 
-    // ShaderMaterial customized with standard parameters
-    // ── Generate High-Fidelity Float32 Heightmap Texture for GPU Shading ──
-    const floatData = new Float32Array(width * height);
-    let floatIdx = 0;
-    // Scan rows from bottom to top (j = height - 1 down to 0) to align with WebGL UV vertical axis
-    for (let j = height - 1; j >= 0; j--) {
-        for (let i = 0; i < width; i++) {
-            const rawZ = data.z_values[j][i];
-            const normZ = (rawZ - data.z_min) / (data.z_max - data.z_min || 1.0);
-            floatData[floatIdx++] = isNaN(normZ) ? 0.0 : normZ;
-        }
-    }
+    // Generate heightmap texture using the pre-populated floatData array
     const heightTexture = new THREE.DataTexture(floatData, width, height, THREE.RedFormat, THREE.FloatType);
     heightTexture.minFilter = THREE.LinearFilter;
     heightTexture.magFilter = THREE.LinearFilter;
