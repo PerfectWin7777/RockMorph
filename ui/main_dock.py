@@ -103,7 +103,7 @@ class RockMorphDock(QDockWidget):
         self.setWidget(container)
 
         # Initial launch tool: Open Mountain Front Sinuosity by default
-        self.switch_to_tool("hydroflow")
+        self.switch_to_tool("terrainderivatives")
 
     def _build_qgis_menus(self):
         """

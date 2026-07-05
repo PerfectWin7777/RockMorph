@@ -65,10 +65,16 @@ class OutputSelectorWidget(QWidget):
 
         # 2. Path Selection Container
         self.path_container = QWidget()
-        path_layout = QHBoxLayout(self.path_container)
+        path_layout = QVBoxLayout(self.path_container)
         # Only indent path inputs if there is a checkbox on top [2]
         path_layout.setContentsMargins(18 if self.show_checkbox else 0, 0, 0, 0)
         path_layout.setSpacing(6)
+
+        # Row A (Horizontal): Path LineEdit + Browse Button
+        row_file = QWidget()
+        row_file_layout = QHBoxLayout(row_file)
+        row_file_layout.setContentsMargins(0, 0, 0, 0)
+        row_file_layout.setSpacing(6)
 
         self.txt_path = QLineEdit()
         self.txt_path.setText(self.default_temp_path)
@@ -88,8 +94,9 @@ class OutputSelectorWidget(QWidget):
         self.btn_browse.setFixedHeight(20)
         self.btn_browse.clicked.connect(self._on_browse)
 
-        path_layout.addWidget(self.txt_path, stretch=1)
-        path_layout.addWidget(self.btn_browse)
+        row_file_layout.addWidget(self.txt_path, stretch=1)
+        row_file_layout.addWidget(self.btn_browse)
+        path_layout.addWidget(row_file) # Added as first row
 
         layout.addWidget(self.path_container)
 
@@ -124,7 +131,7 @@ class OutputSelectorWidget(QWidget):
                     font-size: 11px;
                 }
             """)
-
+    
     # ── Public APIs ──
 
     def isChecked(self) -> bool:
@@ -144,3 +151,11 @@ class OutputSelectorWidget(QWidget):
         if self.show_checkbox and not self.checkbox.isChecked():
             return "TEMPORARY_OUTPUT"
         return self.txt_path.text().strip()
+    
+    def addSettingsWidget(self, widget: QWidget) -> None:
+        """
+        Dynamically appends a custom settings widget (e.g. azimuth/altitude sliders)
+        inside the collapsible path container [2].
+        """
+        # Append the custom settings layout to the existing path container layout
+        self.path_container.layout().addWidget(widget)

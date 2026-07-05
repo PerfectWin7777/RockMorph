@@ -90,6 +90,12 @@ TOOL_REGISTRY = {
                 "module_path": "rockmorph.tools.watershed.panel",
                 "class_name": "WatershedPanel",
                 "desc": tr("Hierarchically subdivides watersheds into ranked sub-basins based on confluences or area thresholds.")
+            },
+            "terrainderivatives": {
+                "name": tr("Terrain Derivatives"),
+                "module_path": "rockmorph.tools.terrainderivatives.panel",
+                "class_name": "TerrainDerivativesPanel",
+                "desc": tr("Computes slope, aspect, hillshading, TPI, TRI, and python-native openness or Sky View Factor.")
             }
         }
     },
