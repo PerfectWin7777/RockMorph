@@ -1130,11 +1130,11 @@ class Explorer3DPanel(BasePanel):
         # Wipe out python vector cache to prevent ghost vector overlays in standalone HTML exports
         self._loaded_vectors = []
 
-        # Keep permanent system layers, only prune old vector overlays
+       # Keep permanent layout layers (grid, axes, legend), prune old vector overlays and block base controls
         for i in range(self.list_layers.count() - 1, -1, -1):
             item = self.list_layers.item(i)
             elem_id = item.data(Qt.UserRole)
-            if elem_id and elem_id.startswith("vector_"):
+            if elem_id and (elem_id.startswith("vector_") or elem_id == "block_base"):
                 self.list_layers.takeItem(i)
 
         # 1. Show the built-in professional progress feedback panel
