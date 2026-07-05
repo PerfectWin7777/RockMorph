@@ -51,6 +51,8 @@ let legendVisibleUserPref = true; // Authoritative user visibility preference fo
 // Wall vertex index mappings for synchronized Z-scale updates.
 let wallVertexMappings = [];
 
+let currentShadingMode = 0; //  0: Phong, 1: Gouraud, 2: Flat 
+
 // Cached reference to the wall mesh for Z-scale sync
 let wallMesh = null;
 
@@ -100,16 +102,66 @@ let globalMultidirectional = false; // Toggle between single sun and GIS 4-way h
 
 const terrainVertexShader = `
     attribute vec3 color;
+    
+    uniform vec3 uSunDirection;
+    uniform vec3 uSunColor;
+    uniform float uSunIntensity;
+    uniform float uAmbientIntensity;
+    uniform bool uMultidirectional;
+    uniform int uShadingMode;
+
     varying vec3 vNormal;
-    varying vec3 vColor;
     varying vec3 vWorldNormal;
-    varying vec2 vUv; // Pass UV coordinates to fragment shader
+    varying vec3 vColor;
+    varying vec2 vUv;
+    varying vec3 vViewPosition;
+    varying vec3 vGouraudLighting; // Pass per-vertex calculated light color to fragment shader
 
     void main() {
         vNormal = normalize(normalMatrix * normal);
         vWorldNormal = normalize(normal);
         vColor = color;
-        vUv = uv; // Capture default plane geometry UVs
+        vUv = uv;
+
+        // View space position for flat shader screen derivatives calculation
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        vViewPosition = -mvPosition.xyz;
+
+        // Default flat lighting fallback
+        vGouraudLighting = vec3(1.0);
+
+        if (uShadingMode == 1) { // Pure Gouraud per-vertex lighting mode
+            vec3 normalVec = normalize(vNormal);
+            vec3 worldNormalVec = normalize(vWorldNormal);
+            
+            // Hemisphere Ambient Light calculation
+            vec3 skyColor = vec3(0.55, 0.68, 0.85);
+            vec3 groundColor = vec3(0.20, 0.17, 0.13);
+            float hemiMix = worldNormalVec.z * 0.5 + 0.5;
+            vec3 ambient = mix(groundColor, skyColor, hemiMix) * uAmbientIntensity;
+            
+            // Standard diffuse term
+            vec3 L0 = normalize(uSunDirection);
+            float diffuseTerm = 0.0;
+
+            if (uMultidirectional) {
+                vec3 L1 = vec3(-L0.y, L0.x, L0.z);
+                vec3 L2 = vec3(-L0.x, -L0.y, L0.z);
+                vec3 L3 = vec3(L0.y, -L0.x, L0.z);
+
+                float d0 = max(dot(normalVec, L0), 0.0);
+                float d1 = max(dot(normalVec, L1), 0.0);
+                float d2 = max(dot(normalVec, L2), 0.0);
+                float d3 = max(dot(normalVec, L3), 0.0);
+
+                diffuseTerm = d0 * 0.4 + d1 * 0.2 + d2 * 0.2 + d3 * 0.2;
+            } else {
+                diffuseTerm = max(dot(normalVec, L0), 0.0);
+            }
+            
+            vGouraudLighting = ambient + (uSunColor * diffuseTerm * uSunIntensity);
+        }
+        
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }
 `;
@@ -126,76 +178,96 @@ const terrainFragmentShader = `
     uniform float uRoughness;
     uniform float uSlopeContrast;
     uniform bool uMultidirectional;
-
-    // Heightmap textures and dimensions [New]
     uniform sampler2D uHeightmap;
     uniform vec2 uTextureSize;
     uniform float uZScale;
+    uniform int uShadingMode;
 
     varying vec3 vNormal;
     varying vec3 vWorldNormal;
     varying vec3 vColor;
     varying vec2 vUv;
+    varying vec3 vViewPosition;
+    varying vec3 vGouraudLighting;
 
     void main() {
-        // Calculate offset step (one texel size)
-        vec2 texelSize = 1.0 / uTextureSize;
+        vec3 normal = vec3(0.0);
+        vec3 worldNormal = vec3(0.0);
 
-        // Sample raw elevations of the 4 direct neighbors
-        float hL = texture2D(uHeightmap, vUv + vec2(-texelSize.x, 0.0)).r;
-        float hR = texture2D(uHeightmap, vUv + vec2(texelSize.x, 0.0)).r;
-        float hB = texture2D(uHeightmap, vUv + vec2(0.0, -texelSize.y)).r;
-        float hT = texture2D(uHeightmap, vUv + vec2(0.0, texelSize.y)).r;
+        // ── CASE 1: PHONG SHADING (High-fidelity per-pixel normal mapping) ─
+        if (uShadingMode == 0) {
+            vec2 texelSize = 1.0 / uTextureSize;
 
-        // Compute local gradients on-the-fly (scaled to prevent spikes)
-        float scale = 30.0 * uZScale;
-        float dX = (hR - hL) * scale;
-        float dY = (hT - hB) * scale;
+            float hL = texture2D(uHeightmap, vUv + vec2(-texelSize.x, 0.0)).r;
+            float hR = texture2D(uHeightmap, vUv + vec2(texelSize.x, 0.0)).r;
+            float hB = texture2D(uHeightmap, vUv + vec2(0.0, -texelSize.y)).r;
+            float hT = texture2D(uHeightmap, vUv + vec2(0.0, texelSize.y)).r;
 
-        // Generate analytical high-fidelity normal vector
-        vec3 worldNormal = normalize(vec3(-dX, -dY, 1.0));
-        vec3 normal = worldNormal;
-        
-        // Hemisphere Ambient Light (Cool sky / Warm ground reflection)
-        vec3 skyColor = vec3(0.55, 0.68, 0.85);
-        vec3 groundColor = vec3(0.20, 0.17, 0.13);
-        float hemiMix = worldNormal.z * 0.5 + 0.5;
-        vec3 ambient = mix(groundColor, skyColor, hemiMix) * uAmbientIntensity;
-        
-        // Multidirectional Shading (GIS 4-Axis Mode) vs Single-Directional Shading
-        vec3 L0 = normalize(uSunDirection);
-        float diffuseTerm = 0.0;
+            float scale = 30.0 * uZScale;
+            float dX = (hR - hL) * scale;
+            float dY = (hT - hB) * scale;
 
-        if (uMultidirectional) {
-            vec3 L1 = vec3(-L0.y, L0.x, L0.z);
-            vec3 L2 = vec3(-L0.x, -L0.y, L0.z);
-            vec3 L3 = vec3(L0.y, -L0.x, L0.z);
-
-            float d0 = max(dot(normal, L0), 0.0);
-            float d1 = max(dot(normal, L1), 0.0);
-            float d2 = max(dot(normal, L2), 0.0);
-            float d3 = max(dot(normal, L3), 0.0);
-
-            diffuseTerm = d0 * 0.4 + d1 * 0.2 + d2 * 0.2 + d3 * 0.2;
-        } else {
-            diffuseTerm = max(dot(normal, L0), 0.0);
+            worldNormal = normalize(vec3(-dX, -dY, 1.0));
+            normal = worldNormal;
+        } 
+        // ── CASE 2: FLAT SHADING (Faceted screen-space derivatives) ────────
+        else if (uShadingMode == 2) {
+            // Compute geometric normal vector of the triangle face dynamically
+            vec3 fdx = dFdx(vViewPosition);
+            vec3 fdy = dFdy(vViewPosition);
+            normal = normalize(cross(fdx, fdy));
+            worldNormal = normal; 
         }
 
-        // Apply amplified Oren-Nayar retro-reflection factor
-        float roughness2 = uRoughness * uRoughness * 1.8;
-        float orenNayarFactor = 1.0 - 0.75 * (roughness2 / (roughness2 + 0.25));
-        float directDiffuse = diffuseTerm * orenNayarFactor;
-        
-        // Slope shading accentuation (darken steep incisions based on normal Z tilt)
-        float slopeFactor = pow(clamp(worldNormal.z, 0.0, 1.0), 1.0 + uSlopeContrast * 25.0);
-        
         vec3 baseTerrainColor = uUseVertexColors ? vColor : uSolidColor;
-        vec3 baseLighting = (ambient * slopeFactor) + (uSunColor * directDiffuse * uSunIntensity);
-        
-        // Apply slope shadow globally to both ambient and diffuse components for maximum tectonic pop
-        vec3 finalLighting = baseLighting * mix(1.0, slopeFactor, uSlopeContrast * 0.75);
-        
-        gl_FragColor = vec4(baseTerrainColor * finalLighting, 1.0);
+        vec3 finalColor = vec3(0.0);
+
+        // ── CASE 3: GOURAUD SHADING ──────────────────────────────────────
+        if (uShadingMode == 1) {
+            finalColor = baseTerrainColor * vGouraudLighting;
+        } 
+        // ── PER-PIXEL SHADING CALCULATION (Phong & Flat) ──────────────────
+        else {
+            // Hemisphere Ambient Light (Cool sky / Warm ground reflection)
+            vec3 skyColor = vec3(0.55, 0.68, 0.85);
+            vec3 groundColor = vec3(0.20, 0.17, 0.13);
+            float hemiMix = worldNormal.z * 0.5 + 0.5;
+            vec3 ambient = mix(groundColor, skyColor, hemiMix) * uAmbientIntensity;
+            
+            // Multidirectional Shading (GIS 4-Axis Mode) vs Single-Directional Shading
+            vec3 L0 = normalize(uSunDirection);
+            float diffuseTerm = 0.0;
+
+            if (uMultidirectional) {
+                vec3 L1 = vec3(-L0.y, L0.x, L0.z);
+                vec3 L2 = vec3(-L0.x, -L0.y, L0.z);
+                vec3 L3 = vec3(L0.y, -L0.x, L0.z);
+
+                float d0 = max(dot(normal, L0), 0.0);
+                float d1 = max(dot(normal, L1), 0.0);
+                float d2 = max(dot(normal, L2), 0.0);
+                float d3 = max(dot(normal, L3), 0.0);
+
+                diffuseTerm = d0 * 0.4 + d1 * 0.2 + d2 * 0.2 + d3 * 0.2;
+            } else {
+                diffuseTerm = max(dot(normal, L0), 0.0);
+            }
+
+            // Apply amplified Oren-Nayar retro-reflection factor
+            float roughness2 = uRoughness * uRoughness * 1.8;
+            float orenNayarFactor = 1.0 - 0.75 * (roughness2 / (roughness2 + 0.25));
+            float directDiffuse = diffuseTerm * orenNayarFactor;
+            
+            // Slope shading accentuation (darken steep incisions based on normal Z tilt)
+            float slopeFactor = pow(clamp(worldNormal.z, 0.0, 1.0), 1.0 + uSlopeContrast * 25.0);
+            
+            vec3 baseLighting = (ambient * slopeFactor) + (uSunColor * directDiffuse * uSunIntensity);
+            
+            // Apply slope shadow globally to both ambient and diffuse components for maximum tectonic pop
+            finalColor = baseTerrainColor * baseLighting * mix(1.0, slopeFactor, uSlopeContrast * 0.75);
+        }
+
+        gl_FragColor = vec4(finalColor, 1.0);
     }
 `;
 
@@ -215,6 +287,7 @@ function createCustomMaterial(useVertexColors, solidColorObj, heightTexture, wid
             uRoughness: { value: globalRoughness },
             uSlopeContrast: { value: globalSlopeContrast },
             uMultidirectional: { value: globalMultidirectional },
+            uShadingMode: { value: currentShadingMode }, // Bind shading mode uniform
             // Analytical Heightmap Shading Uniforms [New]
             uHeightmap: { value: heightTexture || null },
             uTextureSize: { value: new THREE.Vector2(width || 100, height || 100) },
@@ -1826,16 +1899,24 @@ function _applyDynamicVectorStyle(style) {
 // SHADING MODE (legacy compatibility)
 // ---------------------------------------------------------------------------
 
-function _updateShadingMode(mode) {
+/**
+ * Switch shading models dynamically inside the custom GLSL ShaderMaterial.
+ */
+function _updateShadingMode(modeIndex) {
+    currentShadingMode = modeIndex;
     const terrainObj = _findTerrainObject();
-    if (!terrainObj) return;
-    const mat = terrainObj.mesh.material;
-    if (mode === "wireframe") {
-        mat.wireframe = true;
-    } else {
-        mat.wireframe = false;
-        mat.flatShading = (mode === "flat");
-        mat.needsUpdate = true;
+    if (!terrainObj || !terrainObj.mesh.material) return;
+
+    // Direct uniform binding to the GPU thread
+    if (terrainObj.mesh.material.uniforms && terrainObj.mesh.material.uniforms.uZScale) {
+        terrainObj.mesh.material.uniforms.uHeightmap.value = terrainObj.mesh.material.uniforms.uHeightmap.value; // Keep texture alive
+        terrainObj.mesh.material.uniforms.uMultidirectional.value = globalMultidirectional;
+    }
+
+    // Force materials update across the WebGL pipeline
+    if (terrainObj.mesh.material.uniforms && terrainObj.mesh.material.uniforms.uShadingMode) {
+        terrainObj.mesh.material.uniforms.uShadingMode.value = modeIndex;
+        terrainObj.mesh.material.needsUpdate = true;
     }
 }
 
