@@ -365,26 +365,8 @@ class Explorer3DPanel(BasePanel):
         # 2. Scene registry list with Delete controls
         lbl_scene = QLabel(tr("Scene objects:"))
         lbl_scene.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_scene)
-
-        list_row = QHBoxLayout()
-        self.list_layers = QListWidget()
-        self.list_layers.setStyleSheet("""
-            QListWidget {
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                background: #fafafa;
-            }
-            QListWidget::item { padding: 4px; }
-            QListWidget::item:selected { background: #d0e8ff; color: #000; }
-        """)
-        self.list_layers.setMaximumHeight(120)
-        list_row.addWidget(self.list_layers)
-
-        # Small vertical panel for list actions (Delete)
-        list_actions = QVBoxLayout()
         self.btn_delete_object = QPushButton(tr("🗑"))
-        self.btn_delete_object.setFixedSize(32, 32)
+        self.btn_delete_object.setFixedSize(25, 25)
         self.btn_delete_object.setToolTip(tr("Delete the selected layer from the 3D scene."))
         self.btn_delete_object.setStyleSheet("""
             QPushButton {
@@ -395,10 +377,28 @@ class Explorer3DPanel(BasePanel):
             }
             QPushButton:hover { background-color: #c0392b; }
         """)
-        list_actions.addWidget(self.btn_delete_object)
-        list_actions.addStretch()
-        list_row.addLayout(list_actions)
-        layout.addLayout(list_row)
+
+        layout_scene= QHBoxLayout()
+        layout_scene.addWidget(lbl_scene)
+        layout_scene.addWidget(self.btn_delete_object)
+        layout_scene.addStretch()
+
+        layout.addLayout(layout_scene)
+        
+        self.list_layers = QListWidget()
+        self.list_layers.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background: #fafafa;
+            }
+            QListWidget::item { padding: 4px; }
+            QListWidget::item:selected { background: #d0e8ff; color: #000; }
+        """)
+        self.list_layers.setMinimumHeight(120)
+        
+
+        layout.addWidget(self.list_layers)
 
         # Separator
         sep2 = QFrame()
@@ -441,17 +441,20 @@ class Explorer3DPanel(BasePanel):
         # Dynamic Mode-Specific Settings Stack
         self.stacked_vector_settings = QStackedWidget()
 
-        # Page 0: Line/Outline settings [Line Width Slider] [New]
+        # Page 0: Line/Outline settings [Line Width Slider] 
         page_line = QWidget()
-        layout_line = QHBoxLayout(page_line)
+        page_layout = QVBoxLayout(page_line)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        layout_line = QHBoxLayout()
         layout_line.setContentsMargins(0, 0, 0, 0)
-        layout_line.addWidget(QLabel(tr("Line Width:")))
+        page_layout.addWidget(QLabel(tr("Line Width:")))
         self.slider_line_width = QSlider(Qt.Horizontal)
         self.slider_line_width.setRange(1, 10)
         self.slider_line_width.setValue(2)
         layout_line.addWidget(self.slider_line_width)
         self.lbl_line_width_val = QLabel("2 px")
         layout_line.addWidget(self.lbl_line_width_val)
+        page_layout.addLayout(layout_line)
         self.stacked_vector_settings.addWidget(page_line)
 
         # Page 1: Curtain depth slider
@@ -549,7 +552,7 @@ class Explorer3DPanel(BasePanel):
         vector_style_layout.addWidget(self.stacked_color_settings)
 
         layout.addWidget(self.group_vector_style)
-        layout.addStretch()
+        # layout.addStretch()
         return page
 
     # ── Page 2 — Symbology ───────────────────────────────────────────────
@@ -691,23 +694,20 @@ class Explorer3DPanel(BasePanel):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(8)
 
-        # Main Lighting Mode Selector
-        lbl_mode = QLabel(tr("Illumination algorithm:"))
-        lbl_mode.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_mode)
+        # ── GroupBox 1: Advanced Illumination Algorithms ──────────────────
+        self.group_illumination = QGroupBox(tr("Illumination modes"))
+        illum_layout = QVBoxLayout(self.group_illumination)
+        illum_layout.setSpacing(8)
 
         self.chk_multidirectional = QCheckBox(tr("Enable multidirectional shading (4-Axis GIS mode)"))
         self.chk_multidirectional.setToolTip(
             tr("Combines 4 orthogonal light sources to eliminate structural shadows. "
                "Perfect for fault-scarp lineament mapping.")
         )
-        layout.addWidget(self.chk_multidirectional)
+        illum_layout.addWidget(self.chk_multidirectional)
+        layout.addWidget(self.group_illumination)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        layout.addWidget(sep)
-
-        # Primary Sun properties (authoritative source)
+        # ── GroupBox 2: Primary Solar Parameters ───────────────────────────
         self.group_light_props = QGroupBox(tr("Primary solar parameters"))
         props_layout = QVBoxLayout(self.group_light_props)
         props_layout.setSpacing(6)
@@ -725,7 +725,7 @@ class Explorer3DPanel(BasePanel):
             props_layout,
             tr("Direct sun intensity:"),
             "slider_light_intensity",
-            min_val=0, max_val=60, default=25,
+            min_val=0, max_val=30, default=15,
             tooltip=tr("Power of the primary sun (0 = fully overcast, 3.0 = direct sunlight).")
         )
 
@@ -746,10 +746,51 @@ class Explorer3DPanel(BasePanel):
             min_val=10, max_val=90, default=45,
             tooltip=tr("Elevation of the sun above the horizon.")
         )
-
         layout.addWidget(self.group_light_props)
+
+        # ── GroupBox 3: Surface Shading Model & enhancements [New] ────────
+        self.group_shading = QGroupBox(tr("Topographic shading model"))
+        shading_layout = QVBoxLayout(self.group_shading)
+        shading_layout.setSpacing(6)
+
+        # Shading Model Selection
+        shading_layout.addWidget(QLabel(tr("Mathematical shading algorithm:")))
+        self.combo_shading_mode = QComboBox()
+        self.combo_shading_mode.addItems([
+            tr("Phong Shading (Smooth / Per-pixel)"),
+            tr("Gouraud Shading (Classic / Per-vertex)"),
+            tr("Flat Shading (Low-poly / Structural)")
+        ])
+        self.combo_shading_mode.setToolTip(
+            tr("Phong: Smooth, high-fidelity light curves.\n"
+               "Gouraud: Classic vertex interpolation.\n"
+               "Flat: Faceted, low-poly structural mapping.")
+        )
+        shading_layout.addWidget(self.combo_shading_mode)
+
+        # Surface Roughness (Moved from Aesthetics)
+        self._add_labeled_slider(
+            shading_layout,
+            tr("Surface roughness (Oren-Nayar):"),
+            "slider_roughness",
+            min_val=0, max_val=100, default=50,
+            tooltip=tr("Simulates diffuse scattering of matte rock and soil. Higher values remove plastic shine.")
+        )
+
+        # Structural Slope Accentuation (Moved from Aesthetics)
+        self._add_labeled_slider(
+            shading_layout,
+            tr("Structural slope accentuation:"),
+            "slider_slope_contrast",
+            min_val=0, max_val=100, default=30,
+            tooltip=tr("Darkens steep river incisions and structural escarpments to reveal tectonic lineaments.")
+        )
+        layout.addWidget(self.group_shading)
+
         layout.addStretch()
         return page
+
+
 
     # ── Page 4 — Block & Environment ────────────────────────────────────
 
@@ -829,7 +870,7 @@ class Explorer3DPanel(BasePanel):
         color_row.addWidget(self.btn_base_color)
         layout.addLayout(color_row)
 
-        # Sky gradient
+       # Sky gradient
         lbl_sky = QLabel(tr("Background sky gradient:"))
         lbl_sky.setStyleSheet("font-weight: bold;")
         layout.addWidget(lbl_sky)
@@ -848,33 +889,6 @@ class Explorer3DPanel(BasePanel):
         sky_row.addWidget(self.btn_sky_top)
         sky_row.addWidget(self.btn_sky_bottom)
         layout.addLayout(sky_row)
-
-        sep4 = QFrame()
-        sep4.setFrameShape(QFrame.HLine)
-        layout.addWidget(sep4)
-
-        # Scientific Geomorphological Shading Properties
-        lbl_shading = QLabel(tr("Topographic rendering enhancements:"))
-        lbl_shading.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_shading)
-
-        # Roughness (Oren-Nayar)
-        self._add_labeled_slider(
-            layout,
-            label_text=tr("Surface roughness (Oren-Nayar):"),
-            attr_name="slider_roughness",
-            min_val=0, max_val=100, default=50,
-            tooltip=tr("Simulates diffuse scattering of matte rock and soil. Higher values remove plastic shine.")
-        )
-        
-        # Slope contrast
-        self._add_labeled_slider(
-            layout,
-            label_text=tr("Structural slope accentuation:"),
-            attr_name="slider_slope_contrast",
-            min_val=0, max_val=100, default=30,
-            tooltip=tr("Darkens steep river incisions and structural escarpments to reveal tectonic lineaments.")
-        )
 
         layout.addStretch()
         return page
@@ -1019,6 +1033,7 @@ class Explorer3DPanel(BasePanel):
 
         # ── Page 3 — Lights ──────────────────────────────────────────────
         self.chk_multidirectional.stateChanged.connect(self._slot_toggle_multidirectional)
+        self.combo_shading_mode.currentIndexChanged.connect(self._slot_shading_mode_changed) # Connect the shading mode selector
         self.btn_light_color.clicked.connect(
             lambda: self._slot_pick_color_for("light_color", self.btn_light_color)
         )
@@ -1459,7 +1474,7 @@ class Explorer3DPanel(BasePanel):
             
         element_id = current.data(Qt.UserRole)
         # Protect permanent system elements from deletion
-        if element_id in ["block_base", "scene_grid", "scene_axes"]:
+        if element_id in ["block_base", "scene_grid", "scene_axes", "scene_legend"]:
             self.btn_delete_object.setEnabled(False)
             self.btn_delete_object.setStyleSheet("""
                 QPushButton { background-color: #7f8c8d; color: #ccc; border-radius: 4px; }
@@ -1833,7 +1848,17 @@ class Explorer3DPanel(BasePanel):
             "action": "set_multidirectional_shading",
             "payload": {"enabled": enabled}
         })
-    
+
+    def _slot_shading_mode_changed(self, index: int) -> None:
+        """Triggered when the user switches between Phong, Gouraud, and Flat shading models."""
+        if not self.is_3d_active:
+            return
+        self._js({
+            "action": "set_shading_mode",
+            "payload": {"mode": index} # Transmit index (0: Phong, 1: Gouraud, 2: Flat)
+        })
+
+
     # Aesthetics page
 
     def _slot_update_z_scale(self, value: int) -> None:
