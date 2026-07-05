@@ -49,6 +49,12 @@ TOOL_REGISTRY = {
                 "class_name": "FluvialPanel",
                 "desc": tr("Computes geomorphic indices like continuous k_sn and Chi-plots.")
             },
+            "watershed": {
+                "name": tr("Watershed Extraction"),
+                "module_path": "rockmorph.tools.watershed.panel",
+                "class_name": "WatershedPanel",
+                "desc": tr("Automated catchment boundary and hydrological routing extraction.")
+            },
             "smf": {
                 "name": tr("Mountain Front Sinuosity (Smf)"),
                 "module_path": "rockmorph.tools.smf.panel",
@@ -60,6 +66,12 @@ TOOL_REGISTRY = {
                 "module_path": "rockmorph.tools.ncp.panel",
                 "class_name": "NCPPanel",
                 "desc": tr("Plots and analyzes normalized longitudinal river profiles.")
+            },
+            "hydroflow": {
+                "name": tr("HydroFlow Routing"),
+                "module_path": "rockmorph.tools.hydroflow.panel",
+                "class_name": "HydroFlowPanel",
+                "desc": tr("Computes hydrological routing and extracts topologically ordered networks [1.13.2].")
             }
         }
     },
@@ -71,19 +83,13 @@ TOOL_REGISTRY = {
                 "name": tr("Swath Profile"),
                 "module_path": "rockmorph.tools.swath.panel",
                 "class_name": "SwathPanel",
-                "desc": tr("Extracts topographic swath envelope statistics along a line.")
+                "desc": tr("Extracts topographic swath envelope profiles along paths.")
             },
             "hypsometry": {
-                "name": tr("Hypsometry"),
+                "name": tr("Hypsometric Curve"),
                 "module_path": "rockmorph.tools.hypsometry.panel",
                 "class_name": "HypsometryPanel",
-                "desc": tr("Computes catchment-scale hypsometric curves and integral values.")
-            },
-            "watershed": {
-                "name": tr("Watershed Extraction"),
-                "module_path": "rockmorph.tools.watershed.panel",
-                "class_name": "WatershedPanel",
-                "desc": tr("Automated catchment boundary and hydrological routing extraction.")
+                "desc": tr("Computes basin-scale hypsometric curves and integral values.")
             }
         }
     },

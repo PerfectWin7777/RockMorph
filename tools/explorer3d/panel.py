@@ -357,6 +357,8 @@ class Explorer3DPanel(BasePanel):
             QPushButton:hover:!disabled { background-color: #219a52; }
         """)
         layout.addWidget(self.btn_render_terrain)
+        # Add the parent progress container to layout (inherited for free from BasePanel)
+        layout.addWidget(self._progress_container)
 
         # Separator
         sep1 = QFrame()
