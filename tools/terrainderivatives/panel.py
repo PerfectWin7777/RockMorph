@@ -13,9 +13,9 @@ from qgis.PyQt.QtWidgets import (  # type: ignore
     QGroupBox, QComboBox, QRadioButton, QButtonGroup, QScrollArea,
     QSlider
 )
-from qgis.PyQt.QtCore import Qt, QCoreApplication  # type: ignore
+from qgis.PyQt.QtCore import Qt, QCoreApplication # type: ignore
 from qgis.gui import QgsMapLayerComboBox  # type: ignore
-from qgis.core import QgsMapLayerProxyModel, QgsProject  # type: ignore
+from qgis.core import QgsMapLayerProxyModel, QgsProject, QgsRasterLayer   # type: ignore
 
 from ...base.base_panel import BasePanel, ComputeWorker
 from ...widgets.output_selector import OutputSelectorWidget
@@ -564,7 +564,24 @@ class TerrainDerivativesPanel(BasePanel):
 
         self.btn_compute.setEnabled(False)
         self.set_loading_state(True, tr("Computing terrain derivatives asynchronously..."), total=100)
+        
 
+        # ── Pre-emptive Layer Unloading (Releases file locks on custom physical paths) ── [2]
+        # project = QgsProject.instance()
+        # for selector in self._get_all_selectors():
+        #     if selector.isChecked():
+        #         path = selector.filePath()
+        #         if path and path != "TEMPORARY_OUTPUT":
+        #             # Scan active layers and remove matches to release GDAL file handles [2]
+        #             layers_to_remove = []
+        #             for layer in project.mapLayers().values():
+        #                 if layer.source() == path:
+        #                     layers_to_remove.append(layer.id())
+                    
+        #             for lyr_id in layers_to_remove:
+        #                 project.removeMapLayer(lyr_id)
+
+                        
         # Dispatch background calculation thread
         self._worker = ComputeWorker(self.engine, params)
         self._worker.progress.connect(self.update_progress)
@@ -578,8 +595,9 @@ class TerrainDerivativesPanel(BasePanel):
 
         # Load all successfully generated layers onto the map canvas 
         project = QgsProject.instance()
-        for key, layer in result.items():
-            if layer and layer.isValid():
+        for key, (path, name) in result.items():
+            layer = QgsRasterLayer(path, name, "gdal")
+            if layer.isValid():
                 project.addMapLayer(layer)
 
         self.show_info(tr("Terrain analysis complete. Layers added successfully."))

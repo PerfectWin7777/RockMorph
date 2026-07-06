@@ -70,7 +70,7 @@ class TerrainDerivativesEngine(BaseEngine):
             )
             # Use dynamic file name as layer display name [2]
             lyr_name = _get_layer_name(path_slope, "Slope")
-            output_layers["slope"] = QgsRasterLayer(res["OUTPUT"], lyr_name, "gdal")
+            output_layers["slope"] = (res["OUTPUT"], lyr_name)
 
         # ── 2. Aspect (Exposition) ──
         if kwargs.get("out_aspect"):
@@ -86,7 +86,7 @@ class TerrainDerivativesEngine(BaseEngine):
                 }
             )
             lyr_name = _get_layer_name(path_aspect, "Aspect")
-            output_layers["aspect"] = QgsRasterLayer(res["OUTPUT"], lyr_name, "gdal")
+            output_layers["aspect"] = (res["OUTPUT"], lyr_name)
 
         # ── 3. Hillshade (Ombrage) ──
         if kwargs.get("out_hillshade"):
@@ -135,7 +135,7 @@ class TerrainDerivativesEngine(BaseEngine):
             
             # Load as QgsRasterLayer with dynamic naming based on the output filename 
             lyr_name = _get_layer_name(path_hillshade, "Hillshade")
-            output_layers["hillshade"] = QgsRasterLayer(path_hillshade, lyr_name, "gdal")
+            output_layers["hillshade"] = (path_hillshade, lyr_name)
 
         # ── 4. TPI (Topographic Position Index) ──
         if kwargs.get("out_tpi"):
@@ -152,7 +152,7 @@ class TerrainDerivativesEngine(BaseEngine):
                 }
             )
             lyr_name = _get_layer_name(path_tpi, "TPI")
-            output_layers["tpi"] = QgsRasterLayer(res["OUTPUT"], lyr_name, "gdal")
+            output_layers["tpi"] = (res["OUTPUT"], lyr_name)
 
         # ── 5. TRI (Terrain Ruggedness Index) ──
         if kwargs.get("out_tri"):
@@ -168,7 +168,7 @@ class TerrainDerivativesEngine(BaseEngine):
                 }
             )
             lyr_name = _get_layer_name(path_tri, "TRI")
-            output_layers["tri"] = QgsRasterLayer(res["OUTPUT"], lyr_name, "gdal")
+            output_layers["tri"] = (res["OUTPUT"], lyr_name)
 
         # ── 6. Positive Openness (NumPy solver) ──
         if kwargs.get("out_openness_pos"):
@@ -188,7 +188,7 @@ class TerrainDerivativesEngine(BaseEngine):
             )
             self._save_numpy_to_gtiff(op_pos_array, path_pos, dem_layer)
             lyr_name = _get_layer_name(path_pos, "Openness_Positive")
-            output_layers["openness_pos"] = QgsRasterLayer(path_pos, lyr_name, "gdal")
+            output_layers["openness_pos"] = (path_pos, lyr_name)
 
         # ── 7. Negative Openness (NumPy solver on inverted DEM) ──
         if kwargs.get("out_openness_neg"):
@@ -208,7 +208,7 @@ class TerrainDerivativesEngine(BaseEngine):
             )
             self._save_numpy_to_gtiff(op_neg_array, path_neg, dem_layer)
             lyr_name = _get_layer_name(path_neg, "Openness_Negative")
-            output_layers["openness_neg"] = QgsRasterLayer(path_neg, lyr_name, "gdal")
+            output_layers["openness_neg"] = (path_neg, lyr_name)
 
         
         # ── 8. Sky View Factor (NumPy solver) ──
@@ -228,7 +228,7 @@ class TerrainDerivativesEngine(BaseEngine):
             )
             self._save_numpy_to_gtiff(svf_array, path_svf, dem_layer)
             lyr_name = _get_layer_name(path_svf, "Sky_View_Factor")
-            output_layers["svf"] = QgsRasterLayer(path_svf, lyr_name, "gdal")
+            output_layers["svf"] = (path_svf, lyr_name)
 
         # ── 9. Sky Illumination (NumPy solver) ──
         if kwargs.get("out_sky_illumination"):
@@ -247,7 +247,7 @@ class TerrainDerivativesEngine(BaseEngine):
             )
             self._save_numpy_to_gtiff(sky_array, path_sky, dem_layer)
             lyr_name = _get_layer_name(path_sky, "Sky_Illumination")
-            output_layers["sky_illumination"] = QgsRasterLayer(path_sky, lyr_name, "gdal")
+            output_layers["sky_illumination"] = (path_sky, lyr_name)
 
         # ── 10. Anisotropic Sky View Factor (NumPy solver) ──
         if kwargs.get("out_anisotropic_svf"):
@@ -268,7 +268,7 @@ class TerrainDerivativesEngine(BaseEngine):
             )
             self._save_numpy_to_gtiff(asvf_array, path_asvf, dem_layer)
             lyr_name = _get_layer_name(path_asvf, "Anisotropic_Sky_View_Factor")
-            output_layers["anisotropic_svf"] = QgsRasterLayer(path_asvf, lyr_name, "gdal")
+            output_layers["anisotropic_svf"] = (path_asvf, lyr_name)
 
         # ── 11. Local Dominance (NumPy solver) ──
         if kwargs.get("out_local_dominance"):
@@ -289,7 +289,7 @@ class TerrainDerivativesEngine(BaseEngine):
             )
             self._save_numpy_to_gtiff(ld_array, path_ld, dem_layer)
             lyr_name = _get_layer_name(path_ld, "Local_Dominance")
-            output_layers["local_dominance"] = QgsRasterLayer(path_ld, lyr_name, "gdal")
+            output_layers["local_dominance"] = (path_ld, lyr_name)
         
         if progress_cb:
             progress_cb(100, tr("Done."))
@@ -876,6 +876,12 @@ class TerrainDerivativesEngine(BaseEngine):
         """
         driver = gdal.GetDriverByName("GTiff")
         rows, cols = array.shape
+
+        try:
+            if os.path.exists(output_path):
+               os.remove(output_path)
+        except:
+            pass
         
         # Create output dataset
         ds = driver.Create(output_path, cols, rows, 1, gdal.GDT_Float32)

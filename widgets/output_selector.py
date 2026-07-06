@@ -141,7 +141,7 @@ class OutputSelectorWidget(QWidget):
 
     def isChecked(self) -> bool:
         if not self.show_checkbox:
-            return True # Mandatory outputs are always active [2]
+            return True # Mandatory outputs are always active
         return self.checkbox.isChecked()
 
     def setChecked(self, state: bool):
