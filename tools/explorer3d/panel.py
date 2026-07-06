@@ -203,7 +203,7 @@ class Explorer3DPanel(BasePanel):
 
         self._add_layer_item(tr("🌐  Reference Grid"), element_id="scene_grid")
         self._add_layer_item(tr("📍  Orientation Axes (X, Y, Z)"), element_id="scene_axes")
-        self._add_layer_item(tr("🎨  Colorbar Legend"), element_id="scene_legend")
+        # self._add_layer_item(tr("🎨  Colorbar Legend"), element_id="scene_legend")
 
 
     # ── Navigation widgets ───────────────────────────────────────────────
@@ -478,9 +478,22 @@ class Explorer3DPanel(BasePanel):
         page_fixed_color = QWidget()
         layout_fixed = QVBoxLayout(page_fixed_color)
         layout_fixed.setContentsMargins(0, 0, 0, 0)
+
+        row_fixed = QHBoxLayout()
+        row_fixed.setSpacing(6)
+
+
+        lbl_annot_qlabel = QLabel(tr("Vector Color:"))
+        lbl_annot_qlabel.setStyleSheet("font-size: 11px;")
+
         self.btn_vector_fixed_color = RockMorphColorButton()
         self.btn_vector_fixed_color.setColor(QColor("#3498db"))
-        layout_fixed.addWidget(self.btn_vector_fixed_color)
+
+        row_fixed.addWidget(lbl_annot_qlabel)
+        row_fixed.addWidget(self.btn_vector_fixed_color)
+        row_fixed.addStretch()  # Pousse les éléments à gauche
+
+        layout_fixed.addLayout(row_fixed)
         self.stacked_color_settings.addWidget(page_fixed_color)
 
         # Page 1: Attribute Color (completely independent dropdown)
@@ -655,9 +668,20 @@ class Explorer3DPanel(BasePanel):
         layout_solid.setContentsMargins(0, 4, 0, 4)
         layout_solid.setSpacing(6)
 
+        row_solid = QHBoxLayout()
+        row_solid.setSpacing(6)
+
+        solid_lbl = QLabel(tr("Terrain Color:"))
+        solid_lbl.setStyleSheet("font-size: 11px;")
+
         self.btn_solid_color = RockMorphColorButton()
         self.btn_solid_color.setColor(QColor("#4a90d9"))
-        layout_solid.addWidget(self.btn_solid_color)
+
+        row_solid.addWidget(solid_lbl)
+        row_solid.addWidget(self.btn_solid_color)
+        row_solid.addStretch()
+
+        layout_solid.addLayout(row_solid)
         layout_solid.addStretch()
         self.stacked_symbology_settings.addWidget(page_solid)
 
@@ -883,38 +907,76 @@ class Explorer3DPanel(BasePanel):
         lbl_block.setStyleSheet("font-weight: bold;")
         layout.addWidget(lbl_block)
 
+
         color_row = QHBoxLayout()
+        color_row.setSpacing(12)
+
+        # 🧱 Walls Row Pair
+        wall_layout = QHBoxLayout()
+        wall_layout.setSpacing(6)
+        wall_lbl = QLabel(tr("Walls:"))
+        wall_lbl.setStyleSheet("font-size: 11px;")
         self.btn_wall_color = RockMorphColorButton()
         self.btn_wall_color.setColor(QColor(self._colors["walls"]))
         self.btn_wall_color.setToolTip(tr("Color applied to the four lateral faces of the block."))
+        wall_layout.addWidget(wall_lbl)
+        wall_layout.addWidget(self.btn_wall_color)
+
+        # 🕳️ Base Plate Row Pair
+        base_layout = QHBoxLayout()
+        base_layout.setSpacing(6)
+        base_lbl = QLabel(tr("Base plate:"))
+        base_lbl.setStyleSheet("font-size: 11px;")
         self.btn_base_color = RockMorphColorButton()
         self.btn_base_color.setColor(QColor(self._colors["base"]))
         self.btn_base_color.setToolTip(tr("Color applied to the flat bottom of the block."))
-        color_row.addWidget(self.btn_wall_color)
-        color_row.addWidget(self.btn_base_color)
+        base_layout.addWidget(base_lbl)
+        base_layout.addWidget(self.btn_base_color)
+
+        color_row.addLayout(wall_layout)
+        color_row.addLayout(base_layout)
         layout.addLayout(color_row)
 
-       # Sky gradient
+        # Sky gradient
         lbl_sky = QLabel(tr("Background sky gradient:"))
         lbl_sky.setStyleSheet("font-weight: bold;")
         layout.addWidget(lbl_sky)
 
         sky_row = QHBoxLayout()
+        sky_row.setSpacing(12)
+
+        # 🌅 Sky Top Row Pair
+        sky_top_layout = QHBoxLayout()
+        sky_top_layout.setSpacing(6)
+        sky_top_lbl = QLabel(tr("Sky (top):"))
+        sky_top_lbl.setStyleSheet("font-size: 11px;")
         self.btn_sky_top = RockMorphColorButton()
         self.btn_sky_top.setColor(QColor(self._colors["sky_top"]))
         self.btn_sky_top.setToolTip(
-            tr("Top color of the sky gradient. "
-               "Use a deep blue for realistic renders or pure black for figure-quality backgrounds.")
-        )
+                    tr("Top color of the sky gradient. "
+                    "Use a deep blue for realistic renders or pure black for figure-quality backgrounds.")
+                )
+        sky_top_layout.addWidget(sky_top_lbl)
+        sky_top_layout.addWidget(self.btn_sky_top)
+
+        # 🌇 Sky Bottom Row Pair
+        sky_bot_layout = QHBoxLayout()
+        sky_bot_layout.setSpacing(6)
+        sky_bot_lbl = QLabel(tr("Horizon:"))
+        sky_bot_lbl.setStyleSheet("font-size: 11px;")
         self.btn_sky_bottom = RockMorphColorButton()
         self.btn_sky_bottom.setColor(QColor(self._colors["sky_bottom"]))
         self.btn_sky_bottom.setToolTip(
-            tr("Bottom color of the sky gradient. "
-               "Use white for thesis figures or a warm haze for landscape renders.")
-        )
-        sky_row.addWidget(self.btn_sky_top)
-        sky_row.addWidget(self.btn_sky_bottom)
+                    tr("Bottom color of the sky gradient. "
+                    "Use white for thesis figures or a warm haze for landscape renders.")
+                )
+        sky_bot_layout.addWidget(sky_bot_lbl)
+        sky_bot_layout.addWidget(self.btn_sky_bottom)
+
+        sky_row.addLayout(sky_top_layout)
+        sky_row.addLayout(sky_bot_layout)
         layout.addLayout(sky_row)
+
 
         layout.addStretch()
         return page
@@ -1165,7 +1227,7 @@ class Explorer3DPanel(BasePanel):
         for i in range(self.list_layers.count() - 1, -1, -1):
             item = self.list_layers.item(i)
             elem_id = item.data(Qt.UserRole)
-            if elem_id and (elem_id.startswith("vector_") or elem_id == "block_base"):
+            if elem_id and (elem_id.startswith("vector_") or elem_id in ["block_base", "scene_legend"]):
                 self.list_layers.takeItem(i)
 
         # 1. Show the built-in professional progress feedback panel
@@ -1202,6 +1264,7 @@ class Explorer3DPanel(BasePanel):
         
         # 3. Dynamically append structural Block control options
         self._add_layer_item(tr("🧱  Block base (walls & sole)"), element_id="block_base")
+        self._add_layer_item(tr("🎨  Colorbar Legend"), element_id="scene_legend")
         
         # 4. Cache and update elevation boundary widgets for classified rendering
         self.active_dem_min_z = dem_data.z_min
@@ -1529,7 +1592,7 @@ class Explorer3DPanel(BasePanel):
             return
 
         element_id = current_item.data(Qt.UserRole)
-        if not element_id or element_id in ["block_base", "scene_grid", "scene_axes"]:
+        if not element_id or element_id in ["block_base", "scene_grid", "scene_axes", "scene_legend"]:
             return # Protect system layers from deletion
 
         # Send deletion transaction to the WebGL rendering engine
