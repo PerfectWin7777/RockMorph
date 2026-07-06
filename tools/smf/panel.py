@@ -51,6 +51,7 @@ from PyQt5.QtCore import QVariant  # type: ignore
 
 from ...base.base_panel import BasePanel, ComputeWorker
 from ...core.exporter import RockMorphExporter
+from ...widgets.export_group import RockMorphExportGroup
 from .engine import SMFEngine
 
 
@@ -312,23 +313,14 @@ class SMFPanel(BasePanel):
 
         # ── 5. Data Export Group ──────────────────────────────────────
         export_group = QgsCollapsibleGroupBox(tr("Academic Data Export"))
-        export_layout = QHBoxLayout(export_group)
+        export_layout = QVBoxLayout(export_group)
 
-        self.btn_csv = QPushButton(tr("Export to CSV"))
-        self.btn_csv.setToolTip(tr("Export tabular geomorphic metrics to CSV for statistical packages (Excel/R)."))
-        self.btn_csv.clicked.connect(lambda: self._on_export("csv"))
-        export_layout.addWidget(self.btn_csv)
-
-        self.btn_json = QPushButton(tr("Export to JSON"))
-        self.btn_json.setToolTip(tr("Export raw results as a structured JSON file for maximum reproducibility."))
-        self.btn_json.clicked.connect(lambda: self._on_export("json"))
-        export_layout.addWidget(self.btn_json)
-
-        self.btn_gpkg = QPushButton(tr("Export to GeoPackage"))
-        self.btn_gpkg.setToolTip(tr("Export mountain front lines to a spatial GeoPackage layer and reload it in QGIS."))
-        self.btn_gpkg.clicked.connect(self._on_export_geopackage)
-        export_layout.addWidget(self.btn_gpkg)
-
+        self.export_widget = RockMorphExportGroup(
+            formats=["csv", "json", "gpkg"],
+            parent=self
+        )
+        self.export_widget.exportRequested.connect(self._on_export)
+        export_layout.addWidget(self.export_widget)
         root.addWidget(export_group)
 
         # Warning Bar
@@ -615,6 +607,13 @@ class SMFPanel(BasePanel):
     def _on_export(self, fmt: str):
         """Processes CSV and JSON exports for our calculated metrics."""
         fmt_lower = fmt.lower()
+        if fmt_lower == "gpkg":
+            if not self._results:
+                self.show_error(tr("No data available to export. Run Compute first."))
+                return
+            self._on_export_geopackage()
+            return
+        
         if fmt_lower == "csv":
             if not self._results:
                 self.show_error(tr("No data available to export. Run Compute first."))

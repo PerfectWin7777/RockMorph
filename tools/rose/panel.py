@@ -20,6 +20,7 @@ import os
 
 from ...base.base_panel import BasePanel
 from ...core.exporter import RockMorphExporter
+from ...widgets.export_group import RockMorphExportGroup
 from .engine import RoseEngine
 
 
@@ -190,12 +191,14 @@ class RosePanel(BasePanel):
 
         # --- Export buttons ---
         export_group = QgsCollapsibleGroupBox(tr("Export"))
-        export_layout = QHBoxLayout(export_group)
-        for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
-            btn = QPushButton(fmt)
-            btn.setFixedHeight(25)
-            btn.clicked.connect(lambda checked, f=fmt: self._on_export(f))
-            export_layout.addWidget(btn)
+        export_layout = QVBoxLayout(export_group)  # 
+
+        self.export_widget = RockMorphExportGroup(
+            formats=["png", "jpg", "svg", "pdf", "csv", "json"],
+            parent=self
+        )
+        self.export_widget.exportRequested.connect(self._on_export)
+        export_layout.addWidget(self.export_widget)
         root.addWidget(export_group)
 
     def _on_compute(self):
@@ -271,6 +274,10 @@ class RosePanel(BasePanel):
 
     def _on_export(self, fmt: str):
         fmt_lower = fmt.lower()
+
+        if self._last_data is None:
+            self.show_error(tr("No data — run Compute first."))
+            return
 
         # Tabular formats
         if fmt_lower == "csv":

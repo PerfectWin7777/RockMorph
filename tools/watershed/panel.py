@@ -62,6 +62,7 @@ from PyQt5.QtCore import QVariant              # type: ignore
 
 from ...base.base_panel import BasePanel, ComputeWorker
 from ...widgets.output_selector import OutputSelectorWidget
+from ...widgets.export_group import RockMorphExportGroup
 from ...core.exporter import RockMorphExporter
 from .engine import WatershedEngine
 
@@ -365,17 +366,15 @@ class WatershedPanel(BasePanel):
         root.addWidget(map_group)
 
         # ── Export ────────────────────────────────────────────────────
-        export_group  = QgsCollapsibleGroupBox(tr("Export"))
-        export_layout = QHBoxLayout(export_group)
+        export_group = QgsCollapsibleGroupBox(tr("Export"))
+        export_layout = QVBoxLayout(export_group)
 
-        for fmt in ["Shapefile", "GeoPackage", "CSV"]:
-            btn = QPushButton(fmt)
-            btn.setFixedHeight(28)
-            btn.clicked.connect(
-                lambda checked, f=fmt: self._on_export(f)
-            )
-            export_layout.addWidget(btn)
-
+        self.export_widget = RockMorphExportGroup(
+            formats=["shp", "gpkg", "csv"],
+            parent=self
+        )
+        self.export_widget.exportRequested.connect(self._on_export)
+        export_layout.addWidget(self.export_widget)
         root.addWidget(export_group)
 
         # ── Warning label ─────────────────────────────────────────────
@@ -727,6 +726,12 @@ class WatershedPanel(BasePanel):
             return
 
         fmt_lower = fmt.lower()
+
+        # special mapping
+        if fmt_lower == "shp":
+            fmt_lower = "shapefile"
+        elif fmt_lower == "gpkg":
+            fmt_lower = "geopackage"
 
         if fmt_lower == "csv":
             path, _ = QFileDialog.getSaveFileName(

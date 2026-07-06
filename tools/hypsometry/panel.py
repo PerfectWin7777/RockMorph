@@ -38,6 +38,7 @@ from qgis.core import QgsCoordinateTransform, QgsProject  # type: ignore
 
 from ...base.base_panel import BasePanel,ComputeWorker
 from ...core.exporter import RockMorphExporter
+from ...widgets.export_group import RockMorphExportGroup
 from .engine import HypsometryEngine
 from .grouper import group_results, move_to_ungrouped, _group_stats
 
@@ -330,15 +331,17 @@ class HypsometryPanel(BasePanel):
         root.addWidget(self.webview)
 
         # ── Export ────────────────────────────────────────────
-        export_group  = QgsCollapsibleGroupBox(tr("Export"))
-        export_layout = QHBoxLayout(export_group)
-        for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
-            btn = QPushButton(fmt)
-            btn.setFixedHeight(28)
-            btn.clicked.connect(lambda checked, f=fmt: self._on_export(f))
-            export_layout.addWidget(btn)
-        root.addWidget(export_group)
+        export_group = QgsCollapsibleGroupBox(tr("Export"))
+        export_layout = QVBoxLayout(export_group)  
 
+        self.export_widget = RockMorphExportGroup(
+            formats=["png", "jpg", "svg", "pdf", "csv", "json"],
+            parent=self
+        )
+        self.export_widget.exportRequested.connect(self._on_export)
+        export_layout.addWidget(self.export_widget)
+        root.addWidget(export_group)
+        
         # ── Warnings label ────────────────────────────────────
         self.warning_label = QLabel("")
         self.warning_label.setWordWrap(True)

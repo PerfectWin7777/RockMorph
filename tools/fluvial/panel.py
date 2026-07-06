@@ -51,6 +51,7 @@ from PyQt5.QtCore import QVariant  # type: ignore
 
 from ...base.base_panel import BasePanel, ComputeWorker
 from ...core.exporter import RockMorphExporter
+from ...widgets.export_group import RockMorphExportGroup
 from .engine import FluvialEngine
 
 
@@ -568,20 +569,15 @@ class FluvialPanel(BasePanel):
         root.addWidget(self.webview)
 
         # ── Export ────────────────────────────────────────────────────
-        export_group  = QgsCollapsibleGroupBox(tr("Export"))
-        export_layout = QHBoxLayout(export_group)
-        for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
-            btn = QPushButton(fmt)
-            btn.setFixedHeight(20)
-            btn.clicked.connect(lambda checked, f=fmt: self._on_export(f))
-            export_layout.addWidget(btn)
-        
+        export_group = QgsCollapsibleGroupBox(tr("Export"))
+        export_layout = QVBoxLayout(export_group)
 
-        self.btn_gpkg = QPushButton(tr("GeoPackage"))
-        self.btn_gpkg.setToolTip(tr("Export all results as spatial layers (Lines and Points) for GIS analysis."))
-        self.btn_gpkg.clicked.connect(self._on_export_geopackage)
-        export_layout.addWidget(self.btn_gpkg)
-
+        self.export_widget = RockMorphExportGroup(
+            formats=["png", "jpg", "svg", "pdf", "csv", "json", "gpkg"],
+            parent=self
+        )
+        self.export_widget.exportRequested.connect(self._on_export)
+        export_layout.addWidget(self.export_widget)
         root.addWidget(export_group)
 
         # ── Warnings ──────────────────────────────────────────────────
@@ -1153,6 +1149,13 @@ class FluvialPanel(BasePanel):
 
     def _on_export(self, fmt: str):
         fmt_lower = fmt.lower()
+        if fmt_lower == "gpkg":
+            if self._last_data is None:
+                self.show_error(tr("No data — run Compute first."))
+                return
+            self._on_export_geopackage()
+            return
+    
         if fmt_lower == "csv":
             if not self._results:
                 self.show_error(tr("No data — run Compute first."))
@@ -1163,6 +1166,7 @@ class FluvialPanel(BasePanel):
                 parent=self,
             )
             return
+        
         if fmt_lower == "json":
             if self._last_data is None:
                 self.show_error(tr("No data — run Compute first."))

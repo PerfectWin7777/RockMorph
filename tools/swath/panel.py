@@ -24,6 +24,7 @@ import math
 from ...base.base_panel import BasePanel, ComputeWorker
 from ...core.exporter import RockMorphExporter
 from ...ui.curve_style_widget import CurveStyleManager
+from ...widgets.export_group import RockMorphExportGroup
 from .engine import SwathEngine
 
 
@@ -258,12 +259,14 @@ class SwathPanel(BasePanel):
 
         # --- Export group ---
         export_group = QgsCollapsibleGroupBox(tr("Export"))
-        export_layout = QHBoxLayout(export_group)
-        for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
-            btn = QPushButton(fmt)
-            btn.setFixedHeight(28)
-            btn.clicked.connect(lambda checked, f=fmt: self._on_export(f))
-            export_layout.addWidget(btn)
+        export_layout = QVBoxLayout(export_group)  # Note
+
+        self.export_widget = RockMorphExportGroup(
+            formats=["png", "jpg", "svg", "pdf", "csv", "json"],
+            parent=self
+        )
+        self.export_widget.exportRequested.connect(self._on_export)
+        export_layout.addWidget(self.export_widget)
         root.addWidget(export_group)
 
     # ------------------------------------------------------------------
