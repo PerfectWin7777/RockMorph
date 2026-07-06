@@ -37,6 +37,8 @@ from ...base.base_panel import BasePanel, ComputeWorker
 from .engine import Explorer3DEngine
 
 from ...widgets.colormap_combo import MatplotlibColorMapComboBox
+from ...widgets.style_widgets import RockMorphColorButton
+
 
 json_file = (
     Path(__file__).parents[2]
@@ -53,42 +55,6 @@ json_file = (
 
 def tr(message: str) -> str:
     return QCoreApplication.translate("RockMorph", message)
-
-
-def _color_pixmap(hex_color: str, size: int = 16) -> QPixmap:
-    """Return a solid-color square pixmap for use on color-picker buttons."""
-    px = QPixmap(size, size)
-    px.fill(QColor(hex_color))
-    return px
-
-
-def _make_color_btn(label: str, default_hex: str) -> QPushButton:
-    """
-    Return a QPushButton whose left side shows a colored square swatch
-    and whose right side shows a text label.
-    """
-    btn = QPushButton(f"  {label}")
-    btn.setIcon(QIcon(_color_pixmap(default_hex)))
-    btn.setIconSize(QSize(16, 16))
-    btn.setProperty("color_hex", default_hex)
-    btn.setStyleSheet("""
-        QPushButton {
-            text-align: left;
-            padding: 4px 8px;
-            border: 1px solid #aaa;
-            border-radius: 4px;
-            background: #fff;
-        }
-        QPushButton:hover { background: #f0f0f0; }
-    """)
-    return btn
-
-
-def _apply_color_to_btn(btn: QPushButton, color: QColor) -> None:
-    """Update a color-picker button's swatch and stored hex value."""
-    btn.setIcon(QIcon(_color_pixmap(color.name())))
-    btn.setProperty("color_hex", color.name())
-
 
 # ---------------------------------------------------------------------------
 # Debug WebEngine page
@@ -512,7 +478,8 @@ class Explorer3DPanel(BasePanel):
         page_fixed_color = QWidget()
         layout_fixed = QVBoxLayout(page_fixed_color)
         layout_fixed.setContentsMargins(0, 0, 0, 0)
-        self.btn_vector_fixed_color = _make_color_btn(tr("Select color"), "#3498db")
+        self.btn_vector_fixed_color = RockMorphColorButton()
+        self.btn_vector_fixed_color.setColor(QColor("#3498db"))
         layout_fixed.addWidget(self.btn_vector_fixed_color)
         self.stacked_color_settings.addWidget(page_fixed_color)
 
@@ -688,7 +655,8 @@ class Explorer3DPanel(BasePanel):
         layout_solid.setContentsMargins(0, 4, 0, 4)
         layout_solid.setSpacing(6)
 
-        self.btn_solid_color = _make_color_btn(tr("Terrain color"), "#4a90d9")
+        self.btn_solid_color = RockMorphColorButton()
+        self.btn_solid_color.setColor(QColor("#4a90d9"))
         layout_solid.addWidget(self.btn_solid_color)
         layout_solid.addStretch()
         self.stacked_symbology_settings.addWidget(page_solid)
@@ -768,7 +736,8 @@ class Explorer3DPanel(BasePanel):
         # Sun Color
         color_row = QHBoxLayout()
         color_row.addWidget(QLabel(tr("Sun color:")))
-        self.btn_light_color = _make_color_btn(tr("Sun light"), "#ffffff")
+        self.btn_light_color = RockMorphColorButton()
+        self.btn_light_color.setColor(QColor("#ffffff"))
         self.btn_light_color.setToolTip(tr("Color of the primary directional sun rays."))
         color_row.addWidget(self.btn_light_color)
         props_layout.addLayout(color_row)
@@ -915,9 +884,11 @@ class Explorer3DPanel(BasePanel):
         layout.addWidget(lbl_block)
 
         color_row = QHBoxLayout()
-        self.btn_wall_color = _make_color_btn(tr("Walls"), self._colors["walls"])
+        self.btn_wall_color = RockMorphColorButton()
+        self.btn_wall_color.setColor(QColor(self._colors["walls"]))
         self.btn_wall_color.setToolTip(tr("Color applied to the four lateral faces of the block."))
-        self.btn_base_color = _make_color_btn(tr("Base plate"), self._colors["base"])
+        self.btn_base_color = RockMorphColorButton()
+        self.btn_base_color.setColor(QColor(self._colors["base"]))
         self.btn_base_color.setToolTip(tr("Color applied to the flat bottom of the block."))
         color_row.addWidget(self.btn_wall_color)
         color_row.addWidget(self.btn_base_color)
@@ -929,12 +900,14 @@ class Explorer3DPanel(BasePanel):
         layout.addWidget(lbl_sky)
 
         sky_row = QHBoxLayout()
-        self.btn_sky_top = _make_color_btn(tr("Sky (top)"), self._colors["sky_top"])
+        self.btn_sky_top = RockMorphColorButton()
+        self.btn_sky_top.setColor(QColor(self._colors["sky_top"]))
         self.btn_sky_top.setToolTip(
             tr("Top color of the sky gradient. "
                "Use a deep blue for realistic renders or pure black for figure-quality backgrounds.")
         )
-        self.btn_sky_bottom = _make_color_btn(tr("Horizon"), self._colors["sky_bottom"])
+        self.btn_sky_bottom = RockMorphColorButton()
+        self.btn_sky_bottom.setColor(QColor(self._colors["sky_bottom"]))
         self.btn_sky_bottom.setToolTip(
             tr("Bottom color of the sky gradient. "
                "Use white for thesis figures or a warm haze for landscape renders.")
@@ -1038,7 +1011,7 @@ class Explorer3DPanel(BasePanel):
         # Connect independent style method combo-boxes to their respective sub-panels
         self.combo_color_styling.currentIndexChanged.connect(self.stacked_color_settings.setCurrentIndex)
         self.combo_width_styling.currentIndexChanged.connect(self.stacked_width_settings.setCurrentIndex)
-        self.btn_vector_fixed_color.clicked.connect(
+        self.btn_vector_fixed_color.colorChanged.connect(
             lambda: self._slot_pick_color_for("vector_fixed", self.btn_vector_fixed_color)
         )
 
@@ -1078,7 +1051,7 @@ class Explorer3DPanel(BasePanel):
         # ── Page 2 — Symbology ───────────────────────────────────────────
         self.combo_symbology_render_mode.currentIndexChanged.connect(self._slot_render_mode_changed)
         self.spin_class_count.valueChanged.connect(self._rebuild_classified_brackets_ui)
-        self.btn_solid_color.clicked.connect(
+        self.btn_solid_color.colorChanged.connect(
             lambda: self._slot_pick_color_for("solid_color", self.btn_solid_color)
         )
         self.combo_colormap.currentTextChanged.connect(self._slot_update_colormap)
@@ -1092,7 +1065,7 @@ class Explorer3DPanel(BasePanel):
         # ── Page 3 — Lights ──────────────────────────────────────────────
         self.chk_multidirectional.stateChanged.connect(self._slot_toggle_multidirectional)
         self.combo_shading_mode.currentIndexChanged.connect(self._slot_shading_mode_changed) # Connect the shading mode selector
-        self.btn_light_color.clicked.connect(
+        self.btn_light_color.colorChanged.connect(
             lambda: self._slot_pick_color_for("light_color", self.btn_light_color)
         )
         self.slider_light_intensity.valueChanged.connect(self._slot_light_property_changed)
@@ -1102,16 +1075,16 @@ class Explorer3DPanel(BasePanel):
         # ── Page 4 — Aesthetics ──────────────────────────────────────────
         self.slider_z_scale.valueChanged.connect(self._slot_update_z_scale)
         self.slider_thickness.valueChanged.connect(self._slot_update_base_thickness)
-        self.btn_wall_color.clicked.connect(
+        self.btn_wall_color.colorChanged.connect(
             lambda: self._slot_pick_color_for("walls", self.btn_wall_color)
         )
-        self.btn_base_color.clicked.connect(
+        self.btn_base_color.colorChanged.connect(
             lambda: self._slot_pick_color_for("base", self.btn_base_color)
         )
-        self.btn_sky_top.clicked.connect(
+        self.btn_sky_top.colorChanged.connect(
             lambda: self._slot_pick_color_for("sky_top", self.btn_sky_top)
         )
-        self.btn_sky_bottom.clicked.connect(
+        self.btn_sky_bottom.colorChanged.connect(
             lambda: self._slot_pick_color_for("sky_bottom", self.btn_sky_bottom)
         )
 
@@ -1790,9 +1763,10 @@ class Explorer3DPanel(BasePanel):
             label_text = f"Bracket {i+1}: {c_min:.1f}m - {c_max:.1f}m"
             row_layout.addWidget(QLabel(label_text))
 
-            btn_color = _make_color_btn(tr("Select"), active_hex)
+            btn_color = RockMorphColorButton()
+            btn_color.setColor(QColor(active_hex))
             btn_color.setProperty("class_idx", i)
-            btn_color.clicked.connect(self._slot_pick_class_color)
+            btn_color.colorChanged.connect(self._slot_pick_class_color)
             row_layout.addWidget(btn_color)
 
             self.layout_classes_list.addWidget(row)
@@ -1853,12 +1827,8 @@ class Explorer3DPanel(BasePanel):
         if not button:
             return
         class_idx = button.property("class_idx")
-        current_hex = self._class_colors[class_idx]
-        color = QColorDialog.getColor(QColor(current_hex), self, tr("Select class color"))
-        if not color.isValid():
-            return
-
-        _apply_color_to_btn(button, color)
+        color = button.color()  
+        
         self._class_colors[class_idx] = color.name()
         # Use renamed method
         self._slot_update_classified_shading()
@@ -2222,18 +2192,17 @@ class Explorer3DPanel(BasePanel):
 
     # ── Shared color picker ──────────────────────────────────────────────
 
-    def _slot_pick_color_for(self, target: str, button: QPushButton) -> None:
+    def _slot_pick_color_for(self, target: str, button: RockMorphColorButton) -> None:
         """
         Unified color picker.
         `target` is either a key in self._colors or a special role ('light_color',
         'solid_color').
         """
-        current_hex = button.property("color_hex") or "#ffffff"
-        color = QColorDialog.getColor(QColor(current_hex), self, tr("Select color"))
+        color = button.color() 
         if not color.isValid():
             return
 
-        _apply_color_to_btn(button, color)
+        # _apply_color_to_btn(button, color)
 
         if target in self._colors:
             self._colors[target] = color.name()
