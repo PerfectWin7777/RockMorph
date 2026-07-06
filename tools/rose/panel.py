@@ -21,6 +21,7 @@ import os
 from ...base.base_panel import BasePanel
 from ...core.exporter import RockMorphExporter
 from ...widgets.export_group import RockMorphExportGroup
+from ...widgets.style_widgets import RockMorphColorButton
 from .engine import RoseEngine
 
 
@@ -127,27 +128,10 @@ class RosePanel(BasePanel):
         style_group = QgsCollapsibleGroupBox(tr("Style"))
         style_layout = QFormLayout(style_group)
 
-        # Color picker
-        color_row = QHBoxLayout()
-        self.color_preview = QPushButton()
-        # self.color_preview.setFixedSize(32, 24)
-        self._update_color_preview()
-        self.color_preview.clicked.connect(self._pick_color)
-        color_row.addWidget(self.color_preview)
-        style_layout.addRow(tr("Petal color:"), color_row)
-
-        # Opacity slider
-        opacity_row = QHBoxLayout()
-        self.opacity_slider = QSlider(Qt.Horizontal)
-        self.opacity_slider.setRange(0, 100)
-        self.opacity_slider.setValue(100)
-        self.opacity_label = QLabel("100%")
-        self.opacity_slider.valueChanged.connect(
-            lambda v: self.opacity_label.setText(f"{v}%")
-        )
-        opacity_row.addWidget(self.opacity_slider)
-        opacity_row.addWidget(self.opacity_label)
-        style_layout.addRow(tr("Opacity:"), opacity_row)
+        # Standardized color picker (Alpha/Opacity integrated natively!)
+        self.color_btn = RockMorphColorButton()
+        self.color_btn.setColor(QColor("#0519f2"))  # Default Rose Blue
+        style_layout.addRow(tr("Petal color:"), self.color_btn)
 
         self.grid_check = QCheckBox(tr("Show grid"))
         self.grid_check.setChecked(False)
@@ -161,6 +145,7 @@ class RosePanel(BasePanel):
         style_layout.addRow(tr("Title:"), self.title_edit)
 
         root.addWidget(style_group)
+
 
         # --- Compute button ---
         self.compute_btn = QPushButton(tr("Compute"))
@@ -214,8 +199,8 @@ class RosePanel(BasePanel):
             "n_sectors":    self.sectors_spin.value(),
             "mode":         mode_map[self.mode_combo.currentIndex()],
             "half_rose":    self.half_rose_check.isChecked(),
-            "color":        self._color,
-            "opacity":      self.opacity_slider.value() / 100.0,
+            "color":        self.color_btn.color().name(),
+            "opacity":      self.color_btn.color().alphaF(),
             "show_grid":    self.grid_check.isChecked(),
             "show_labels":  self.lbl_inside.isChecked(),
             "title":        self.title_edit.text(),
@@ -249,24 +234,6 @@ class RosePanel(BasePanel):
         # Use double quotes wrapper to avoid conflicts with JSON content
         js = f'updatePlot({json.dumps(json_data)})'
         self.webview.page().runJavaScript(js)
-
-
-   
-
-    # ------------------------------------------------------------------
-    # Style helpers
-    # ------------------------------------------------------------------
-
-    def _pick_color(self):
-        color = QColorDialog.getColor(QColor(self._color), self, tr("Petal color"))
-        if color.isValid():
-            self._color = color.name()
-            self._update_color_preview()
-
-    def _update_color_preview(self):
-        self.color_preview.setStyleSheet(
-            f"background-color: {self._color}; border: 1px solid #555;"
-        )
 
     # ------------------------------------------------------------------
     # Export

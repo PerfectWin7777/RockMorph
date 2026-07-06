@@ -39,6 +39,7 @@ from qgis.core import QgsCoordinateTransform, QgsProject  # type: ignore
 from ...base.base_panel import BasePanel,ComputeWorker
 from ...core.exporter import RockMorphExporter
 from ...widgets.export_group import RockMorphExportGroup
+from ...widgets.style_widgets import RockMorphColorButton
 from .engine import HypsometryEngine
 from .grouper import group_results, move_to_ungrouped, _group_stats
 
@@ -192,11 +193,9 @@ class HypsometryPanel(BasePanel):
         style_layout.addRow(tr("Line width:"), self.line_width_spin)
 
         # Color picker — visible only in ungrouped mode
-        self.color_btn = QPushButton()
-        # self.color_btn.setFixedSize(32, 24)
+        self.color_btn = RockMorphColorButton()
+        self.color_btn.setColor(QColor("#042fed"))  # Default Hypsometry Blue
         self.color_btn.setToolTip(tr("Curve color (ungrouped mode only)"))
-        self._update_color_btn()
-        self.color_btn.clicked.connect(self._pick_color)
 
         # Palette combo — visible only in grouped mode
         self.palette_combo = QComboBox()
@@ -341,7 +340,7 @@ class HypsometryPanel(BasePanel):
         self.export_widget.exportRequested.connect(self._on_export)
         export_layout.addWidget(self.export_widget)
         root.addWidget(export_group)
-        
+
         # ── Warnings label ────────────────────────────────────
         self.warning_label = QLabel("")
         self.warning_label.setWordWrap(True)
@@ -349,21 +348,6 @@ class HypsometryPanel(BasePanel):
         self.warning_label.setVisible(False)
         root.addWidget(self.warning_label)
     
-   
-    def _pick_color(self):
-        """Open color dialog for single-curve mode."""
-        color = QColorDialog.getColor(
-            QColor(self._curve_color), self, tr("Curve color")
-        )
-        if color.isValid():
-            self._curve_color = color.name()
-            self._update_color_btn()
-
-    def _update_color_btn(self):
-        """Refresh color preview button."""
-        self.color_btn.setStyleSheet(
-            f"background-color: {self._curve_color}; border: 1px solid #555;"
-        )
 
     def _apply_styles(self):
         """Re-send current group with updated styles — no recompute."""
@@ -813,7 +797,7 @@ class HypsometryPanel(BasePanel):
                 "line_width":    self.line_width_spin.value(),
                 "palette":       None if is_ungrouped
                                 else self.palette_combo.currentData(),
-                "single_color":  self._curve_color if is_ungrouped else None,
+                "single_color":  self.color_btn.color().name() if is_ungrouped else None,
                 "show_grid_x":   self.grid_x_check.isChecked(),
                 "show_grid_y":   self.grid_y_check.isChecked(),
                     }
