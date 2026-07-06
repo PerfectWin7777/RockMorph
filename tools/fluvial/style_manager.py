@@ -59,10 +59,10 @@ class FluvialStyleWidget(QgsCollapsibleGroupBox):
             lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             grid.addWidget(lbl, 0, col)
 
-        grid.setColumnStretch(0, 3)
+        grid.setColumnStretch(0, 0)
         grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(2, 2)
-        grid.setColumnStretch(3, 2)
+        grid.setColumnStretch(2, 1)
+        grid.setColumnStretch(3, 0)
 
         # Fluvial specific style row keys & titles
         curves = [
