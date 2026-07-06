@@ -91,31 +91,51 @@ class TerrainDerivativesEngine(BaseEngine):
         # ── 3. Hillshade (Ombrage) ──
         if kwargs.get("out_hillshade"):
             if progress_cb:
-                progress_cb(45, tr("Computing Hillshade..."))
+                progress_cb(45, tr("Computing Hillshade (GDAL Native)..."))
             variant = kwargs.get("hill_variant", "standard")
             edges = kwargs.get("hill_edges", "default")
             path_hillshade = kwargs.get("path_hillshade", "TEMPORARY_OUTPUT")
             
-            # Map parameters based on our UI selections and actual GDAL specifications [1, 3]
-            res = processing.run(
-                "gdal:hillshade",
-                {
-                    "INPUT": dem_layer,
-                    "BAND": 1,
-                    "AZIMUTH": kwargs.get("hill_azimuth", 315),
-                    "ALTITUDE": kwargs.get("hill_altitude", 45),
-                    "COMBINED": True if variant == "combined" else False,
-                    "MULTIDIRECTIONAL": True if variant == "multidirectional" else False,
-                    "EXTRA": "-igor" if variant == "igor" else "", 
-                    "ZEVENBERGEN": kwargs.get("hill_zevenbergen", False),
-                    "COMPUTE_EDGES": True if edges == "compute_edges" else False,
-                    "Z_FACTOR": kwargs.get("hill_z_factor", 1.0),
-                    "SCALE": gdal_scale,  # Pass computed geographic scale factor
-                    "OUTPUT": path_hillshade
-                }
+            # Resolve unique temporary output if not specified to prevent QGIS file locks 
+            if path_hillshade == "TEMPORARY_OUTPUT":
+                unique_id = uuid.uuid4().hex[:8]
+                path_hillshade = os.path.join(tempfile.gettempdir(), f"hillshade_{unique_id}.tif").replace("\\", "/")
+            
+            # Determine standard gradient algorithm based on UI selection
+            algorithm = 'ZevenbergenThorne' if kwargs.get("hill_zevenbergen", False) else 'Horn'
+
+            # exclusif
+            altitude=kwargs.get("hill_altitude", 45.0)
+            azimuth=kwargs.get("hill_azimuth", 315.0)
+            if variant == "multidirectional":
+               azimuth = None
+            if variant == "igor":
+               altitude = None
+
+            # Setup native GDAL processing options (directly supporting the Igor algorithm) 
+            options = gdal.DEMProcessingOptions(
+                alg=algorithm,
+                computeEdges=True if edges == "compute_edges" else False,
+                zFactor=kwargs.get("hill_z_factor", 1.0),
+                scale=gdal_scale,  # Pass computed geographic scale factor
+                azimuth=azimuth,
+                altitude=altitude,
+                combined=True if variant == "combined" else False,
+                multiDirectional=True if variant == "multidirectional" else False,
+                igor=True if variant == "igor" else False # Native Igor Sharygin algorithm 
             )
+            
+            # Execute native C++ GDAL DEMProcessing directly on the DEM source file path 
+            gdal.DEMProcessing(
+                path_hillshade,
+                dem_layer.source(),  # Source file path
+                "hillshade",
+                options=options
+            )
+            
+            # Load as QgsRasterLayer with dynamic naming based on the output filename 
             lyr_name = _get_layer_name(path_hillshade, "Hillshade")
-            output_layers["hillshade"] = QgsRasterLayer(res["OUTPUT"], lyr_name, "gdal")
+            output_layers["hillshade"] = QgsRasterLayer(path_hillshade, lyr_name, "gdal")
 
         # ── 4. TPI (Topographic Position Index) ──
         if kwargs.get("out_tpi"):
