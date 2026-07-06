@@ -28,7 +28,7 @@ class RockMorphColorButton(QgsColorButton):
         self.setAllowOpacity(True)
         self.setContext("RockMorph")
         self.setMinimumHeight(24)
-        self.setMaximumHeight(24)
+        # self.setMaximumHeight(24)
         # self.setFixedWidth(36)
 
 
@@ -54,8 +54,9 @@ class RockMorphLineStyleRow(QWidget):
         super().__init__(parent)
         self.curve_id = curve_id
         
-        # Determine internally if this row supports the fill property
+        # Check properties support
         self._supports_fill = "fill" in defaults
+        self._supports_dash = "dash" in defaults and defaults["dash"] is not None
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -72,18 +73,18 @@ class RockMorphLineStyleRow(QWidget):
         self.color_btn.colorChanged.connect(self.styleChanged.emit)
         layout.addWidget(self.color_btn)
         
-        # 3. Width spinbox
+        # 3. Width/Size spinbox
         self.width_spin = QDoubleSpinBox()
-        self.width_spin.setRange(0.5, 6.0)
+        self.width_spin.setRange(0.5, 20.0)
         self.width_spin.setSingleStep(0.5)
         self.width_spin.setValue(defaults.get("width", 1.0))
         self.width_spin.setDecimals(1)
-        self.width_spin.setSuffix(" pt")
+        self.width_spin.setSuffix(" pt" if self._supports_dash else " px")
         self.width_spin.setFixedWidth(65)
         self.width_spin.valueChanged.connect(self.styleChanged.emit)
         layout.addWidget(self.width_spin)
         
-        # 4. Dash style combobox
+        # 4. Dash style combobox (only if supported)
         self.dash_combo = QComboBox()
         self.dash_options = [
             ("Solid", "solid"),
@@ -104,13 +105,15 @@ class RockMorphLineStyleRow(QWidget):
         self.dash_combo.currentIndexChanged.connect(self.styleChanged.emit)
         layout.addWidget(self.dash_combo)
         
-        # 5. Fill checkbox
+        if not self._supports_dash:
+            self.dash_combo.setVisible(False)
+        
+        # 5. Fill checkbox (only if supported)
         self.fill_check = QCheckBox()
         self.fill_check.setChecked(defaults.get("fill", False))
         self.fill_check.stateChanged.connect(self.styleChanged.emit)
         layout.addWidget(self.fill_check)
         
-        # Safely hide fill control from the UI if not supported
         if not self._supports_fill:
             self.fill_check.setVisible(False)
 
@@ -120,7 +123,7 @@ class RockMorphLineStyleRow(QWidget):
             "color": self.color_btn.color().name(),
             "opacity": self.color_btn.color().alphaF(),
             "width": round(self.width_spin.value(), 1),
-            "dash": self.dash_combo.currentData(),
+            "dash": self.dash_combo.currentData() if self._supports_dash else None,
             "fill": self.fill_check.isChecked() if self._supports_fill else False
         }
 
@@ -129,6 +132,7 @@ class RockMorphLineStyleRow(QWidget):
         self.label.setVisible(visible)
         self.color_btn.setVisible(visible)
         self.width_spin.setVisible(visible)
-        self.dash_combo.setVisible(visible)
+        if self._supports_dash:
+            self.dash_combo.setVisible(visible)
         if self._supports_fill:
             self.fill_check.setVisible(visible)

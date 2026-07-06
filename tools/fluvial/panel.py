@@ -52,6 +52,7 @@ from PyQt5.QtCore import QVariant  # type: ignore
 from ...base.base_panel import BasePanel, ComputeWorker
 from ...core.exporter import RockMorphExporter
 from ...widgets.export_group import RockMorphExportGroup
+from .style_manager import FluvialStyleWidget
 from .engine import FluvialEngine
 
 
@@ -66,139 +67,139 @@ def _natural_sort_key(s: str):
     ]
 
 
-class FluvialStyleWidget(QgsCollapsibleGroupBox):
-    """
-    Dedicated widget to manage Plotly styles.
-    Uses QgsColorButton for native QGIS integration.
-    """
-    styleChanged = pyqtSignal()
+# class FluvialStyleWidget(QgsCollapsibleGroupBox):
+#     """
+#     Dedicated widget to manage Plotly styles.
+#     Uses QgsColorButton for native QGIS integration.
+#     """
+#     styleChanged = pyqtSignal()
 
-    def __init__(self, parent=None):
-        super().__init__(tr("Advanced Graph Styling"), parent)
-        # self.setCheckable(True)
-        # self.setChecked(False)
+#     def __init__(self, parent=None):
+#         super().__init__(tr("Advanced Graph Styling"), parent)
+#         # self.setCheckable(True)
+#         # self.setChecked(False)
         
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setSpacing(8)
+#         self.main_layout = QVBoxLayout(self)
+#         self.main_layout.setSpacing(8)
 
-        self.chk_x_grid = QCheckBox("X Grid")
-        self.chk_x_grid.setChecked(True)
-        self.chk_x_grid.stateChanged.connect(self.styleChanged.emit)
-        self.chk_y_grid = QCheckBox("Y Grid")
-        self.chk_y_grid.stateChanged.connect(self.styleChanged.emit)
-        self.chk_y_grid.setChecked(True)
+#         self.chk_x_grid = QCheckBox("X Grid")
+#         self.chk_x_grid.setChecked(True)
+#         self.chk_x_grid.stateChanged.connect(self.styleChanged.emit)
+#         self.chk_y_grid = QCheckBox("Y Grid")
+#         self.chk_y_grid.stateChanged.connect(self.styleChanged.emit)
+#         self.chk_y_grid.setChecked(True)
 
-        layout_grid = QHBoxLayout()
-        layout_grid.addWidget(self.chk_x_grid)
-        layout_grid.addWidget(self.chk_y_grid)
+#         layout_grid = QHBoxLayout()
+#         layout_grid.addWidget(self.chk_x_grid)
+#         layout_grid.addWidget(self.chk_y_grid)
 
-        # Styles for line shapes in Plotly: solid, dash, dot, dashdot
-        self.LINE_STYLES = {
-            tr("Solid"): "solid",
-            tr("Dashed"): "dash",
-            tr("Dotted"): "dot",
-            tr("Dash-Dot"): "dashdot"
-        }
+#         # Styles for line shapes in Plotly: solid, dash, dot, dashdot
+#         self.LINE_STYLES = {
+#             tr("Solid"): "solid",
+#             tr("Dashed"): "dash",
+#             tr("Dotted"): "dot",
+#             tr("Dash-Dot"): "dashdot"
+#         }
 
-        # --- Dictionnaries for storing widgets ---
-        self.widgets = {}
+#         # --- Dictionnaries for storing widgets ---
+#         self.widgets = {}
 
-        # 1. Group: Base Curves (Z, Equil, Chi)
-        self._add_section(tr("Terrain Curves"))
-        self._add_row("z_profile", tr("Elevation (Z)"), "#1a5276", 2.0, "solid")
-        self._add_row("equil", tr("Equilibrium"), "#d35400", 1.5, "dash")
-        self._add_row("chi_curve", tr("Chi Curve"), "#148f77", 2.0, "solid")
+#         # 1. Group: Base Curves (Z, Equil, Chi)
+#         self._add_section(tr("Terrain Curves"))
+#         self._add_row("z_profile", tr("Elevation (Z)"), "#1a5276", 2.0, "solid")
+#         self._add_row("equil", tr("Equilibrium"), "#d35400", 1.5, "dash")
+#         self._add_row("chi_curve", tr("Chi Curve"), "#148f77", 2.0, "solid")
 
-        # 2. Group: Geomorphic Index
-        self._add_section(tr("Geomorphic Indices"))
-        self._add_row("sl_index", tr("SL Index"), "#1e8449", 1.0, "solid")
-        self._add_row("ksn_profile", tr("kₛₙ Profile"), "#884ea0", 1.0, "solid")
-        self._add_row("ksn_seg", tr("kₛₙ Segments"), "#c0392b", 3.0, "solid")
+#         # 2. Group: Geomorphic Index
+#         self._add_section(tr("Geomorphic Indices"))
+#         self._add_row("sl_index", tr("SL Index"), "#1e8449", 1.0, "solid")
+#         self._add_row("ksn_profile", tr("kₛₙ Profile"), "#884ea0", 1.0, "solid")
+#         self._add_row("ksn_seg", tr("kₛₙ Segments"), "#c0392b", 3.0, "solid")
 
-        # 3. Group: Markers & Points
-        self._add_section(tr("Markers"))
-        self._add_row("knickpoint", tr("Knickpoints"), "#e74c3c", 10.0, None) # None car c'est un point
+#         # 3. Group: Markers & Points
+#         self._add_section(tr("Markers"))
+#         self._add_row("knickpoint", tr("Knickpoints"), "#e74c3c", 10.0, None) # None car c'est un point
 
-        self._add_section(tr("Layout"))
-        self.main_layout.addLayout(layout_grid)
+#         self._add_section(tr("Layout"))
+#         self.main_layout.addLayout(layout_grid)
 
-        self.widgets["layout"] = {
-            "x_grid": self.chk_x_grid,
-            "y_grid": self.chk_y_grid,
+#         self.widgets["layout"] = {
+#             "x_grid": self.chk_x_grid,
+#             "y_grid": self.chk_y_grid,
 
-        }
+#         }
 
 
-    def _add_section(self, title):
-        lbl = QLabel(f"<b>{title}</b>")
-        lbl.setStyleSheet("color: #555; margin-top: 5px;")
-        self.main_layout.addWidget(lbl)
+#     def _add_section(self, title):
+#         lbl = QLabel(f"<b>{title}</b>")
+#         lbl.setStyleSheet("color: #555; margin-top: 5px;")
+#         self.main_layout.addWidget(lbl)
 
-    def _add_row(self, key, label_text, default_color, default_width, default_shape):
-        row_layout = QHBoxLayout()
+#     def _add_row(self, key, label_text, default_color, default_width, default_shape):
+#         row_layout = QHBoxLayout()
         
-        # name trace
-        lbl = QLabel(label_text)
-        row_layout.addWidget(lbl)
+#         # name trace
+#         lbl = QLabel(label_text)
+#         row_layout.addWidget(lbl)
 
-        # 1. Color (QgsColorButton)
-        btn_color = QgsColorButton()
-        btn_color.setAllowOpacity(True)
-        btn_color.setColor(QColor(default_color))
-        btn_color.setContext("RockMorph")
-        btn_color.colorChanged.connect(self.styleChanged.emit)
-        row_layout.addWidget(btn_color)
+#         # 1. Color (QgsColorButton)
+#         btn_color = QgsColorButton()
+#         btn_color.setAllowOpacity(True)
+#         btn_color.setColor(QColor(default_color))
+#         btn_color.setContext("RockMorph")
+#         btn_color.colorChanged.connect(self.styleChanged.emit)
+#         row_layout.addWidget(btn_color)
 
-        # 2. Width (SpinBox)
-        spn_width = QDoubleSpinBox()
-        spn_width.setRange(0.5, 20.0)
-        spn_width.setValue(default_width)
-        # spn_width.setFixedWidth(55)
-        spn_width.valueChanged.connect(self.styleChanged.emit)
-        row_layout.addWidget(spn_width)
+#         # 2. Width (SpinBox)
+#         spn_width = QDoubleSpinBox()
+#         spn_width.setRange(0.5, 20.0)
+#         spn_width.setValue(default_width)
+#         # spn_width.setFixedWidth(55)
+#         spn_width.valueChanged.connect(self.styleChanged.emit)
+#         row_layout.addWidget(spn_width)
 
-        # 3. shape (ComboBox) — only for lines, not for knickpoints
-        cmb_shape = None
-        if default_shape:
-            cmb_shape = QComboBox()
-            for text, value in self.LINE_STYLES.items():
-                cmb_shape.addItem(text, value)
-            cmb_shape.setCurrentText(list(self.LINE_STYLES.keys())[list(self.LINE_STYLES.values()).index(default_shape)])
-            cmb_shape.currentIndexChanged.connect(self.styleChanged.emit)
-            # cmb_shape.setFixedWidth(85)
-            row_layout.addWidget(cmb_shape)
+#         # 3. shape (ComboBox) — only for lines, not for knickpoints
+#         cmb_shape = None
+#         if default_shape:
+#             cmb_shape = QComboBox()
+#             for text, value in self.LINE_STYLES.items():
+#                 cmb_shape.addItem(text, value)
+#             cmb_shape.setCurrentText(list(self.LINE_STYLES.keys())[list(self.LINE_STYLES.values()).index(default_shape)])
+#             cmb_shape.currentIndexChanged.connect(self.styleChanged.emit)
+#             # cmb_shape.setFixedWidth(85)
+#             row_layout.addWidget(cmb_shape)
        
         
 
-        self.widgets[key] = {
-            "color": btn_color,
-            "width": spn_width,
-            "shape": cmb_shape,
+#         self.widgets[key] = {
+#             "color": btn_color,
+#             "width": spn_width,
+#             "shape": cmb_shape,
 
-        }
+#         }
         
-        self.main_layout.addLayout(row_layout)
+#         self.main_layout.addLayout(row_layout)
 
-    def get_style_config(self) -> dict:
-        config = {}
-        for key, w in self.widgets.items():
-            if key == "layout":
-                continue
+#     def get_style_config(self) -> dict:
+#         config = {}
+#         for key, w in self.widgets.items():
+#             if key == "layout":
+#                 continue
                 
-            config[key] = {
-                "color": w["color"].color().name(),
-                "opacity": w["color"].color().alphaF(),
-                "width": w["width"].value(),
-                # shape is only relevant for line traces, not for knickpoints (markers)
-                "shape": w["shape"].currentData() if w["shape"] else "solid"
-            }
+#             config[key] = {
+#                 "color": w["color"].color().name(),
+#                 "opacity": w["color"].color().alphaF(),
+#                 "width": w["width"].value(),
+#                 # shape is only relevant for line traces, not for knickpoints (markers)
+#                 "shape": w["shape"].currentData() if w["shape"] else "solid"
+#             }
             
-        l = self.widgets["layout"]
-        config["layout"] = {
-            "x_grid": l["x_grid"].isChecked(),
-            "y_grid": l["y_grid"].isChecked()
-        }
-        return config
+#         l = self.widgets["layout"]
+#         config["layout"] = {
+#             "x_grid": l["x_grid"].isChecked(),
+#             "y_grid": l["y_grid"].isChecked()
+#         }
+#         return config
 
 # ---------------------------------------------------------------------------
 # FluvialPanel

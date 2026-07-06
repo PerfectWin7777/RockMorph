@@ -23,10 +23,9 @@ import os
 import math
 from ...base.base_panel import BasePanel, ComputeWorker
 from ...core.exporter import RockMorphExporter
-# from ...ui.curve_style_widget import CurveStyleManager
-from .style_manager import CurveStyleManager
 from ...widgets.export_group import RockMorphExportGroup
 from .engine import SwathEngine
+from .style_manager import CurveStyleManager
 
 
 def tr(message):
