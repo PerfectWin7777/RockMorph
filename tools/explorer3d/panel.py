@@ -23,7 +23,7 @@ from qgis.PyQt.QtWidgets import (  # type: ignore
     QRadioButton, QStackedWidget, QListWidget, QListWidgetItem,
     QColorDialog, QDoubleSpinBox, QToolButton, QButtonGroup,
     QSizePolicy, QSpacerItem, QScrollArea, QMenu,
-    QFileDialog
+    QFileDialog, QFormLayout
 )
 from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QTimer  # type: ignore
 from qgis.PyQt.QtGui import QColor, QIcon, QPixmap, QPainter  # type: ignore
@@ -481,8 +481,7 @@ class Explorer3DPanel(BasePanel):
 
         row_fixed = QHBoxLayout()
         row_fixed.setSpacing(6)
-
-
+        
         lbl_annot_qlabel = QLabel(tr("Vector Color:"))
         lbl_annot_qlabel.setStyleSheet("font-size: 11px;")
 
@@ -490,7 +489,7 @@ class Explorer3DPanel(BasePanel):
         self.btn_vector_fixed_color.setColor(QColor("#3498db"))
 
         row_fixed.addWidget(lbl_annot_qlabel)
-        row_fixed.addWidget(self.btn_vector_fixed_color)
+        row_fixed.addWidget(self.btn_vector_fixed_color, Qt.AlignLeft)
         row_fixed.addStretch()  # Pousse les éléments à gauche
 
         layout_fixed.addLayout(row_fixed)
@@ -588,55 +587,58 @@ class Explorer3DPanel(BasePanel):
         # layout.addStretch()
         return page
 
-    # ── Page 2 — Symbology ───────────────────────────────────────────────
-
+    # ── Page 2 — Symbology (Re-conceived with QgsCollapsibleGroupBox) ────
     def _build_page_symbology(self) -> QWidget:
+        """
+        Builds the 3D Symbology page with collapsible group boxes for structure,
+        preventing awkward layouts and empty spaces when switching modes.
+        """
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
 
-        # 1. Unified Render Mode Selector (Renamed for clarity)
-        lbl_mode = QLabel(tr("Symbology render mode:"))
-        lbl_mode.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_mode)
+        # ── GroupBox 1: Symbology Configuration ──
+        self.group_symbology = QgsCollapsibleGroupBox(tr("3D Symbology Settings"))
+        symb_layout = QVBoxLayout(self.group_symbology)
+        symb_layout.setSpacing(8)
+        symb_layout.setContentsMargins(8, 12, 8, 8)
 
         self.combo_symbology_render_mode = QComboBox()
         self.combo_symbology_render_mode.addItems([
-            tr("Continuous Colormap (Scientific Pseudocolor)"),
-            tr("Classified Intervals (Discrete Brackets)"),
+            tr("Continuous Colormap (Scientific)"),
+            tr("Classified Intervals (Discrete)"),
             tr("Solid Uniform Fill")
         ])
-        layout.addWidget(self.combo_symbology_render_mode)
+        layout_render = QHBoxLayout()
+        layout_render.addWidget(QLabel(tr("Render Mode:")))
+        layout_render.addWidget(self.combo_symbology_render_mode, Qt.AlignLeft)
 
-        # 2. Stacked Settings Area 
+        symb_layout.addLayout(layout_render)
+
+        # Stacked Area for sub-settings
         self.stacked_symbology_settings = QStackedWidget()
         
         # --- Page 0: Continuous Settings ---
         page_continuous = QWidget()
-        layout_cont = QVBoxLayout(page_continuous)
-        layout_cont.setContentsMargins(0, 4, 0, 4)
+        layout_cont = QFormLayout(page_continuous)
+        layout_cont.setContentsMargins(0, 4, 0, 0)
         layout_cont.setSpacing(6)
-        
-        lbl_cmap = QLabel(tr("Scientific colormap:"))
-        lbl_cmap.setStyleSheet("font-weight: bold;")
-        layout_cont.addWidget(lbl_cmap)
 
         self.combo_colormap = MatplotlibColorMapComboBox(json_file)
         self.combo_colormap.setToolTip(
             tr("All names match Matplotlib conventions — use the same name in figure captions.")
         )
-        layout_cont.addWidget(self.combo_colormap)
+        layout_cont.addRow(tr("Scientific Colormap:"), self.combo_colormap)
 
         self.chk_reverse_cmap = QCheckBox(tr("Reverse color ramp"))
-        layout_cont.addWidget(self.chk_reverse_cmap)
-        layout_cont.addStretch()
+        layout_cont.addRow("", self.chk_reverse_cmap)
         self.stacked_symbology_settings.addWidget(page_continuous)
 
         # --- Page 1: Classified Settings ---
         page_classified = QWidget()
         layout_class = QVBoxLayout(page_classified)
-        layout_class.setContentsMargins(0, 4, 0, 4)
+        layout_class.setContentsMargins(0, 4, 0, 0)
         layout_class.setSpacing(6)
 
         row_count = QHBoxLayout()
@@ -648,10 +650,10 @@ class Explorer3DPanel(BasePanel):
         row_count.addWidget(self.spin_class_count)
         layout_class.addLayout(row_count)
 
-        # Scroll area to contain custom class range pickers
+        # Scroll area for custom class range pickers
         scroll_classes = QScrollArea()
         scroll_classes.setWidgetResizable(True)
-        scroll_classes.setMaximumHeight(150)
+        scroll_classes.setMinimumHeight(150)
         scroll_classes.setStyleSheet("QScrollArea { border: 1px solid #ccc; border-radius: 4px; }")
         
         self.widget_classes_list = QWidget()
@@ -662,7 +664,7 @@ class Explorer3DPanel(BasePanel):
         layout_class.addWidget(scroll_classes)
         self.stacked_symbology_settings.addWidget(page_classified)
 
-        # --- Page 2: Solid Fill Settings ---
+        # --- Page 2: Solid Fill Settings (Now aligned side-by-side with label!) ---
         page_solid = QWidget()
         layout_solid = QVBoxLayout(page_solid)
         layout_solid.setContentsMargins(0, 4, 0, 4)
@@ -670,13 +672,13 @@ class Explorer3DPanel(BasePanel):
 
         row_solid = QHBoxLayout()
         row_solid.setSpacing(6)
-
+        
         solid_lbl = QLabel(tr("Terrain Color:"))
         solid_lbl.setStyleSheet("font-size: 11px;")
-
+        
         self.btn_solid_color = RockMorphColorButton()
         self.btn_solid_color.setColor(QColor("#4a90d9"))
-
+        
         row_solid.addWidget(solid_lbl)
         row_solid.addWidget(self.btn_solid_color)
         row_solid.addStretch()
@@ -685,22 +687,15 @@ class Explorer3DPanel(BasePanel):
         layout_solid.addStretch()
         self.stacked_symbology_settings.addWidget(page_solid)
 
-        layout.addWidget(self.stacked_symbology_settings)
+        # Add the stacked widget as a row inside the GroupBox
+        symb_layout.addWidget(self.stacked_symbology_settings)
+        layout.addWidget(self.group_symbology)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        layout.addWidget(sep)
-
-        # 3. Dynamic bounds settings group (Hides automatically in solid mode) [Bug B Fix]
-        self.bounds_configuration_panel = QFrame()
-        self.bounds_configuration_panel.setFrameShape(QFrame.NoFrame)
+        # ── GroupBox 2: Elevation Bounds (Hides automatically in solid mode!) ──
+        self.bounds_configuration_panel = QgsCollapsibleGroupBox(tr("Elevation Classification Bounds"))
         layout_bounds = QVBoxLayout(self.bounds_configuration_panel)
-        layout_bounds.setContentsMargins(0, 0, 0, 0)
-        layout_bounds.setSpacing(6)
-
-        lbl_bounds = QLabel(tr("Elevation classification bounds:"))
-        lbl_bounds.setStyleSheet("font-weight: bold;")
-        layout_bounds.addWidget(lbl_bounds)
+        layout_bounds.setSpacing(8)
+        layout_bounds.setContentsMargins(8, 12, 8, 8)
 
         bounds_row = QHBoxLayout()
         self.rad_scale_auto = QRadioButton(tr("Auto (DEM range)"))
