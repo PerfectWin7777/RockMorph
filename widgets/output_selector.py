@@ -10,6 +10,7 @@ Authors: RockMorph contributors
 
 import os
 import tempfile
+import uuid
 from PyQt5.QtWidgets import (QWidget, # type: ignore
 QHBoxLayout, QVBoxLayout, QCheckBox, QLineEdit, QPushButton, QFileDialog,
 QLabel
@@ -43,7 +44,11 @@ class OutputSelectorWidget(QWidget):
 
         # Generate a real, dynamic system temporary file path
         temp_dir = tempfile.gettempdir()
-        self.default_temp_path = os.path.join(temp_dir, default_filename).replace("\\", "/")
+        unique_id = uuid.uuid4().hex[:3] # 
+        
+        base, ext = os.path.splitext(default_filename)
+        unique_filename = f"{base}_{unique_id}{ext}"
+        self.default_temp_path = os.path.join(temp_dir, unique_filename).replace("\\", "/")
 
         self._build_ui(label_text, is_checked)
 

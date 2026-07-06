@@ -58,6 +58,11 @@ class TerrainDerivativesPanel(BasePanel):
             self.out_slope = OutputSelectorWidget(
                 tr("Slope Gradient (S)"), "slope.tif", "GeoTIFF (*.tif)", is_checked=True
             )
+            self.out_slope.setToolTip(tr(
+            "<b>Slope Gradient (S):</b><br>"
+            "Calculates the local rate of elevation change (degrees or percent).<br>"
+            "Essential for hillslope stability and landslide susceptibility mapping."
+        ))
             self.slope_opts = QWidget()
             slope_opts_layout = QHBoxLayout(self.slope_opts)
             slope_opts_layout.setContentsMargins(0, 4, 0, 0)
@@ -75,6 +80,11 @@ class TerrainDerivativesPanel(BasePanel):
             self.out_aspect = OutputSelectorWidget(
                 tr("Aspect Orientation (A)"), "aspect.tif", "GeoTIFF (*.tif)", is_checked=False
             )
+            self.out_aspect.setToolTip(tr(
+            "<b>Aspect Orientation:</b><br>"
+            "Measures the downslope direction of the terrain relative to North (0-360°).<br>"
+            "Controls micro-climatic solar insolation and vegetation asymmetry."
+            ))
             morph_layout.addWidget(self.out_aspect)
             root.addWidget(morph_group)
 
@@ -87,6 +97,11 @@ class TerrainDerivativesPanel(BasePanel):
             self.out_hillshade = OutputSelectorWidget(
                 tr("Topographic Hillshade"), "hillshade.tif", "GeoTIFF (*.tif)", is_checked=False
             )
+            self.out_hillshade.setToolTip(tr(
+            "<b>Topographic Hillshade:</b><br>"
+            "Simulates the illumination of a light source over the relief .<br>"
+            "Offers advanced physical algorithms like Igor Sharygin, Combined, and Multidirectional."
+            ))
 
             self.hill_opts = QWidget()
             hill_opts_layout = QVBoxLayout(self.hill_opts)
@@ -164,6 +179,11 @@ class TerrainDerivativesPanel(BasePanel):
             self.out_tpi = OutputSelectorWidget(
                 tr("Topographic Position Index (TPI)"), "tpi.tif", "GeoTIFF (*.tif)", is_checked=False
             )
+            self.out_tpi.setToolTip(tr(
+            "<b>Topographic Position Index (TPI):</b><br>"
+            "Measures the elevation difference between a pixel and its local average: Z - Z_mean.<br>"
+            "Used to classify discrete landforms like ridge tops, valleys, and flat plains."
+            ))
             self.tpi_opts = QWidget()
             tpi_opts_layout = QHBoxLayout(self.tpi_opts)
             tpi_opts_layout.setContentsMargins(0, 4, 0, 0)
@@ -181,40 +201,71 @@ class TerrainDerivativesPanel(BasePanel):
             self.out_tri = OutputSelectorWidget(
                 tr("Terrain Ruggedness Index (TRI)"), "tri.tif", "GeoTIFF (*.tif)", is_checked=False
             )
+            self.out_tri.setToolTip(tr(
+            "<b>Terrain Ruggedness Index (TRI):</b><br>"
+            "Computes the mean elevation difference between a pixel and its 8 neighbors (Riley et al., 1999).<br>"
+            "Acts as a direct proxy for surface roughness and bedrock mechanical resistance."
+            ))
             texture_layout.addWidget(self.out_tri)
             root.addWidget(texture_group)
 
             # ── GroupBox 4: Relief Visualization (Pure Python/RVT) ──
-            rvt_group = QGroupBox(tr("4. Relief Visualisation (Pure Python/NumPy)"))
+            rvt_group = QGroupBox(tr("4. Relief Visualisation"))
             rvt_layout = QVBoxLayout(rvt_group)
             rvt_layout.setSpacing(8)
 
-            # F. Positive Openness with search radius and sectors
+            # 3 independent selectors using our standard output selector widget 
             self.out_openness_pos = OutputSelectorWidget(
                 tr("Positive Openness (Crests / Ridges)"), "openness_pos.tif", "GeoTIFF (*.tif)", is_checked=False
             )
-            self.open_pos_opts = QWidget()
-            open_pos_opts_layout = QVBoxLayout(self.open_pos_opts)
-            open_pos_opts_layout.setContentsMargins(0, 4, 0, 0)
-            open_pos_opts_layout.setSpacing(4)
-            self.spin_open_radius = QSpinBox()
-            self.spin_open_radius.setRange(1, 100)
-            self.spin_open_radius.setValue(10)
-            open_pos_opts_layout.addWidget(QLabel(tr("Search radius:")))
-            open_pos_opts_layout.addWidget(self.spin_open_radius)
-            self.spin_open_sectors = QSpinBox()
-            self.spin_open_sectors.setRange(4, 32)
-            self.spin_open_sectors.setValue(8)
-            open_pos_opts_layout.addWidget(QLabel(tr("Number of sectors:")))
-            open_pos_opts_layout.addWidget(self.spin_open_sectors)
-            self.out_openness_pos.addSettingsWidget(self.open_pos_opts)
-            rvt_layout.addWidget(self.out_openness_pos)
-
-            # G. Negative Openness
+            self.out_openness_pos.setToolTip(tr(
+            "<b>Positive Openness:</b><br>"
+            "Measures the sky visibility above the horizon across 8 radial directions (Yokoyama et al., 2002).<br>"
+            "Beautifully accentuates convex landforms such as crests, ridge lines, and fault scarps."
+           ))
             self.out_openness_neg = OutputSelectorWidget(
                 tr("Negative Openness (Incisions / Valleys)"), "openness_neg.tif", "GeoTIFF (*.tif)", is_checked=False
             )
+            self.out_openness_neg.setToolTip(tr(
+            "<b>Negative Openness:</b><br>"
+            "Measures the enclavement of the relief by inverting the DEM profile.<br>"
+            "Traces concave structures with extreme precision, highlighting river incisions and joint networks."
+           ))
+            self.out_svf = OutputSelectorWidget(
+                tr("Sky View Factor (SVF)"), "svf.tif", "GeoTIFF (*.tif)", is_checked=False
+            )
+            self.out_svf.setToolTip(tr(
+            "<b>Sky View Factor (SVF):</b><br>"
+            "Calculates the visible hemisphere portion of the sky (Kokalj et al., 2011).<br>"
+            "Provides diffuse, multidirectional illumination ideal for mapping active fault scarps."
+            ))
+
+            # Combined options panel (Shared between Openness and SVF to prevent UI clutter) 
+            self.rvt_opts = QWidget()
+            rvt_opts_layout = QFormLayout(self.rvt_opts)
+            rvt_opts_layout.setContentsMargins(18, 0, 0, 0)
+            rvt_opts_layout.setSpacing(4)
+
+            self.spin_open_radius = QSpinBox()
+            self.spin_open_radius.setRange(1, 100)
+            self.spin_open_radius.setValue(10)
+            self.spin_open_radius.setSuffix(tr(" pixels"))
+            rvt_opts_layout.addRow(tr("Search radius:"), self.spin_open_radius)
+
+            self.spin_open_sectors = QSpinBox()
+            self.spin_open_sectors.setRange(4, 32)
+            self.spin_open_sectors.setValue(8)
+            rvt_opts_layout.addRow(tr("Number of sectors:"), self.spin_open_sectors)
+
+            # Add to main vertical layout
+            rvt_layout.addWidget(self.out_openness_pos)
             rvt_layout.addWidget(self.out_openness_neg)
+            rvt_layout.addWidget(self.out_svf)
+            rvt_layout.addWidget(self.rvt_opts)
+            
+            # Hide the parameters initially since no indices are checked by default
+            self.rvt_opts.setVisible(False)
+
             root.addWidget(rvt_group)
 
             # ── Global Checklist Controls ──
@@ -251,6 +302,11 @@ class TerrainDerivativesPanel(BasePanel):
             self.chk_hill_compute_edges.toggled.connect(self._on_compute_edges_toggled)
             self.chk_hill_no_edges.toggled.connect(self._on_no_edges_toggled)
 
+            # Wire dynamic visibility for the shared parameters panel
+            self.out_openness_pos.stateChanged.connect(self._on_rvt_options_visibility_changed)
+            self.out_openness_neg.stateChanged.connect(self._on_rvt_options_visibility_changed)
+            self.out_svf.stateChanged.connect(self._on_rvt_options_visibility_changed)
+
         except :
             import traceback; traceback.print_exc()
 
@@ -258,7 +314,9 @@ class TerrainDerivativesPanel(BasePanel):
 
     def _get_all_selectors(self) -> list[OutputSelectorWidget]:
         return [self.out_slope, self.out_aspect, self.out_hillshade,
-                self.out_tpi, self.out_tri, self.out_openness_pos, self.out_openness_neg]
+                self.out_tpi, self.out_tri, self.out_openness_pos, self.out_openness_neg,
+                self.out_svf
+                ]
 
     def _on_select_all(self):
         for selector in self._get_all_selectors():
@@ -308,6 +366,7 @@ class TerrainDerivativesPanel(BasePanel):
             "out_tri": self.out_tri.isChecked(),
             "out_openness_pos": self.out_openness_pos.isChecked(),
             "out_openness_neg": self.out_openness_neg.isChecked(),
+            "out_svf": self.out_svf.isChecked(),  
 
             # Target output file paths (Memory or physical disk paths) [2]
             "path_slope": self.out_slope.filePath(),
@@ -317,6 +376,8 @@ class TerrainDerivativesPanel(BasePanel):
             "path_tri": self.out_tri.filePath(),
             "path_openness_pos": self.out_openness_pos.filePath(),
             "path_openness_neg": self.out_openness_neg.filePath(),
+            "path_svf": self.out_svf.filePath(),   
+            
 
             # Configurations
             "slope_percent": self.rad_slope_pct.isChecked(),
@@ -326,7 +387,7 @@ class TerrainDerivativesPanel(BasePanel):
             "hill_edges": hill_edges,              # Condenses mutually exclusive edges 
             "hill_z_factor": self.spin_hill_z.value(),
             "tpi_radius": self.spin_tpi_radius.value(),
-            "openness_radius": self.spin_open_radius.value(),
+            "openness_radius": self.spin_open_radius.value(), 
             "openness_sectors": self.spin_open_sectors.value()
         }
 
@@ -344,13 +405,13 @@ class TerrainDerivativesPanel(BasePanel):
         self.btn_compute.setEnabled(True)
         self.set_loading_state(False)
 
-        # Load all successfully generated layers onto the map canvas [2]
+        # Load all successfully generated layers onto the map canvas 
         project = QgsProject.instance()
         for key, layer in result.items():
             if layer and layer.isValid():
                 project.addMapLayer(layer)
 
-        self.show_info(tr("Terrain analysis complete. Layers added successfully [2]."))
+        self.show_info(tr("Terrain analysis complete. Layers added successfully."))
 
     def _on_compute_error(self, error_msg: str) -> None:
         self.btn_compute.setEnabled(True)
@@ -389,6 +450,17 @@ class TerrainDerivativesPanel(BasePanel):
             self.chk_hill_compute_edges.setChecked(False)
             self.chk_hill_compute_edges.blockSignals(False)
 
+    def _on_rvt_options_visibility_changed(self) -> None:
+        """
+        Dynamically shows the parameters panel if at least one of the 
+        NumPy-based visualisations (Openness / SVF) is selected [2].
+        """
+        any_checked = (
+            self.out_openness_pos.isChecked() or 
+            self.out_openness_neg.isChecked() or 
+            self.out_svf.isChecked()
+        )
+        self.rvt_opts.setVisible(any_checked)
 
     # ── BasePanel required overrides ────────────────────────────────────
 
