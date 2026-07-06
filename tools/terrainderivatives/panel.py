@@ -10,7 +10,8 @@ Authors: RockMorph contributors / Tony winter
 from qgis.PyQt.QtWidgets import (  # type: ignore
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton,
-    QGroupBox, QComboBox, QRadioButton, QButtonGroup, QScrollArea
+    QGroupBox, QComboBox, QRadioButton, QButtonGroup, QScrollArea,
+    QSlider
 )
 from qgis.PyQt.QtCore import Qt, QCoreApplication  # type: ignore
 from qgis.gui import QgsMapLayerComboBox  # type: ignore
@@ -209,64 +210,212 @@ class TerrainDerivativesPanel(BasePanel):
             texture_layout.addWidget(self.out_tri)
             root.addWidget(texture_group)
 
-            # ── GroupBox 4: Relief Visualization (Pure Python/RVT) ──
+            # ── GroupBox 4: Relief Visualization (Pure Python/NumPy) ──
             rvt_group = QGroupBox(tr("4. Relief Visualisation"))
             rvt_layout = QVBoxLayout(rvt_group)
-            rvt_layout.setSpacing(8)
+            rvt_layout.setSpacing(10)
 
-            # 3 independent selectors using our standard output selector widget 
+            # A. Positive Openness (Crests & Ridges) [1.2.1]
             self.out_openness_pos = OutputSelectorWidget(
                 tr("Positive Openness (Crests / Ridges)"), "openness_pos.tif", "GeoTIFF (*.tif)", is_checked=False
             )
             self.out_openness_pos.setToolTip(tr(
-            "<b>Positive Openness:</b><br>"
-            "Measures the sky visibility above the horizon across 8 radial directions (Yokoyama et al., 2002).<br>"
-            "Beautifully accentuates convex landforms such as crests, ridge lines, and fault scarps."
-           ))
+                "<b>Positive Openness (Yokoyama et al., 2002):</b><br>"
+                "Measures sky visibility above the terrain. Highlights convex landforms "
+                "like crests, ridge lines, and fault scarps."
+            ))
+            self.pos_opts = QWidget()
+            pos_layout = QFormLayout(self.pos_opts)
+            pos_layout.setContentsMargins(0, 4, 0, 0)
+            self.spin_pos_radius = QSpinBox()
+            self.spin_pos_radius.setToolTip(tr(
+                "Search radius in pixels. Larger values highlight broader, macro-topographic "
+                "landforms. Smaller values emphasize local micro-relief details."
+            ))
+            self.spin_pos_radius.setRange(1, 100)
+            self.spin_pos_radius.setValue(10)
+            self.spin_pos_radius.setSuffix(tr(" pixels"))
+            pos_layout.addRow(tr("Search radius:"), self.spin_pos_radius)
+            self.spin_pos_sectors = QSpinBox()
+            self.spin_pos_sectors.setToolTip(tr(
+                "Number of radial directions to sample (typically 8 or 16). Higher values "
+                "increase processing time but improve angular precision."
+            ))
+            self.spin_pos_sectors.setRange(4, 32)
+            self.spin_pos_sectors.setValue(8)
+            pos_layout.addRow(tr("Number of sectors:"), self.spin_pos_sectors)
+            self.out_openness_pos.addSettingsWidget(self.pos_opts)
+            rvt_layout.addWidget(self.out_openness_pos)
+
+            # B. Negative Openness (Valleys & Incisions) [1.2.1]
             self.out_openness_neg = OutputSelectorWidget(
                 tr("Negative Openness (Incisions / Valleys)"), "openness_neg.tif", "GeoTIFF (*.tif)", is_checked=False
             )
             self.out_openness_neg.setToolTip(tr(
-            "<b>Negative Openness:</b><br>"
-            "Measures the enclavement of the relief by inverting the DEM profile.<br>"
-            "Traces concave structures with extreme precision, highlighting river incisions and joint networks."
-           ))
+                "<b>Negative Openness (Yokoyama et al., 2002):</b><br>"
+                "Measures enclavement of the relief by inverting the DEM. Highlights concave "
+                "features like valleys, river incisions, and structural joint networks."
+            ))
+            self.neg_opts = QWidget()
+            neg_layout = QFormLayout(self.neg_opts)
+            neg_layout.setContentsMargins(0, 4, 0, 0)
+            self.spin_neg_radius = QSpinBox()
+            self.spin_neg_radius.setRange(1, 100)
+            self.spin_neg_radius.setValue(10)
+            self.spin_neg_radius.setSuffix(tr(" pixels"))
+            neg_layout.addRow(tr("Search radius:"), self.spin_neg_radius)
+            self.spin_neg_sectors = QSpinBox()
+            self.spin_neg_sectors.setRange(4, 32)
+            self.spin_neg_sectors.setValue(8)
+            neg_layout.addRow(tr("Number of sectors:"), self.spin_neg_sectors)
+            self.out_openness_neg.addSettingsWidget(self.neg_opts)
+            rvt_layout.addWidget(self.out_openness_neg)
+
+            # C. Isotropic Sky View Factor (SVF) [1.2.1]
             self.out_svf = OutputSelectorWidget(
                 tr("Sky View Factor (SVF)"), "svf.tif", "GeoTIFF (*.tif)", is_checked=False
             )
             self.out_svf.setToolTip(tr(
-            "<b>Sky View Factor (SVF):</b><br>"
-            "Calculates the visible hemisphere portion of the sky (Kokalj et al., 2011).<br>"
-            "Provides diffuse, multidirectional illumination ideal for mapping active fault scarps."
+                "<b>Isotropic Sky View Factor (SVF) (Kokalj et al., 2011):</b><br>"
+                "Calculates the visible hemisphere portion of the sky. Provides diffuse, "
+                "multidirectional illumination ideal for structural lineaments and fault scarp mapping."
             ))
-
-            # Combined options panel (Shared between Openness and SVF to prevent UI clutter) 
-            self.rvt_opts = QWidget()
-            rvt_opts_layout = QFormLayout(self.rvt_opts)
-            rvt_opts_layout.setContentsMargins(18, 0, 0, 0)
-            rvt_opts_layout.setSpacing(4)
-
-            self.spin_open_radius = QSpinBox()
-            self.spin_open_radius.setRange(1, 100)
-            self.spin_open_radius.setValue(10)
-            self.spin_open_radius.setSuffix(tr(" pixels"))
-            rvt_opts_layout.addRow(tr("Search radius:"), self.spin_open_radius)
-
-            self.spin_open_sectors = QSpinBox()
-            self.spin_open_sectors.setRange(4, 32)
-            self.spin_open_sectors.setValue(8)
-            rvt_opts_layout.addRow(tr("Number of sectors:"), self.spin_open_sectors)
-
-            # Add to main vertical layout
-            rvt_layout.addWidget(self.out_openness_pos)
-            rvt_layout.addWidget(self.out_openness_neg)
+            self.svf_opts = QWidget()
+            svf_opts_layout = QFormLayout(self.svf_opts)
+            svf_opts_layout.setContentsMargins(0, 4, 0, 0)
+            self.spin_svf_radius = QSpinBox()
+            self.spin_svf_radius.setRange(1, 100)
+            self.spin_svf_radius.setValue(10)
+            self.spin_svf_radius.setSuffix(tr(" pixels"))
+            svf_opts_layout.addRow(tr("Search radius:"), self.spin_svf_radius)
+            self.spin_svf_sectors = QSpinBox()
+            self.spin_svf_sectors.setRange(4, 32)
+            self.spin_svf_sectors.setValue(8)
+            svf_opts_layout.addRow(tr("Number of sectors:"), self.spin_svf_sectors)
+            self.out_svf.addSettingsWidget(self.svf_opts)
             rvt_layout.addWidget(self.out_svf)
-            rvt_layout.addWidget(self.rvt_opts)
-            
-            # Hide the parameters initially since no indices are checked by default
-            self.rvt_opts.setVisible(False)
+
+            # D. Sky Illumination (SOC model)
+            self.out_sky_illumination = OutputSelectorWidget(
+                tr("Sky Illumination (Diffuse Shading)"), "sky_illumination.tif", "GeoTIFF (*.tif)", is_checked=False
+            )
+            self.out_sky_illumination.setToolTip(tr(
+                "<b>Sky Illumination (CIE SOC Model):</b><br>"
+                "Simulates diffuse lighting under overcast sky conditions. Re-illuminates "
+                "narrow, deep valleys and reduces high-contrast directional shadows."
+            ))
+            self.sky_opts = QWidget()
+            sky_opts_layout = QFormLayout(self.sky_opts)
+            sky_opts_layout.setContentsMargins(0, 4, 0, 0)
+            self.spin_sky_radius = QSpinBox()
+            self.spin_sky_radius.setRange(1, 100)
+            self.spin_sky_radius.setValue(10)
+            self.spin_sky_radius.setSuffix(tr(" pixels"))
+            sky_opts_layout.addRow(tr("Search radius:"), self.spin_sky_radius)
+            self.spin_sky_sectors = QSpinBox()
+            self.spin_sky_sectors.setRange(4, 32)
+            self.spin_sky_sectors.setValue(8)
+            sky_opts_layout.addRow(tr("Number of sectors:"), self.spin_sky_sectors)
+            self.out_sky_illumination.addSettingsWidget(self.sky_opts)
+            rvt_layout.addWidget(self.out_sky_illumination)
+
+            # E. Anisotropic Sky View Factor [1.1.1]
+            self.out_anisotropic_svf = OutputSelectorWidget(
+                tr("Anisotropic Sky-View Factor (Directional SVF)"), "anisotropic_svf.tif", "GeoTIFF (*.tif)", is_checked=False
+            )
+            self.out_anisotropic_svf.setToolTip(tr(
+                "<b>Anisotropic Sky View Factor (Zaksek et al., 2011):</b><br>"
+                "Applies a directional sky brightness weight perpendicular to the preferred azimuth. "
+                "Maximizes shadow contrast for linear faults and joints running parallel to the trend."
+            ))
+            self.asvf_opts = QWidget()
+            asvf_opts_layout = QFormLayout(self.asvf_opts)
+            asvf_opts_layout.setContentsMargins(0, 4, 0, 0)
+            asvf_opts_layout.setSpacing(4)
+            self.spin_asvf_radius = QSpinBox()
+            self.spin_asvf_radius.setRange(1, 100)
+            self.spin_asvf_radius.setValue(10)
+            self.spin_asvf_radius.setSuffix(tr(" pixels"))
+            asvf_opts_layout.addRow(tr("Search radius:"), self.spin_asvf_radius)
+            self.spin_asvf_sectors = QSpinBox()
+            self.spin_asvf_sectors.setRange(4, 32)
+            self.spin_asvf_sectors.setValue(8)
+            asvf_opts_layout.addRow(tr("Number of sectors:"), self.spin_asvf_sectors)
+            self.spin_asvf_azimuth = QSpinBox()
+            self.spin_asvf_azimuth.setToolTip(tr(
+                "Azimuth direction of the preferred structural trend. The weighting "
+                "function is shifted perpendicularly to maximize contrast on parallel features."
+            ))
+            self.spin_asvf_azimuth.setRange(0, 360)
+            self.spin_asvf_azimuth.setValue(315)
+            asvf_opts_layout.addRow(tr("Preferred Azimuth (°):"), self.spin_asvf_azimuth)
+            self.slider_asvf_anisotropy = QSlider(Qt.Horizontal)
+            self.slider_asvf_anisotropy.setToolTip(tr(
+                "Anisotropy level (0.0 to 1.0). Controls the intensity of directional weighting "
+                "(0.0 is isotropic SVF, 1.0 is maximum directional bias)."
+            ))
+            self.slider_asvf_anisotropy.setRange(0, 100)
+            self.slider_asvf_anisotropy.setValue(50)
+            self.lbl_asvf_anisotropy = QLabel("0.50")
+            self.slider_asvf_anisotropy.valueChanged.connect(lambda v: self.lbl_asvf_anisotropy.setText(f"{v/100.0:.2f}"))
+            row_anisotropy = QHBoxLayout()
+            row_anisotropy.addWidget(self.slider_asvf_anisotropy)
+            row_anisotropy.addWidget(self.lbl_asvf_anisotropy)
+            asvf_opts_layout.addRow(tr("Anisotropy Level:"), row_anisotropy)
+            self.out_anisotropic_svf.addSettingsWidget(self.asvf_opts)
+            rvt_layout.addWidget(self.out_anisotropic_svf)
+
+            # F. Local Dominance [1.2.1]
+            self.out_local_dominance = OutputSelectorWidget(
+                tr("Local Dominance (Hesse 2016)"), "local_dominance.tif", "GeoTIFF (*.tif)", is_checked=False
+            )
+            self.out_local_dominance.setToolTip(tr(
+                "<b>Local Dominance (Hesse, 2016):</b><br>"
+                "Computes average look-down angles from a virtual observer standing height. "
+                "Highlights local micro-relief details while preserving macro-topographical volume."
+            ))
+            self.ld_opts = QWidget()
+            ld_opts_layout = QFormLayout(self.ld_opts)
+            ld_opts_layout.setContentsMargins(0, 4, 0, 0)
+            self.spin_ld_min_radius = QSpinBox()
+            self.spin_ld_min_radius.setToolTip(tr(
+                "Minimum search distance in pixels. Filters out high-frequency pixel noise "
+                "from the observer's immediate surroundings."
+            ))
+            self.spin_ld_min_radius.setRange(1, 50)
+            self.spin_ld_min_radius.setValue(2)
+            ld_opts_layout.addRow(tr("Min Search Radius (px):"), self.spin_ld_min_radius)
+            self.spin_ld_max_radius = QSpinBox()
+            self.spin_ld_max_radius.setToolTip(tr(
+                "Maximum search distance in pixels. Controls the outer spatial scale of the "
+                "dominance calculations."
+            ))
+            self.spin_ld_max_radius.setRange(2, 100)
+            self.spin_ld_max_radius.setValue(15)
+            ld_opts_layout.addRow(tr("Max Search Radius (px):"), self.spin_ld_max_radius)
+            self.spin_ld_sectors = QSpinBox()
+            self.spin_ld_sectors.setRange(4, 32)
+            self.spin_ld_sectors.setValue(8)
+            ld_opts_layout.addRow(tr("Number of sectors:"), self.spin_ld_sectors)
+            self.spin_ld_obs_height = QDoubleSpinBox()
+            self.spin_ld_obs_height.setToolTip(tr(
+                "Virtual observer standing height in meters. Prevents local terrain blocks "
+                "from completely obscuring minor elevation changes."
+            ))
+            self.spin_ld_obs_height.setRange(0.1, 5.0)
+            self.spin_ld_obs_height.setValue(1.7)
+            self.spin_ld_obs_height.setDecimals(1)
+            ld_opts_layout.addRow(tr("Observer Height (m):"), self.spin_ld_obs_height)
+            self.out_local_dominance.addSettingsWidget(self.ld_opts)
+            rvt_layout.addWidget(self.out_local_dominance)
 
             root.addWidget(rvt_group)
+
+            self.spin_neg_sectors.setToolTip(self.spin_pos_sectors.toolTip())
+            self.spin_svf_sectors.setToolTip(self.spin_pos_sectors.toolTip())
+            self.spin_sky_sectors.setToolTip(self.spin_pos_sectors.toolTip())
+            self.spin_asvf_sectors.setToolTip(self.spin_pos_sectors.toolTip())
+            self.spin_ld_sectors.setToolTip(self.spin_pos_sectors.toolTip())
 
             # ── Global Checklist Controls ──
             global_ctrl_layout = QHBoxLayout()
@@ -302,21 +451,17 @@ class TerrainDerivativesPanel(BasePanel):
             self.chk_hill_compute_edges.toggled.connect(self._on_compute_edges_toggled)
             self.chk_hill_no_edges.toggled.connect(self._on_no_edges_toggled)
 
-            # Wire dynamic visibility for the shared parameters panel
-            self.out_openness_pos.stateChanged.connect(self._on_rvt_options_visibility_changed)
-            self.out_openness_neg.stateChanged.connect(self._on_rvt_options_visibility_changed)
-            self.out_svf.stateChanged.connect(self._on_rvt_options_visibility_changed)
-
         except :
             import traceback; traceback.print_exc()
 
     # ── Helpers ──
 
     def _get_all_selectors(self) -> list[OutputSelectorWidget]:
-        return [self.out_slope, self.out_aspect, self.out_hillshade,
-                self.out_tpi, self.out_tri, self.out_openness_pos, self.out_openness_neg,
-                self.out_svf
-                ]
+        return [
+            self.out_slope, self.out_aspect, self.out_hillshade, self.out_tpi, self.out_tri,
+            self.out_openness_pos, self.out_openness_neg, self.out_svf, 
+            self.out_sky_illumination, self.out_anisotropic_svf, self.out_local_dominance
+        ]
 
     def _on_select_all(self):
         for selector in self._get_all_selectors():
@@ -366,9 +511,12 @@ class TerrainDerivativesPanel(BasePanel):
             "out_tri": self.out_tri.isChecked(),
             "out_openness_pos": self.out_openness_pos.isChecked(),
             "out_openness_neg": self.out_openness_neg.isChecked(),
-            "out_svf": self.out_svf.isChecked(),  
+            "out_svf": self.out_svf.isChecked(),
+            "out_sky_illumination": self.out_sky_illumination.isChecked(),
+            "out_anisotropic_svf": self.out_anisotropic_svf.isChecked(),
+            "out_local_dominance": self.out_local_dominance.isChecked(),
 
-            # Target output file paths (Memory or physical disk paths) [2]
+            # Target output file paths
             "path_slope": self.out_slope.filePath(),
             "path_aspect": self.out_aspect.filePath(),
             "path_hillshade": self.out_hillshade.filePath(),
@@ -376,19 +524,42 @@ class TerrainDerivativesPanel(BasePanel):
             "path_tri": self.out_tri.filePath(),
             "path_openness_pos": self.out_openness_pos.filePath(),
             "path_openness_neg": self.out_openness_neg.filePath(),
-            "path_svf": self.out_svf.filePath(),   
-            
+            "path_svf": self.out_svf.filePath(),
+            "path_sky_illumination": self.out_sky_illumination.filePath(),
+            "path_anisotropic_svf": self.out_anisotropic_svf.filePath(),
+            "path_local_dominance": self.out_local_dominance.filePath(),
 
             # Configurations
             "slope_percent": self.rad_slope_pct.isChecked(),
+            "hill_variant": hill_variant,
+            "hill_edges": hill_edges,
             "hill_azimuth": self.spin_hill_azimuth.value(),
             "hill_altitude": self.spin_hill_altitude.value(),
-            "hill_variant": hill_variant,          # Condenses mutually exclusive variants 
-            "hill_edges": hill_edges,              # Condenses mutually exclusive edges 
             "hill_z_factor": self.spin_hill_z.value(),
             "tpi_radius": self.spin_tpi_radius.value(),
-            "openness_radius": self.spin_open_radius.value(), 
-            "openness_sectors": self.spin_open_sectors.value()
+
+            # Decoupled directional variables [2]
+            "pos_radius": self.spin_pos_radius.value(),
+            "pos_sectors": self.spin_pos_sectors.value(),
+            
+            "neg_radius": self.spin_neg_radius.value(),
+            "neg_sectors": self.spin_neg_sectors.value(),
+            
+            "svf_radius": self.spin_svf_radius.value(),
+            "svf_sectors": self.spin_svf_sectors.value(),
+            
+            "sky_radius": self.spin_sky_radius.value(),
+            "sky_sectors": self.spin_sky_sectors.value(),
+
+            "asvf_radius": self.spin_asvf_radius.value(),
+            "asvf_sectors": self.spin_asvf_sectors.value(),
+            "preferred_azimuth": self.spin_asvf_azimuth.value(),
+            "anisotropy": self.slider_asvf_anisotropy.value() / 100.0,
+
+            "local_dom_min_radius": self.spin_ld_min_radius.value(),
+            "local_dom_max_radius": self.spin_ld_max_radius.value(),
+            "local_dom_sectors": self.spin_ld_sectors.value(),
+            "observer_height": self.spin_ld_obs_height.value()
         }
 
         self.btn_compute.setEnabled(False)
@@ -444,23 +615,11 @@ class TerrainDerivativesPanel(BasePanel):
             self.chk_hill_no_edges.blockSignals(False)
 
     def _on_no_edges_toggled(self, checked: bool):
-        """Enforces mutual exclusion between compute_edges and no_edges [3]."""
+        """Enforces mutual exclusion between compute_edges and no_edges."""
         if checked:
             self.chk_hill_compute_edges.blockSignals(True)
             self.chk_hill_compute_edges.setChecked(False)
             self.chk_hill_compute_edges.blockSignals(False)
-
-    def _on_rvt_options_visibility_changed(self) -> None:
-        """
-        Dynamically shows the parameters panel if at least one of the 
-        NumPy-based visualisations (Openness / SVF) is selected [2].
-        """
-        any_checked = (
-            self.out_openness_pos.isChecked() or 
-            self.out_openness_neg.isChecked() or 
-            self.out_svf.isChecked()
-        )
-        self.rvt_opts.setVisible(any_checked)
 
     # ── BasePanel required overrides ────────────────────────────────────
 

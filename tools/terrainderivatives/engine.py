@@ -177,14 +177,13 @@ class TerrainDerivativesEngine(BaseEngine):
             
             path_pos = kwargs.get("path_openness_pos", "TEMPORARY_OUTPUT")
             if path_pos == "TEMPORARY_OUTPUT":
-                # Create a temporary file path
-                unique_id = uuid.uuid4().hex[:8] 
+                unique_id = uuid.uuid4().hex[:8]
                 path_pos = os.path.join(tempfile.gettempdir(), f"openness_pos_{unique_id}.tif").replace("\\", "/")
 
             op_pos_array = self._solve_yokoyama_openness(
                 dem_layer=dem_layer,
-                radius_px=kwargs.get("openness_radius", 10),
-                n_sectors=kwargs.get("openness_sectors", 8),
+                radius_px=kwargs.get("pos_radius", 10),
+                n_sectors=kwargs.get("pos_sectors", 8),
                 invert_dem=False
             )
             self._save_numpy_to_gtiff(op_pos_array, path_pos, dem_layer)
@@ -194,7 +193,7 @@ class TerrainDerivativesEngine(BaseEngine):
         # ── 7. Negative Openness (NumPy solver on inverted DEM) ──
         if kwargs.get("out_openness_neg"):
             if progress_cb:
-                progress_cb(95, tr("Computing Negative Openness (NumPy)..."))
+                progress_cb(92, tr("Computing Negative Openness (NumPy)..."))
             
             path_neg = kwargs.get("path_openness_neg", "TEMPORARY_OUTPUT")
             if path_neg == "TEMPORARY_OUTPUT":
@@ -203,23 +202,19 @@ class TerrainDerivativesEngine(BaseEngine):
 
             op_neg_array = self._solve_yokoyama_openness(
                 dem_layer=dem_layer,
-                radius_px=kwargs.get("openness_radius", 10),
-                n_sectors=kwargs.get("openness_sectors", 8),
+                radius_px=kwargs.get("neg_radius", 10),
+                n_sectors=kwargs.get("neg_sectors", 8),
                 invert_dem=True
             )
             self._save_numpy_to_gtiff(op_neg_array, path_neg, dem_layer)
             lyr_name = _get_layer_name(path_neg, "Openness_Negative")
             output_layers["openness_neg"] = QgsRasterLayer(path_neg, lyr_name, "gdal")
 
-
-        if progress_cb:
-            progress_cb(100, tr("Done."))
         
-
         # ── 8. Sky View Factor (NumPy solver) ──
         if kwargs.get("out_svf"):
             if progress_cb:
-                progress_cb(98, tr("Computing Sky View Factor (NumPy)..."))
+                progress_cb(95, tr("Computing Sky View Factor (NumPy)..."))
 
             path_svf = kwargs.get("path_svf", "TEMPORARY_OUTPUT")
             if path_svf == "TEMPORARY_OUTPUT":
@@ -228,13 +223,76 @@ class TerrainDerivativesEngine(BaseEngine):
 
             svf_array = self._solve_sky_view_factor(
                 dem_layer=dem_layer,
-                radius_px=kwargs.get("openness_radius", 10),
-                n_sectors=kwargs.get("openness_sectors", 8),
+                radius_px=kwargs.get("svf_radius", 10),
+                n_sectors=kwargs.get("svf_sectors", 8),
             )
             self._save_numpy_to_gtiff(svf_array, path_svf, dem_layer)
             lyr_name = _get_layer_name(path_svf, "Sky_View_Factor")
             output_layers["svf"] = QgsRasterLayer(path_svf, lyr_name, "gdal")
 
+        # ── 9. Sky Illumination (NumPy solver) ──
+        if kwargs.get("out_sky_illumination"):
+            if progress_cb:
+                progress_cb(97, tr("Computing Sky Illumination (NumPy)..."))
+
+            path_sky = kwargs.get("path_sky_illumination", "TEMPORARY_OUTPUT")
+            if path_sky == "TEMPORARY_OUTPUT":
+                unique_id = uuid.uuid4().hex[:8]
+                path_sky = os.path.join(tempfile.gettempdir(), f"sky_illumination_{unique_id}.tif").replace("\\", "/")
+
+            sky_array = self._solve_sky_illumination(
+                dem_layer=dem_layer,
+                radius_px=kwargs.get("sky_radius", 10),
+                n_sectors=kwargs.get("sky_sectors", 8)
+            )
+            self._save_numpy_to_gtiff(sky_array, path_sky, dem_layer)
+            lyr_name = _get_layer_name(path_sky, "Sky_Illumination")
+            output_layers["sky_illumination"] = QgsRasterLayer(path_sky, lyr_name, "gdal")
+
+        # ── 10. Anisotropic Sky View Factor (NumPy solver) ──
+        if kwargs.get("out_anisotropic_svf"):
+            if progress_cb:
+                progress_cb(98, tr("Computing Anisotropic SVF (NumPy)..."))
+
+            path_asvf = kwargs.get("path_anisotropic_svf", "TEMPORARY_OUTPUT")
+            if path_asvf == "TEMPORARY_OUTPUT":
+                unique_id = uuid.uuid4().hex[:8]
+                path_asvf = os.path.join(tempfile.gettempdir(), f"anisotropic_svf_{unique_id}.tif").replace("\\", "/")
+
+            asvf_array = self._solve_anisotropic_sky_view_factor(
+                dem_layer=dem_layer,
+                radius_px=kwargs.get("asvf_radius", 10),
+                n_sectors=kwargs.get("asvf_sectors", 8),
+                preferred_azimuth_deg=kwargs.get("preferred_azimuth", 315.0),
+                anisotropy_level=kwargs.get("anisotropy", 0.5)
+            )
+            self._save_numpy_to_gtiff(asvf_array, path_asvf, dem_layer)
+            lyr_name = _get_layer_name(path_asvf, "Anisotropic_Sky_View_Factor")
+            output_layers["anisotropic_svf"] = QgsRasterLayer(path_asvf, lyr_name, "gdal")
+
+        # ── 11. Local Dominance (NumPy solver) ──
+        if kwargs.get("out_local_dominance"):
+            if progress_cb:
+                progress_cb(99, tr("Computing Local Dominance (NumPy)..."))
+
+            path_ld = kwargs.get("path_local_dominance", "TEMPORARY_OUTPUT")
+            if path_ld == "TEMPORARY_OUTPUT":
+                unique_id = uuid.uuid4().hex[:8]
+                path_ld = os.path.join(tempfile.gettempdir(), f"local_dominance_{unique_id}.tif").replace("\\", "/")
+
+            ld_array = self._solve_local_dominance(
+                dem_layer=dem_layer,
+                min_radius_px=kwargs.get("local_dom_min_radius", 2),
+                max_radius_px=kwargs.get("local_dom_max_radius", 15),
+                n_sectors=kwargs.get("local_dom_sectors", 8),
+                observer_height=kwargs.get("observer_height", 1.7)
+            )
+            self._save_numpy_to_gtiff(ld_array, path_ld, dem_layer)
+            lyr_name = _get_layer_name(path_ld, "Local_Dominance")
+            output_layers["local_dominance"] = QgsRasterLayer(path_ld, lyr_name, "gdal")
+        
+        if progress_cb:
+            progress_cb(100, tr("Done."))
 
         return output_layers
 
@@ -267,13 +325,20 @@ class TerrainDerivativesEngine(BaseEngine):
             List[np.ndarray]: List of 2D arrays, each containing the maximum
                               horizon angle (radians) for a given azimuth direction.
         """
-        # Directional coordinate offsets (clockwise starting from North)
+        # Directional coordinate offsets in strict clockwise order (clockwise starting from North)
         directions = [
-            (-1, 0),  (1, 0),  (0, -1), (0, 1),   # Orthogonal (N, S, W, E)
-            (-1, -1), (-1, 1), (1, -1), (1, 1)    # Diagonal (NW, NE, SW, SE)
+            (-1, 0),   # 1. North (0°)
+            (-1, 1),   # 2. Northeast (45°)
+            (0, 1),    # 3. East (90°)
+            (1, 1),    # 4. Southeast (135°)
+            (1, 0),    # 5. South (180°)
+            (1, -1),   # 6. Southwest (225°)
+            (0, -1),   # 7. West (270°)
+            (-1, -1)   # 8. Northwest (315°)
         ]
         if n_sectors == 4:
-            directions = directions[:4]
+            # Clockwise orthogonal directions: N, E, S, W 
+            directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]
 
         horizon_angles = []
         for dr, dc in directions:
@@ -285,16 +350,16 @@ class TerrainDerivativesEngine(BaseEngine):
                 # Shift the elevation matrix along the current radial vector
                 shifted_dem = self._shift_array(dem, dr * r, dc * r, fill_value=np.nan)
                 
-                # Georeferenced horizontal distance to the target pixel [2]
+                # Georeferenced horizontal distance to the target pixel 
                 dist_m = r * pixel_size * dir_factor
                 
                 # Elevation angle: beta = arctan(delta_Z / delta_L)
                 beta = np.arctan((shifted_dem - dem) / dist_m)
                 
-                # Keep the maximum elevation angle found, ignoring NaNs safely [2]
+                # Keep the maximum elevation angle found, ignoring NaNs safely 
                 max_beta = np.fmax(max_beta, beta)
 
-            # Pixels whose radial path falls entirely outside the grid are set to 0.0 (flat horizon) [2]
+            # Pixels whose radial path falls entirely outside the grid are set to 0.0 (flat horizon) 
             max_beta = np.where(np.isneginf(max_beta), 0.0, max_beta)
             horizon_angles.append(max_beta)
 
@@ -438,6 +503,338 @@ class TerrainDerivativesEngine(BaseEngine):
                 
         return result
     
+
+
+    # ------------------------------------------------------------------
+    # Advanced Diffuse Sky & Local Dominance NumPy Solvers [2]
+    # ------------------------------------------------------------------
+
+    def _solve_sky_illumination(
+        self,
+        dem_layer: QgsRasterLayer,
+        radius_px: int,
+        n_sectors: int
+    ) -> np.ndarray:
+        """
+        Calculates Sky Illumination under the Standard Overcast Sky (SOC) model
+        originally defined by the CIE (Commission Internationale de l'Éclairage).
+
+        THEORETICAL CONTEXT
+        ===================
+        Standard hillshading uses a single directional light vector, which often
+        creates harsh shadows and completely black voids. Sky Illumination
+        replaces this with diffuse hemispherical lighting . 
+        
+        Under the CIE SOC model, sky luminance decreases from the zenith to the 
+        horizon following the function: L(theta) = L_zenith * (1 + 2*cos(theta)) / 3.
+        Since theta (zenith angle) is the complement of gamma (horizon elevation), 
+        the directional luminance weight becomes: (1 + 2*sin(gamma)) / 3 .
+        This is combined with the directional sky visibility (1 - sin(gamma)) to
+        integrate the total incoming diffuse light on each cell.
+
+        MATHEMATICAL FORMULA
+        ====================
+        For each cell, the accumulated diffuse illumination is computed as:
+
+            SOC = (1/N) * sum_{i=1}^{N} [ (1 - sin(gamma_i)) * (1 + 2*sin(gamma_i)) / 3 ]
+
+        Where:
+            gamma_i = maximum elevation angle of the horizon in sector i (radians).
+            N       = number of compass sectors (4 or 8).
+
+        ACADEMIC REFERENCE
+        ==================
+        CIE (1990). Spatial distribution of daylight - overcast sky and clear sky.
+        CIE Standard S003, Vienna.
+        Kokalj, Z., & Somrak, M. (2019). Why Not Use a Hap Hazardly Selected 
+        Visualization? Remote Sensing, 11(11), 1168.
+
+        Args:
+            dem_layer (QgsRasterLayer): Source elevation raster layer.
+            radius_px (int): Search radius in pixels.
+            n_sectors (int): Number of radial directions (4 or 8).
+
+        Returns:
+            np.ndarray: 2D array of Sky Illumination values scaled between 0.0 and 1.0.
+        """
+        # Read DEM array and handle NoData masking
+        reader = RasterReader(dem_layer)
+        dem = reader.array.copy().astype(np.float32)
+        
+        if reader.nodata is not None:
+            dem[dem == reader.nodata] = np.nan
+
+        # Calculate horizontally scaled pixel size in meters (degrees -> meters conversion supported) [2]
+        pixel_size_m = self._get_pixel_size_meters(dem_layer, reader)
+
+        # Extract maximum horizon elevation angles across all azimuthal directions
+        horizon_angles = self._compute_horizon_angles(
+            dem, radius_px, n_sectors, pixel_size_m
+        )
+
+        illumination_sum = np.zeros_like(dem, dtype=np.float32)
+        for max_beta in horizon_angles:
+            # Clip elevation angles: flat terrain = 0.0, deep pit = pi/2
+            gamma = np.clip(max_beta, 0.0, np.pi / 2.0)
+            
+            # CIE SOC Overcast Sky diffuse intensity equation [1.3.1]
+            # Visibility term: (1 - sin(gamma)) 
+            # Overcast Luminance term: (1 + 2*sin(gamma)) / 3.0
+            intensity = (1.0 - np.sin(gamma)) * (1.0 + 2.0 * np.sin(gamma)) / 3.0
+            
+            # Accumulate values, safely skipping boundaries
+            illumination_sum += np.nan_to_num(intensity, nan=0.0)
+
+        sky_illumination = illumination_sum / len(horizon_angles)
+        sky_illumination = np.clip(sky_illumination, 0.0, 1.0)
+
+        # Restore original NoData values
+        if reader.nodata is not None:
+            sky_illumination[np.isnan(dem)] = np.nan
+            
+        return sky_illumination
+
+    def _solve_anisotropic_sky_view_factor(
+        self,
+        dem_layer: QgsRasterLayer,
+        radius_px: int,
+        n_sectors: int,
+        preferred_azimuth_deg: float,
+        anisotropy_level: float
+    ) -> np.ndarray:
+        """
+        Calculates the Anisotropic (Directional) Sky View Factor (aSVF)
+        by weighting horizon angles relative to a preferred structural trend.
+
+        THEORETICAL CONTEXT
+        ===================
+        Standard Sky View Factor assumes a uniformly bright sky dome (isotropic). 
+        Anisotropic SVF introduces a directional light bias . By weighting the 
+        directional sky visibility by a cosine function perpendicular to a preferred 
+        azimuth, it simulates directional shadows. This reveals subtle linear 
+        morphologies (such as fault scarps, dikes, and fracture networks) oriented 
+        parallel to the structural trend with extreme clarity .
+
+        MATHEMATICAL FORMULA
+        ====================
+        For each directional sector i, a weight is calculated as:
+
+            weight_i = 1.0 + A * cos(phi_i - phi_preferred - pi/2)
+
+        Where:
+            A             = anisotropy level (0.0 to 1.0).
+            phi_i         = azimuth angle of the current sector i (radians).
+            phi_preferred = preferred structural azimuth defined by user (radians) .
+            pi/2 offset   = shifts the maximum weight perpendicular to the preferred 
+                            trend to maximize topographic shadow contrast.
+
+        The anisotropic SVF is then integrated as:
+
+            aSVF = 1.0 - ( sum_{i=1}^{N} sin(gamma_i) * weight_i ) / sum_{i=1}^{N} weight_i
+
+        ACADEMIC REFERENCE
+        ==================
+        Zaksek, K., Ostir, K., & Kokalj, Z. (2011). Sky-View Factor as a Relief 
+        Visualization Technique. Remote Sensing, 3(2), 398-415. doi:10.3390/rs3020398
+        Kokalj, Z., & Somrak, M. (2019). Why Not Use a Hap Hazardly Selected 
+        Visualization? Remote Sensing, 11(11), 1168.
+
+        Args:
+            dem_layer (QgsRasterLayer): Source elevation raster layer.
+            radius_px (int): Search radius in pixels.
+            n_sectors (int): Number of radial directions (4 or 8).
+            preferred_azimuth_deg (float): Preferred tectonic/structural trend in degrees (0-360).
+            anisotropy_level (float): Blending factor from 0.0 (isotropic) to 1.0 (anisotropic).
+
+        Returns:
+            np.ndarray: 2D array of anisotropic SVF values scaled between 0.0 and 1.0.
+        """
+        # Read DEM array and handle NoData masking
+        reader = RasterReader(dem_layer)
+        dem = reader.array.copy().astype(np.float32)
+        
+        if reader.nodata is not None:
+            dem[dem == reader.nodata] = np.nan
+
+        # Calculate horizontally scaled pixel size in meters
+        pixel_size_m = self._get_pixel_size_meters(dem_layer, reader)
+
+        # Extract standard isotropic horizon angles
+        horizon_angles = self._compute_horizon_angles(
+            dem, radius_px, n_sectors, pixel_size_m
+        )
+
+        # Predefined direction matrices in strict clockwise order to match horizon_angles [2]
+        directions = [
+            (-1, 0),   # 1. North (0°)
+            (-1, 1),   # 2. Northeast (45°)
+            (0, 1),    # 3. East (90°)
+            (1, 1),    # 4. Southeast (135°)
+            (1, 0),    # 5. South (180°)
+            (1, -1),   # 6. Southwest (225°)
+            (0, -1),   # 7. West (270°)
+            (-1, -1)   # 8. Northwest (315°)
+        ]
+        if n_sectors == 4:
+            # N, E, S, W
+            directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+
+        preferred_azimuth_rad = math.radians(preferred_azimuth_deg)
+        weighted_sin_sum = np.zeros_like(dem, dtype=np.float32)
+        weight_total = 0.0
+
+        for i, max_beta in enumerate(horizon_angles):
+            dr, dc = directions[i]
+            
+            # Calculate exact azimuth angle of this sector (clockwise from North) [2]
+            azimuth_rad = math.atan2(dc, -dr)
+            if azimuth_rad < 0:
+                azimuth_rad += 2.0 * math.pi
+
+            # Cosine weight shifted by pi/2 to highlight perpendicular structural lineaments [2]
+            weight = np.cos(azimuth_rad - preferred_azimuth_rad - (math.pi / 2.0))
+            weight = 1.0 + anisotropy_level * weight
+
+            gamma = np.clip(max_beta, 0.0, np.pi / 2.0)
+            
+            # Accumulate weighted sinus factors, skipping boundaries safely
+            weighted_sin_sum += np.nan_to_num(np.sin(gamma) * weight, nan=0.0)
+            weight_total += weight
+
+        anisotropic_svf = 1.0 - (weighted_sin_sum / weight_total)
+        anisotropic_svf = np.clip(anisotropic_svf, 0.0, 1.0)
+
+        # Restore original NoData values
+        if reader.nodata is not None:
+            anisotropic_svf[np.isnan(dem)] = np.nan
+            
+        return anisotropic_svf
+
+
+
+    def _solve_local_dominance(
+        self,
+        dem_layer: QgsRasterLayer,
+        min_radius_px: int,
+        max_radius_px: int,
+        n_sectors: int,
+        observer_height: float = 1.7
+    ) -> np.ndarray:
+        """
+        Calculates Local Dominance (LD) from high-resolution DEMs using the 
+        exact mathematical algorithm defined by Ralf Hesse (2016).
+
+        THEORETICAL CONTEXT
+        ===================
+        Local Dominance measures how much an observer standing at a given cell 
+        dominates their surrounding landscape within a radial search window [R_min, R_max]. 
+        Unlike Sky View Factor (SVF), which can look flat on steep terrain, 
+        Local Dominance preserves macro-topographical volume by calculating 
+        the average look-down angle from the observer's eyes to all adjacent pixels.
+
+        High values (crest lines, ridges) correspond to positive look-down angles 
+        where the observer looks downward to see the neighbors .
+        Low or negative values (valleys, incisions, sinkholes) represent negative 
+        angles where the observer must look upward to see the surrounding terrain .
+        This produces a dramatic, plastic pseudo-3D visualization.
+
+        MATHEMATICAL FORMULA
+        ====================
+        For each cell (x0, y0) with elevation Z0 and observer height H_obs: 
+
+            LD = (1/N) * sum_{i=1}^{N} [ (1 / (R_max - R_min + 1)) * sum_{r=R_min}^{R_max} alpha_{i,r} ]
+
+        Where:
+            alpha_{i,r} = arctan( ( (Z0 + H_obs) - Z_{i,r} ) / d_r )
+            d_r         = r * pixel_size_meters * dir_factor
+            dir_factor  = sqrt(dr^2 + dc^2) (1.0 for orthogonal, sqrt(2) for diagonal)
+            N           = number of compass sectors (4 or 8)
+
+        ACADEMIC REFERENCE
+        ==================
+        Hesse, R. (2016). Local dominance - a novel visualization of high-resolution 
+        elevation data. Cartography and Geographic Information Science, 43(3), 205-217.
+        doi:10.1080/15230406.2015.1059157
+
+        Args:
+            dem_layer (QgsRasterLayer): Source elevation raster layer.
+            min_radius_px (int): Minimum search boundary in pixels (inner radius) .
+            max_radius_px (int): Maximum search boundary in pixels (outer radius) .
+            n_sectors (int): Number of radial directions (4 or 8) to sample .
+            observer_height (float): Standing height of the virtual observer (default: 1.7 m).
+
+        Returns:
+            np.ndarray: 2D array of Local Dominance values in degrees (0-90° typical).
+        """
+        # ── 1. Read DEM array and handle NoData masking ──
+        reader = RasterReader(dem_layer)
+        dem = reader.array.copy().astype(np.float32)
+        
+        if reader.nodata is not None:
+            dem[dem == reader.nodata] = np.nan
+
+        # ── 2. Get dynamic georeferenced metric pixel size (degrees -> meters conversion supported) [2]
+        pixel_size_m = self._get_pixel_size_meters(dem_layer, reader)
+
+        # ── 3. Define the 8 compass directions in a strict clockwise order ──
+        # This prevents azimuthal rotation misalignment during directional loops [2]
+        directions = [
+            (-1, 0),   # 1. North (0°)
+            (-1, 1),   # 2. Northeast (45°)
+            (0, 1),    # 3. East (90°)
+            (1, 1),    # 4. Southeast (135°)
+            (1, 0),    # 5. South (180°)
+            (1, -1),   # 6. Southwest (225°)
+            (0, -1),   # 7. West (270°)
+            (-1, -1)   # 8. Northwest (315°)
+        ]
+        if n_sectors == 4:
+            # Symmetrical orthogonal directions: N, E, S, W
+            directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+
+        # ── 4. Initialize the dominance accumulator array ──
+        dominance_sum = np.zeros_like(dem, dtype=np.float32)
+
+        # ── 5. Compute average look-down angles along each azimuth ──
+        for dr, dc in directions:
+            # Diagonal steps have wider cell centers by sqrt(2) [2]
+            dir_factor = math.sqrt(dr**2 + dc**2)
+            direction_angles_sum = np.zeros_like(dem, dtype=np.float32)
+            step_count = 0
+
+            # Sum sight angles over the radial search interval [R_min, R_max] [1.2.1]
+            for r in range(min_radius_px, max_radius_px + 1):
+                # Shift elevation matrices along current azimuth (with edge padding to prevent wrap-around) [2]
+                shifted_dem = self._shift_array(dem, dr * r, dc * r, fill_value=np.nan)
+                
+                # Physical horizontal distance in meters
+                dist_m = r * pixel_size_m * dir_factor
+
+                # Sight angle formula: arctan( (Z_observer - Z_neighbor) / L_distance ) [1.2.1]
+                # Negative angles (looking up) are preserved to correctly darken depressions and valleys [2]
+                angle = np.arctan(((dem + observer_height) - shifted_dem) / dist_m)
+                
+                # Accumulate angles, treating NaNs at boundaries as 0.0 contribution vectorially
+                direction_angles_sum += np.nan_to_num(angle, nan=0.0)
+                step_count += 1
+
+            # Accumulate average sight angle of this sector
+            dominance_sum += (direction_angles_sum / step_count)
+
+        # ── 6. Average the angles over all N sectors and convert from radians to degrees ──
+        local_dominance_rad = dominance_sum / len(directions)
+        local_dominance_deg = np.degrees(local_dominance_rad)
+
+        # ── 7. Re-apply the original DEM NoData mask ──
+        if reader.nodata is not None:
+            local_dominance_deg[np.isnan(dem)] = np.nan
+            
+        return local_dominance_deg
+    
+
+    #============================================================================
+    #  HELPER
+    #============================================================================
 
     def _get_pixel_size_meters(self, dem_layer: QgsRasterLayer, reader: RasterReader) -> float:
         """
