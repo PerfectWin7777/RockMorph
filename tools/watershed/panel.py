@@ -30,7 +30,7 @@ import numpy as np                              # type: ignore
 from PyQt5.QtWidgets import (                   # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QSpinBox, QDoubleSpinBox,
-    QComboBox, QGroupBox, QLabel,
+    QComboBox, QLabel,
     QTreeWidget, QTreeWidgetItem,
     QSizePolicy, QAbstractItemView,
     QButtonGroup, QRadioButton,
@@ -40,7 +40,7 @@ from PyQt5.QtWidgets import (                   # type: ignore
 from PyQt5.QtCore import Qt, QCoreApplication  # type: ignore
 from PyQt5.QtGui import QColor                 # type: ignore
 
-from qgis.gui import QgsMapLayerComboBox        # type: ignore
+from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox        # type: ignore
 from qgis.core import (                         # type: ignore
     QgsMapLayerProxyModel,
     QgsWkbTypes,
@@ -137,7 +137,7 @@ class WatershedPanel(BasePanel):
         root.setSpacing(6)
 
         # ── Input layers ──────────────────────────────────────────────
-        input_group  = QGroupBox(tr("Input Layers"))
+        input_group  = QgsCollapsibleGroupBox(tr("Input Layers"))
         input_layout = QFormLayout(input_group)
 
         self.fdir_combo = QgsMapLayerComboBox()
@@ -181,7 +181,7 @@ class WatershedPanel(BasePanel):
         root.addWidget(input_group)
 
         # ── Encoding ──────────────────────────────────────────────────
-        enc_group  = QGroupBox(tr("D8 Encoding"))
+        enc_group  = QgsCollapsibleGroupBox(tr("D8 Encoding"))
         enc_layout = QFormLayout(enc_group)
 
         self.encoding_combo = QComboBox()
@@ -202,7 +202,7 @@ class WatershedPanel(BasePanel):
         root.addWidget(enc_group)
 
         # ── Subdivision mode ──────────────────────────────────────────
-        mode_group  = QGroupBox(tr("Subdivision Mode"))
+        mode_group  = QgsCollapsibleGroupBox(tr("Subdivision Mode"))
         mode_layout = QVBoxLayout(mode_group)
 
         self.btn_mode_n    = QRadioButton(tr("By number of sub-basins (N)"))
@@ -220,7 +220,7 @@ class WatershedPanel(BasePanel):
         root.addWidget(mode_group)
 
         # ── Parameters ────────────────────────────────────────────────
-        param_group  = QGroupBox(tr("Parameters"))
+        param_group  = QgsCollapsibleGroupBox(tr("Parameters"))
         param_layout = QFormLayout(param_group)
 
         # N sub-basins
@@ -306,7 +306,7 @@ class WatershedPanel(BasePanel):
         root.addWidget(self._progress_container)
 
         # ── Results table ─────────────────────────────────────────────
-        results_group  = QGroupBox(tr("Sub-basin Results"))
+        results_group  = QgsCollapsibleGroupBox(tr("Sub-basin Results"))
         results_layout = QVBoxLayout(results_group)
 
         self.result_tree = QTreeWidget()
@@ -344,7 +344,7 @@ class WatershedPanel(BasePanel):
 
         # ── Map output ────────────────────────────────────────────────
         # ── GroupBox: Output Settings (Refactored with OutputSelectorWidget) ──
-        map_group = QGroupBox(tr("Output Settings"))
+        map_group = QgsCollapsibleGroupBox(tr("Output Settings"))
         map_layout = QVBoxLayout(map_group)
         map_layout.setSpacing(6)
 
@@ -365,7 +365,7 @@ class WatershedPanel(BasePanel):
         root.addWidget(map_group)
 
         # ── Export ────────────────────────────────────────────────────
-        export_group  = QGroupBox(tr("Export"))
+        export_group  = QgsCollapsibleGroupBox(tr("Export"))
         export_layout = QHBoxLayout(export_group)
 
         for fmt in ["Shapefile", "GeoPackage", "CSV"]:

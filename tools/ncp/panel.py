@@ -31,7 +31,7 @@ import re
 from PyQt5.QtWidgets import (  # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QSpinBox, QDoubleSpinBox,
-    QComboBox, QGroupBox, QLabel,
+    QComboBox, QLabel,
     QTreeWidget, QTreeWidgetItem,
     QSizePolicy, QAbstractItemView,
     QProgressBar, QButtonGroup, QRadioButton,
@@ -40,7 +40,7 @@ from PyQt5.QtWidgets import (  # type: ignore
 )
 from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal  # type: ignore
 from PyQt5.QtGui import QColor  # type: ignore
-from qgis.gui import QgsMapLayerComboBox  # type: ignore
+from qgis.gui import QgsMapLayerComboBox , QgsCollapsibleGroupBox   # type: ignore
 from qgis.core import (  # type: ignore
     QgsMapLayerProxyModel, QgsWkbTypes,
     QgsCoordinateTransform, QgsProject,
@@ -80,7 +80,7 @@ AXIS_OPTIONS = [
 # NCP Style Widget
 # ---------------------------------------------------------------------------
 
-class NCPStyleWidget(QGroupBox):
+class NCPStyleWidget(QgsCollapsibleGroupBox):
     """
     Control group for NCP visualization styles.
     Emits styleChanged when any parameter is modified.
@@ -238,7 +238,7 @@ class NCPPanel(BasePanel):
         root.setSpacing(6)
 
         # ── Input ─────────────────────────────────────────────────
-        input_group  = QGroupBox(tr("Input"))
+        input_group  = QgsCollapsibleGroupBox(tr("Input"))
         input_layout = QFormLayout(input_group)
 
         self.dem_combo = QgsMapLayerComboBox()
@@ -266,7 +266,7 @@ class NCPPanel(BasePanel):
         root.addWidget(input_group)
 
         # ── Parameters ────────────────────────────────────────────
-        param_group  = QGroupBox(tr("Parameters"))
+        param_group  = QgsCollapsibleGroupBox(tr("Parameters"))
         param_layout = QFormLayout(param_group)
 
         self.n_points_spin = QSpinBox()
@@ -323,7 +323,7 @@ class NCPPanel(BasePanel):
         root.addWidget(self._progress_container) 
 
         # ── View toggle ───────────────────────────────────────────
-        view_group  = QGroupBox(tr("View"))
+        view_group  = QgsCollapsibleGroupBox(tr("View"))
         view_layout = QHBoxLayout(view_group)
 
         self.btn_profiles = QRadioButton(tr("Normalized profiles"))
@@ -340,7 +340,7 @@ class NCPPanel(BasePanel):
         root.addWidget(view_group)
 
         # ── Binary axes (visible only in binary mode) ─────────────
-        self.axes_group  = QGroupBox(tr("Binary plot axes"))
+        self.axes_group  = QgsCollapsibleGroupBox(tr("Binary plot axes"))
         axes_layout      = QFormLayout(self.axes_group)
 
         self.x_axis_combo = QComboBox()
@@ -360,7 +360,7 @@ class NCPPanel(BasePanel):
         root.addWidget(self.axes_group)
 
         # ── Basin tree ────────────────────────────────────────────
-        results_group  = QGroupBox(tr("Results"))
+        results_group  = QgsCollapsibleGroupBox(tr("Results"))
         results_layout = QVBoxLayout(results_group)
 
         self.basin_tree = QTreeWidget()
@@ -424,7 +424,7 @@ class NCPPanel(BasePanel):
         root.addWidget(self.webview)
 
         # ── Export ────────────────────────────────────────────────
-        export_group  = QGroupBox(tr("Export"))
+        export_group  = QgsCollapsibleGroupBox(tr("Export"))
         export_layout = QHBoxLayout(export_group)
         for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
             btn = QPushButton(fmt)

@@ -8,12 +8,12 @@ Inherits BasePanel.
 from PyQt5.QtWidgets import ( # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QLineEdit, QGroupBox, QSizePolicy
+    QCheckBox, QLineEdit, QSizePolicy
 )
 from PyQt5.QtGui import QColor # type: ignore
 from PyQt5.QtWebEngineWidgets import QWebEngineView # type: ignore
 from PyQt5.QtCore import Qt, QCoreApplication # type: ignore
-from qgis.gui import QgsMapLayerComboBox, QgsRubberBand  # type: ignore
+from qgis.gui import QgsMapLayerComboBox, QgsRubberBand, QgsCollapsibleGroupBox   # type: ignore
 from qgis.core import (  # type: ignore
     QgsMapLayerProxyModel, QgsWkbTypes,Qgis,
     QgsPointXY, QgsGeometry, QgsProject,QgsCoordinateTransform
@@ -73,7 +73,7 @@ class SwathPanel(BasePanel):
         root.setSpacing(6)
 
         # --- Input group ---
-        input_group = QGroupBox(tr("Input"))
+        input_group = QgsCollapsibleGroupBox(tr("Input"))
         input_layout = QFormLayout(input_group)
 
         self.dem_combo = QgsMapLayerComboBox()
@@ -87,7 +87,7 @@ class SwathPanel(BasePanel):
         root.addWidget(input_group)
 
         # --- Parameters group ---
-        params_group = QGroupBox(tr("Parameters"))
+        params_group = QgsCollapsibleGroupBox(tr("Parameters"))
         params_layout = QFormLayout(params_group)
 
         self.stations_spin = QSpinBox()
@@ -136,7 +136,7 @@ class SwathPanel(BasePanel):
         root.addWidget(params_group)
 
         # --- Options group ---
-        options_group = QGroupBox(tr("Options"))
+        options_group = QgsCollapsibleGroupBox(tr("Options"))
         options_layout = QVBoxLayout(options_group)
 
         self.q_check = QCheckBox(tr("Show Q1/Q3 envelope"))
@@ -257,7 +257,7 @@ class SwathPanel(BasePanel):
         root.addWidget(self.webview)
 
         # --- Export group ---
-        export_group = QGroupBox(tr("Export"))
+        export_group = QgsCollapsibleGroupBox(tr("Export"))
         export_layout = QHBoxLayout(export_group)
         for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
             btn = QPushButton(fmt)

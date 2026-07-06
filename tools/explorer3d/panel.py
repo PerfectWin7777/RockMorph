@@ -19,7 +19,7 @@ from typing import Optional
 
 from qgis.PyQt.QtWidgets import (  # type: ignore
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QGroupBox, QSlider, QComboBox, QCheckBox, QFrame,
+    QSlider, QComboBox, QCheckBox, QFrame,
     QRadioButton, QStackedWidget, QListWidget, QListWidgetItem,
     QColorDialog, QDoubleSpinBox, QToolButton, QButtonGroup,
     QSizePolicy, QSpacerItem, QScrollArea, QMenu,
@@ -29,7 +29,7 @@ from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QTimer  # type: ignore
 from qgis.PyQt.QtGui import QColor, QIcon, QPixmap, QPainter  # type: ignore
 from qgis.PyQt.QtWebEngineWidgets import QWebEnginePage  # type: ignore
 from qgis.core import QgsMapLayerProxyModel  # type: ignore
-from qgis.gui import QgsMapLayerComboBox  # type: ignore
+from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox # type: ignore
 
 from PyQt5.QtWebEngineWidgets import QWebEngineView # type: ignore
 
@@ -425,7 +425,7 @@ class Explorer3DPanel(BasePanel):
         layout.addLayout(row_vec)
 
         # 4. Collapse-ready Vector Styling Settings Group Box
-        self.group_vector_style = QGroupBox(tr("Vector Styling Settings"))
+        self.group_vector_style = QgsCollapsibleGroupBox(tr("Vector Styling Settings"))
         vector_style_layout = QVBoxLayout(self.group_vector_style)
         vector_style_layout.setSpacing(10)
 
@@ -748,7 +748,7 @@ class Explorer3DPanel(BasePanel):
         layout.setSpacing(8)
 
         # ── GroupBox 1: Advanced Illumination Algorithms ──────────────────
-        self.group_illumination = QGroupBox(tr("Illumination modes"))
+        self.group_illumination = QgsCollapsibleGroupBox(tr("Illumination modes"))
         illum_layout = QVBoxLayout(self.group_illumination)
         illum_layout.setSpacing(8)
 
@@ -761,7 +761,7 @@ class Explorer3DPanel(BasePanel):
         layout.addWidget(self.group_illumination)
 
         # ── GroupBox 2: Primary Solar Parameters ───────────────────────────
-        self.group_light_props = QGroupBox(tr("Primary solar parameters"))
+        self.group_light_props = QgsCollapsibleGroupBox(tr("Primary solar parameters"))
         props_layout = QVBoxLayout(self.group_light_props)
         props_layout.setSpacing(6)
 
@@ -802,7 +802,7 @@ class Explorer3DPanel(BasePanel):
         layout.addWidget(self.group_light_props)
 
         # ── GroupBox 3: Surface Shading Model & enhancements [New] ────────
-        self.group_shading = QGroupBox(tr("Topographic shading model"))
+        self.group_shading = QgsCollapsibleGroupBox(tr("Topographic shading model"))
         shading_layout = QVBoxLayout(self.group_shading)
         shading_layout.setSpacing(6)
 

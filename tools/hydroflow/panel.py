@@ -9,12 +9,13 @@ Authors: RockMorph contributors / Tony winter
 
 from qgis.PyQt.QtWidgets import (  # type: ignore
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QLabel, QSpinBox, QCheckBox, QPushButton, QGroupBox
+    QLabel, QSpinBox, QCheckBox, QPushButton
 )
 from qgis.PyQt.QtCore import Qt, QCoreApplication  # type: ignore
 from qgis.PyQt.QtGui import QColor  # type: ignore
 
-from qgis.gui import QgsMapLayerComboBox  # type: ignore
+from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox  # type: ignore
+from qgis.gui import QgsMapLayerComboBox   # type: ignore
 from qgis.core import (  # type: ignore
     QgsMapLayerProxyModel, QgsProject, QgsWkbTypes,
     QgsCategorizedSymbolRenderer, QgsRendererCategory, QgsSymbol,
@@ -52,7 +53,7 @@ class HydroFlowPanel(BasePanel):
         root.setSpacing(10)
 
         # ── GroupBox: Input Data ──
-        input_group = QGroupBox(tr("Input Data"))
+        input_group = QgsCollapsibleGroupBox(tr("Input Data"))
         input_layout = QFormLayout(input_group)
 
         self.dem_combo = QgsMapLayerComboBox()
@@ -61,7 +62,7 @@ class HydroFlowPanel(BasePanel):
         root.addWidget(input_group)
 
         # ── GroupBox: Settings ──
-        param_group = QGroupBox(tr("Extraction Settings"))
+        param_group = QgsCollapsibleGroupBox(tr("Extraction Settings"))
         param_layout = QFormLayout(param_group)
 
         self.chk_fill_depressions = QCheckBox(tr("Enable Sink Filling (Wang & Liu)"))
@@ -77,7 +78,7 @@ class HydroFlowPanel(BasePanel):
         root.addWidget(param_group)
 
         # ── GroupBox: Outputs Selection ──
-        outputs_group = QGroupBox(tr("Desired Outputs"))
+        outputs_group = QgsCollapsibleGroupBox(tr("Desired Outputs"))
         outputs_layout = QVBoxLayout(outputs_group)
         outputs_layout.setSpacing(6)
 
@@ -113,7 +114,7 @@ class HydroFlowPanel(BasePanel):
         root.addWidget(outputs_group)
 
         # ── GroupBox: Statistics ──
-        self.stats_group = QGroupBox(tr("Extraction Statistics"))
+        self.stats_group = QgsCollapsibleGroupBox(tr("Extraction Statistics"))
         self.stats_group.setVisible(False)
         stats_layout = QFormLayout(self.stats_group)
 

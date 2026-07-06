@@ -29,7 +29,7 @@ import numpy as np # type: ignore
 from PyQt5.QtWidgets import (  # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QSpinBox, QDoubleSpinBox,
-    QComboBox, QGroupBox, QLabel,
+    QComboBox, QLabel,
     QTreeWidget, QTreeWidgetItem,
     QSizePolicy, QAbstractItemView,
     QButtonGroup, QRadioButton,
@@ -39,7 +39,7 @@ from PyQt5.QtWidgets import (  # type: ignore
 )
 from PyQt5.QtCore import Qt, QCoreApplication, pyqtSignal    # type: ignore
 from PyQt5.QtGui import QColor  # type: ignore
-from qgis.gui import QgsMapLayerComboBox, QgsRubberBand, QgsColorButton  # type: ignore
+from qgis.gui import QgsMapLayerComboBox, QgsRubberBand, QgsColorButton, QgsCollapsibleGroupBox  # type: ignore
 from qgis.core import (  # type: ignore
     QgsMapLayerProxyModel, QgsWkbTypes,
     QgsCoordinateTransform, QgsProject,
@@ -65,7 +65,7 @@ def _natural_sort_key(s: str):
     ]
 
 
-class FluvialStyleWidget(QGroupBox):
+class FluvialStyleWidget(QgsCollapsibleGroupBox):
     """
     Dedicated widget to manage Plotly styles.
     Uses QgsColorButton for native QGIS integration.
@@ -229,7 +229,7 @@ class FluvialPanel(BasePanel):
         root.setSpacing(6)
 
         # ── Input ─────────────────────────────────────────────────────
-        input_group  = QGroupBox(tr("Input"))
+        input_group  = QgsCollapsibleGroupBox(tr("Input"))
         input_layout = QFormLayout(input_group)
 
         self.dem_combo = QgsMapLayerComboBox()
@@ -281,7 +281,7 @@ class FluvialPanel(BasePanel):
         root.addWidget(input_group)
 
         # ── Parameters ────────────────────────────────────────────────
-        param_group  = QGroupBox(tr("Parameters"))
+        param_group  = QgsCollapsibleGroupBox(tr("Parameters"))
         param_layout = QFormLayout(param_group)
 
         # theta_ref slider — live recompute of chi/ksn
@@ -395,7 +395,7 @@ class FluvialPanel(BasePanel):
 
         # ── View toggle ───────────────────────────────────────────────
         # ── Display & Layers Group ────────────────────────────────────
-        display_group = QGroupBox(tr("Display & Layers"))
+        display_group = QgsCollapsibleGroupBox(tr("Display & Layers"))
         display_layout = QVBoxLayout(display_group)
         display_layout.setSpacing(10)
 
@@ -429,7 +429,7 @@ class FluvialPanel(BasePanel):
         lg.addWidget(self.chk_equil)
 
         # SL / SLk selection sub-layout
-        sl_box = QGroupBox(tr("SL Index Display"))
+        sl_box = QgsCollapsibleGroupBox(tr("SL Index Display"))
         sl_layout = QVBoxLayout(sl_box)
         
         self.chk_sl_invert = QCheckBox(tr("Invert Y2 axis"))
@@ -495,7 +495,7 @@ class FluvialPanel(BasePanel):
         self.style_manager.styleChanged.connect(self._send_to_plot)
 
         # ── Basin tree ────────────────────────────────────────────────
-        results_group  = QGroupBox(tr("Results"))
+        results_group  = QgsCollapsibleGroupBox(tr("Results"))
         results_layout = QVBoxLayout(results_group)
 
         self.basin_tree = QTreeWidget()
@@ -568,7 +568,7 @@ class FluvialPanel(BasePanel):
         root.addWidget(self.webview)
 
         # ── Export ────────────────────────────────────────────────────
-        export_group  = QGroupBox(tr("Export"))
+        export_group  = QgsCollapsibleGroupBox(tr("Export"))
         export_layout = QHBoxLayout(export_group)
         for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
             btn = QPushButton(fmt)

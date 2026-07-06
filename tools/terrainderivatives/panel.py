@@ -10,16 +10,17 @@ Authors: RockMorph contributors / Tony winter
 from qgis.PyQt.QtWidgets import (  # type: ignore
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton,
-    QGroupBox, QComboBox, QRadioButton, QButtonGroup, QScrollArea,
+     QComboBox, QRadioButton, QButtonGroup, QScrollArea,
     QSlider
 )
 from qgis.PyQt.QtCore import Qt, QCoreApplication # type: ignore
-from qgis.gui import QgsMapLayerComboBox  # type: ignore
+from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox  # type: ignore
 from qgis.core import QgsMapLayerProxyModel, QgsProject, QgsRasterLayer   # type: ignore
 
+from .engine import TerrainDerivativesEngine
 from ...base.base_panel import BasePanel, ComputeWorker
 from ...widgets.output_selector import OutputSelectorWidget
-from .engine import TerrainDerivativesEngine
+
 
 def tr(message: str) -> str:
     return QCoreApplication.translate("RockMorph", message)
@@ -43,7 +44,7 @@ class TerrainDerivativesPanel(BasePanel):
             root.setSpacing(10)
 
             # ── GroupBox: Input Elevation ──
-            input_group = QGroupBox(tr("Input Terrain"))
+            input_group = QgsCollapsibleGroupBox(tr("Input Terrain"))
             input_layout = QFormLayout(input_group)
             self.dem_combo = QgsMapLayerComboBox()
             self.dem_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
@@ -51,13 +52,13 @@ class TerrainDerivativesPanel(BasePanel):
             root.addWidget(input_group)
 
             # ── GroupBox 1: Primary Morphometry ──
-            morph_group = QGroupBox(tr("1. Primary Morphometry"))
+            morph_group = QgsCollapsibleGroupBox(tr("Primary Morphometry"))
             morph_layout = QVBoxLayout(morph_group)
             morph_layout.setSpacing(8)
 
             # A. Slope with Degree/Percent selector [2]
             self.out_slope = OutputSelectorWidget(
-                tr("Slope Gradient (S)"), "slope.tif", "GeoTIFF (*.tif)", is_checked=True
+                tr("Slope Gradient (S)"), "slope.tif", "GeoTIFF (*.tif)", is_checked=False
             )
             self.out_slope.setToolTip(tr(
             "<b>Slope Gradient (S):</b><br>"
@@ -90,7 +91,7 @@ class TerrainDerivativesPanel(BasePanel):
             root.addWidget(morph_group)
 
             # ── GroupBox 2: Shading & Visualization ──
-            shading_group = QGroupBox(tr("2. Shading & Visualisation"))
+            shading_group = QgsCollapsibleGroupBox(tr("Shading & Visualisation"))
             shading_layout = QVBoxLayout(shading_group)
             shading_layout.setSpacing(8)
 
@@ -130,7 +131,7 @@ class TerrainDerivativesPanel(BasePanel):
             hill_opts_layout.addWidget(self.spin_hill_z)
 
             # Shading Variants (Mutually exclusive Radio Buttons) [1, 3]
-            var_group = QGroupBox(tr("Shading Variant"))
+            var_group = QgsCollapsibleGroupBox(tr("Shading Variant"))
             var_layout = QVBoxLayout(var_group)
             var_layout.setSpacing(4)
 
@@ -154,7 +155,7 @@ class TerrainDerivativesPanel(BasePanel):
             hill_opts_layout.addWidget(var_group)
 
             # Boundary Treatment Options (Mutually exclusive checkboxes) [3]
-            edge_group = QGroupBox(tr("Boundary Treatment"))
+            edge_group = QgsCollapsibleGroupBox(tr("Boundary Treatment"))
             edge_layout = QVBoxLayout(edge_group)
             edge_layout.setSpacing(4)
 
@@ -172,7 +173,7 @@ class TerrainDerivativesPanel(BasePanel):
             root.addWidget(shading_group)
 
             # ── GroupBox 3: Texture & Roughness ──
-            texture_group = QGroupBox(tr("3. Surface Texture & Position"))
+            texture_group = QgsCollapsibleGroupBox(tr("Surface Texture & Position"))
             texture_layout = QVBoxLayout(texture_group)
             texture_layout.setSpacing(8)
 
@@ -211,7 +212,7 @@ class TerrainDerivativesPanel(BasePanel):
             root.addWidget(texture_group)
 
             # ── GroupBox 4: Relief Visualization (Pure Python/NumPy) ──
-            rvt_group = QGroupBox(tr("4. Relief Visualisation"))
+            rvt_group = QgsCollapsibleGroupBox(tr("Relief Visualisation"))
             rvt_layout = QVBoxLayout(rvt_group)
             rvt_layout.setSpacing(10)
 

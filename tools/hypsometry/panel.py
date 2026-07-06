@@ -20,7 +20,7 @@ import json
 from PyQt5.QtWidgets import (  # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QSpinBox, QComboBox,
-    QCheckBox, QGroupBox, QLabel,
+    QCheckBox, QLabel,
     QTreeWidget, QTreeWidgetItem,
     QSizePolicy, QAbstractItemView,
     QProgressBar, QLineEdit,QDoubleSpinBox,
@@ -30,6 +30,7 @@ from PyQt5.QtWidgets import (  # type: ignore
 from PyQt5.QtWebEngineWidgets import QWebEngineView  # type: ignore
 from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal  # type: ignore
 from PyQt5.QtGui import QColor  # type: ignore
+from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox  # type: ignore
 from qgis.gui import QgsMapLayerComboBox  # type: ignore
 from qgis.core import QgsMapLayerProxyModel, QgsWkbTypes  # type: ignore
 from qgis.core import QgsCoordinateTransform, QgsProject  # type: ignore
@@ -137,7 +138,7 @@ class HypsometryPanel(BasePanel):
         root.setSpacing(6)
 
         # ── Input ─────────────────────────────────────────────
-        input_group  = QGroupBox(tr("Input"))
+        input_group  = QgsCollapsibleGroupBox(tr("Input"))
         input_layout = QFormLayout(input_group)
 
         self.dem_combo = QgsMapLayerComboBox()
@@ -177,7 +178,7 @@ class HypsometryPanel(BasePanel):
         root.addWidget(input_group)
         
          # ── Styles ─────────────────────────
-        style_group  = QGroupBox(tr("Style"))
+        style_group  = QgsCollapsibleGroupBox(tr("Style"))
         style_layout = QFormLayout(style_group)
 
         # Line width
@@ -249,7 +250,7 @@ class HypsometryPanel(BasePanel):
         root.addWidget(self._progress_container) 
 
         # ── Grouping ──────────────────────────────────────────
-        group_group  = QGroupBox(tr("Smart grouping"))
+        group_group  = QgsCollapsibleGroupBox(tr("Smart grouping"))
         group_layout = QFormLayout(group_group)
 
         self.strategy_combo = QComboBox()
@@ -283,7 +284,7 @@ class HypsometryPanel(BasePanel):
         root.addWidget(group_group)
 
         # ── Basin list ────────────────────────────────────────
-        list_group  = QGroupBox(tr("Results"))
+        list_group  = QgsCollapsibleGroupBox(tr("Results"))
         list_layout = QVBoxLayout(list_group)
 
         self.basin_tree = QTreeWidget()
@@ -329,7 +330,7 @@ class HypsometryPanel(BasePanel):
         root.addWidget(self.webview)
 
         # ── Export ────────────────────────────────────────────
-        export_group  = QGroupBox(tr("Export"))
+        export_group  = QgsCollapsibleGroupBox(tr("Export"))
         export_layout = QHBoxLayout(export_group)
         for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
             btn = QPushButton(fmt)

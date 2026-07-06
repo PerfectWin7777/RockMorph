@@ -8,14 +8,14 @@ UI Panel for the Geological Map Digitizer tool.
 
 from PyQt5.QtWidgets import ( # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
-    QPushButton, QSpinBox, QGroupBox, QLabel,
+    QPushButton, QSpinBox, QLabel,
     QTreeWidget, QTreeWidgetItem, QLineEdit,
     QDoubleSpinBox, QWidget
 )
 from PyQt5.QtCore import Qt, QCoreApplication # type: ignore
 from PyQt5.QtGui import QColor # type: ignore
 
-from qgis.gui import QgsMapLayerComboBox # type: ignore
+from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox # type: ignore
 from qgis.core import ( # type: ignore
     QgsMapLayerProxyModel, QgsVectorLayer, QgsFeature, 
     QgsField, QgsFields, QgsProject, QgsCategorizedSymbolRenderer,
@@ -52,7 +52,7 @@ class DigitizerPanel(BasePanel):
         root.setSpacing(6)
 
         # ── Inputs ──────────────────────────────────────────────────
-        input_group = QGroupBox(tr("Inputs"))
+        input_group = QgsCollapsibleGroupBox(tr("Inputs"))
         input_layout = QFormLayout(input_group)
 
         self.raster_combo = QgsMapLayerComboBox()
@@ -87,7 +87,7 @@ class DigitizerPanel(BasePanel):
         root.addWidget(input_group)
 
         # ── Settings ────────────────────────────────────────────────
-        param_group = QGroupBox(tr("Digitization Settings"))
+        param_group = QgsCollapsibleGroupBox(tr("Digitization Settings"))
         param_layout = QFormLayout(param_group)
 
         self.spin_clusters = QSpinBox()
@@ -194,7 +194,7 @@ class DigitizerPanel(BasePanel):
         root.addWidget(self._progress_container)
 
         # ── Results & Map Output ────────────────────────────────────
-        out_group = QGroupBox(tr("Map Output"))
+        out_group = QgsCollapsibleGroupBox(tr("Map Output"))
         out_layout = QVBoxLayout(out_group)
         
         # Color preview tree

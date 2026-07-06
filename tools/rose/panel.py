@@ -4,14 +4,14 @@
 from PyQt5.QtWidgets import ( # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QSpinBox, QComboBox,
-    QCheckBox, QSlider, QLineEdit, QGroupBox,
+    QCheckBox, QSlider, QLineEdit,
     QColorDialog, QSizePolicy,QDoubleSpinBox
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView # type: ignore
 from PyQt5.QtCore import Qt, QCoreApplication # type: ignore
 from PyQt5.QtGui import QColor # type: ignore
 from qgis.PyQt.QtWidgets import QFileDialog # type: ignore
-from qgis.gui import QgsMapLayerComboBox # type: ignore
+from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox  # type: ignore
 from qgis.core import QgsMapLayerProxyModel # type: ignore
 
 
@@ -54,7 +54,7 @@ class RosePanel(BasePanel):
         root.setSpacing(6)
 
         # --- Input group ---
-        input_group = QGroupBox(tr("Input & Analysis"))
+        input_group = QgsCollapsibleGroupBox(tr("Input & Analysis"))
         input_layout = QFormLayout(input_group)
 
         self.layer_combo = QgsMapLayerComboBox()
@@ -79,7 +79,7 @@ class RosePanel(BasePanel):
         root.addWidget(input_group)
 
         # --- 2. Directional Options ---
-        dir_group = QGroupBox(tr("Directional Logic"))
+        dir_group = QgsCollapsibleGroupBox(tr("Directional Logic"))
         dir_layout = QFormLayout(dir_group)
 
 
@@ -123,7 +123,7 @@ class RosePanel(BasePanel):
         
 
         # --- Style group ---
-        style_group = QGroupBox(tr("Style"))
+        style_group = QgsCollapsibleGroupBox(tr("Style"))
         style_layout = QFormLayout(style_group)
 
         # Color picker
@@ -189,7 +189,7 @@ class RosePanel(BasePanel):
         root.addWidget(self.webview)
 
         # --- Export buttons ---
-        export_group = QGroupBox(tr("Export"))
+        export_group = QgsCollapsibleGroupBox(tr("Export"))
         export_layout = QHBoxLayout(export_group)
         for fmt in ["PNG", "JPG", "SVG", "PDF", "CSV", "JSON"]:
             btn = QPushButton(fmt)

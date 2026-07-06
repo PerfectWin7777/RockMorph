@@ -33,14 +33,14 @@ import re
 from PyQt5.QtWidgets import (  # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QDoubleSpinBox, QComboBox, 
-    QGroupBox, QLabel, QTreeWidget, QTreeWidgetItem, 
+     QLabel, QTreeWidget, QTreeWidgetItem, 
     QAbstractItemView, QMenu, QApplication, QMessageBox,
     QRadioButton
 )
 from PyQt5.QtCore import Qt, QCoreApplication  # type: ignore
 from PyQt5.QtGui import QColor  # type: ignore
 
-from qgis.gui import QgsMapLayerComboBox, QgsRubberBand  # type: ignore
+from qgis.gui import QgsMapLayerComboBox, QgsRubberBand, QgsCollapsibleGroupBox   # type: ignore
 from qgis.core import (  # type: ignore
     QgsMapLayerProxyModel, QgsCoordinateTransform, QgsProject,
     QgsVectorLayer, QgsFeature, QgsGeometry, QgsPointXY, 
@@ -102,7 +102,7 @@ class SMFPanel(BasePanel):
         root.setSpacing(6)
 
        # ── 1. Input Layer Group ──────────────────────────────────────
-        input_group = QGroupBox(tr("Input Data"))
+        input_group = QgsCollapsibleGroupBox(tr("Input Data"))
         input_layout = QFormLayout(input_group)
 
         self.dem_combo = QgsMapLayerComboBox()
@@ -161,7 +161,7 @@ class SMFPanel(BasePanel):
         root.addWidget(input_group)
 
         # ── 2. Parameter Tuning ───────────────────────────────────────
-        param_group = QGroupBox(tr("Analysis Parameters"))
+        param_group = QgsCollapsibleGroupBox(tr("Analysis Parameters"))
         param_layout = QFormLayout(param_group)
 
         self.baseline_combo = QComboBox()
@@ -273,7 +273,7 @@ class SMFPanel(BasePanel):
         root.addWidget(self._progress_container)
 
         # ── 4. Results Tree Widget ────────────────────────────────────
-        results_group = QGroupBox(tr("Results Table"))
+        results_group = QgsCollapsibleGroupBox(tr("Results Table"))
         results_layout = QVBoxLayout(results_group)
 
         self.tree_widget = QTreeWidget()
@@ -311,7 +311,7 @@ class SMFPanel(BasePanel):
         root.addWidget(results_group)
 
         # ── 5. Data Export Group ──────────────────────────────────────
-        export_group = QGroupBox(tr("Academic Data Export"))
+        export_group = QgsCollapsibleGroupBox(tr("Academic Data Export"))
         export_layout = QHBoxLayout(export_group)
 
         self.btn_csv = QPushButton(tr("Export to CSV"))

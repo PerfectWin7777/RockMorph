@@ -11,12 +11,12 @@ Reusable across all RockMorph tools that render Plotly line traces.
 from PyQt5.QtWidgets import ( # type: ignore
     QWidget, QHBoxLayout, QVBoxLayout, QFormLayout,
     QLabel, QPushButton, QDoubleSpinBox, QComboBox,
-    QGroupBox, QSizePolicy,QColorDialog,QCheckBox,
+    QSizePolicy,QColorDialog,QCheckBox,
     QGridLayout
 )
 from PyQt5.QtGui import QColor # type: ignore
 from PyQt5.QtCore import Qt, pyqtSignal, QCoreApplication # type: ignore
-
+from qgis.gui import QgsCollapsibleGroupBox  # type: ignore
 
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
@@ -150,9 +150,9 @@ class CurveStyleWidget(QWidget):
             f"border: 1px solid #888; border-radius: 3px;"
         )
 
-class CurveStyleManager(QGroupBox):
+class CurveStyleManager(QgsCollapsibleGroupBox):
     """
-    Manages a collection of CurveStyleWidgets inside a QGroupBox.
+    Manages a collection of CurveStyleWidgets inside a QgsCollapsibleGroupBox.
     Provides get_all_styles() for panel → JSON → HTML pipeline.
     Emits styles_changed when any curve style is modified.
     """
