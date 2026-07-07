@@ -40,7 +40,7 @@ venv/
 tests/output/
 tests/data/temp/
 
-
+docs/
 web/js/tex-mml-chtml.js
 jsconfig.json
 generate_colormaps.py

@@ -3,6 +3,7 @@
 from abc import ABCMeta, abstractmethod
 import os
 
+from PyQt5.QtGui import QDesktopServices # type: ignore
 from PyQt5.QtWebChannel import QWebChannel # type: ignore
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings  # type: ignore
 from PyQt5.QtWidgets import (QWidget,QFrame,# type: ignore
@@ -365,3 +366,19 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
     def _save_export(self, svg_data_url: str) -> None:
         """Called by JS bridge after Plotly.toImage()."""
         self._exporter.save_image( svg_data_url, self._pending_export_path)
+
+    
+    # ── Help / Documentation Trigger ─────────────────────────────────────
+
+    def _open_help(self, page_name: str) -> None:
+        """
+        Opens the target tool's local HTML documentation in the default system web browser.
+        Points directly to the plugin's root 'docs/' directory.
+        """
+        plugin_root = os.path.dirname(os.path.dirname(__file__))
+        doc_path = os.path.join(plugin_root, "docs", f"{page_name}.html")
+        
+        if os.path.exists(doc_path):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(doc_path))
+        else:
+            self.show_error(tr(f"Help documentation not found: docs/{page_name}.html"))
