@@ -2,10 +2,10 @@
 name=RockMorph
 qgisMinimumVersion=3.36
 description=Advanced Geomorphology Toolkit for QGIS with interactive 2D/3D analysis
-version=0.1.0
+version=0.2.0
 author=Tony Winter
 email=wintertony7777@gmail.com
-about=RockMorph is a modern geomorphological analysis toolkit for QGIS. It provides interactive tools for swath profiling (2D/3D), directional rose diagrams, hypsometric analysis, terrain derivatives (slope, aspect, openness, sky view factor), and hydrological metrics such as depth-to-water. Built with a modular architecture combining PyQt and Plotly for high-performance scientific visualization.
+about=RockMorph is a geomorphology toolkit for QGIS. It computes, classifies and charts 60 published morphometric and active-tectonics indices for your own basins (basin shape, relief and hypsometry, Horton-Strahler network, channel profile SL, ksn and chi, asymmetry factor, transverse symmetry, valley floor ratio, TWI/SPI/STI), combines them into the relative active tectonics index Iat (El Hamdouni et al., 2008), AHP and composite indices, and explores them with PCA, clustering and outlier detection. It also provides fluvial profile analysis (chi-plots, knickpoints, ksn), mountain-front sinuosity, swath profiles, rose diagrams, hypsometric curves, terrain derivatives, flow routing, watershed subdivision and a 3D explorer. Charts use Qt WebEngine and Plotly; optional methods use scikit-learn.
 tracker=https://github.com/PerfectWin7777/RockMorph/issues
 repository=https://github.com/PerfectWin7777/RockMorph.git
 homepage=https://github.com/PerfectWin7777/RockMorph
@@ -14,3 +14,9 @@ category=Raster
 icon=icon.png
 experimental=True
 deprecated=False
+changelog=0.2.0
+    - New Morphometric Indices tool (60 indices, published classifications, results viewer)
+    - New Iat, AHP, Composite index and Statistics & ML tools
+    - Fluvial: chi aligned with the profile, BIC knickpoints, reach-based SL, export positions
+    - Smf Iat thresholds, axial rose statistics, swath NoData smoothing
+    - NumPy 2 and Qt6-ready imports, plugin loads without Qt WebEngine

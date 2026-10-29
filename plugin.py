@@ -28,6 +28,9 @@ class RockMorphPlugin:
                 if hasattr(panel, 'cleanup'):
                     print(f"Cleaning up panel: {type(panel).__name__}")
                     panel.cleanup()
+            # Remove the RockMorph entry of the Plugins menu as well: it
+            # pointed to a deleted dock after a plugin reload (audit M6).
+            self.dock.unload()
             self.iface.removeDockWidget(self.dock)
             self.dock = None
 

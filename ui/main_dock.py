@@ -149,7 +149,7 @@ class RockMorphDock(QDockWidget):
 
         self.setWidget(container)
 
-        # Initial launch tool: Open Mountain Front Sinuosity by default
+        # Initial tool shown when the dock opens.
         self.switch_to_tool("terrainderivatives")
 
     def _populate_tool_menu(self, menu: QMenu):
