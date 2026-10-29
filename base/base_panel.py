@@ -288,6 +288,10 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         settings.setAttribute(
             QWebEngineSettings.JavascriptEnabled, True
         )
+        # Every local page and script is UTF-8 (plotly.min.js holds characters
+        # such as the minus sign U+2212): declare it instead of relying on a
+        # locale-dependent default.
+        settings.setDefaultTextEncoding("utf-8")
 
         self._bridge  = _BaseBridge(self)
         self._channel = QWebChannel()
