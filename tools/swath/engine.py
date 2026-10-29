@@ -9,12 +9,12 @@ Inherits BaseEngine.
 """
 
 from qgis.core import QgsRasterLayer, QgsVectorLayer # type: ignore
-from PyQt5.QtCore import QCoreApplication # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication # type: ignore
 
 from ...base.base_engine import BaseEngine
 from ...core.raster import RasterReader
 from ...core.sampling import SwathSampler
-from ...core.utils import smooth_data, reorient_profile_high_to_low
+from ...core.utils import smooth_with_gaps, reorient_profile_high_to_low
 import math
 import numpy as np # type: ignore
 
@@ -159,11 +159,9 @@ class SwathEngine(BaseEngine):
                 
                 for key in keys_to_smooth:
                     if data.get(key) is not None:
-                        # Convert to numpy array for smoothing, then back to list
-                        # plotly waits for lists/json, but numpy is faster for convolution operations
-                        arr = np.array(data[key], dtype=np.float32)
-                        smoothed_arr = smooth_data(arr, smooth_win)
-                        data[key] = smoothed_arr.tolist() 
+                        # Stations without data (None) stay gaps; each valid
+                        # stretch is smoothed separately.
+                        data[key] = smooth_with_gaps(data[key], smooth_win)
 
             # Auto tick intervals
             total_m   = data["total_length_m"]

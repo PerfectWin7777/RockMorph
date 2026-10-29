@@ -41,16 +41,16 @@ import locale
 import json as json_module
 from urllib.parse import unquote
 
-from PyQt5.QtWidgets import ( # type: ignore
+from qgis.PyQt.QtWidgets import ( # type: ignore
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QComboBox, QSpinBox, QPushButton,
     QDialogButtonBox, QGroupBox, QFileDialog,
     QSizePolicy
 )
-from PyQt5.QtCore import QCoreApplication, Qt, QByteArray, QSizeF, QRect # type: ignore
-from PyQt5.QtGui import QFont, QImage, QPainter            # type: ignore
-from PyQt5.QtSvg import QSvgRenderer                       # type: ignore
-from PyQt5.QtPrintSupport import QPrinter  # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication, Qt, QByteArray, QSizeF, QRect # type: ignore
+from qgis.PyQt.QtGui import QFont, QImage, QPainter            # type: ignore
+from qgis.PyQt.QtSvg import QSvgRenderer                       # type: ignore
+from qgis.PyQt.QtPrintSupport import QPrinter  # type: ignore
 from qgis.core import (  # type: ignore
     QgsFields, QgsVectorFileWriter, QgsFeature, 
     QgsProject, QgsVectorLayer, QgsWkbTypes

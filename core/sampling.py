@@ -19,7 +19,7 @@ from qgis.core import ( # type: ignore
     QgsCoordinateTransform,
     QgsVectorLayer,
 )
-from PyQt5.QtCore import QCoreApplication # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication # type: ignore
 from .raster import RasterReader
 
 

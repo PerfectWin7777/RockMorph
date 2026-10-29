@@ -9,9 +9,9 @@ Uses QGIS-native RockMorphColorButton to ensure visual coherence.
 Authors: RockMorph contributors / Tony
 """
 
-from PyQt5.QtWidgets import QGridLayout, QLabel, QCheckBox, QDoubleSpinBox, QVBoxLayout, QWidget # type: ignore
-from PyQt5.QtGui import QColor  # type: ignore 
-from PyQt5.QtCore import pyqtSignal, QCoreApplication, Qt # type: ignore
+from qgis.PyQt.QtWidgets import QGridLayout, QLabel, QCheckBox, QDoubleSpinBox, QVBoxLayout, QWidget # type: ignore
+from qgis.PyQt.QtGui import QColor  # type: ignore 
+from qgis.PyQt.QtCore import pyqtSignal, QCoreApplication, Qt # type: ignore
 from qgis.gui import QgsCollapsibleGroupBox  # type: ignore
 
 from ...widgets.style_widgets import RockMorphColorButton

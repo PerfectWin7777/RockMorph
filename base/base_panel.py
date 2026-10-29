@@ -3,15 +3,14 @@
 from abc import ABCMeta, abstractmethod
 import os
 
-from PyQt5.QtWebChannel import QWebChannel # type: ignore
-from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings  # type: ignore
-from PyQt5.QtWidgets import (QWidget,QFrame,# type: ignore
+from .webengine import QWebChannel, QWebEngineSettings, QWebEngineView
+from qgis.PyQt.QtWidgets import (QWidget,QFrame,# type: ignore
     QVBoxLayout,QScrollArea,QProgressBar,QLabel
     ) 
-from PyQt5.QtCore import (  # type: ignore
+from qgis.PyQt.QtCore import (  # type: ignore
     Qt, QUrl, QObject, QThread, pyqtSignal, pyqtSlot, QCoreApplication
 )
-import sip # type: ignore
+from qgis.PyQt import sip # type: ignore
 
 from ..core.exporter import RockMorphExporter
 

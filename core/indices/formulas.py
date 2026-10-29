@@ -32,6 +32,9 @@ from typing import Iterable, List, Mapping, Optional, Sequence
 
 import numpy as np  # type: ignore
 
+# np.trapz was renamed np.trapezoid in NumPy 2.0 and later removed.
+_trapezoid = getattr(np, "trapezoid", None) or getattr(np, "trapz")
+
 from .context import BasinContext
 from .profiles import (
     analyze_cross_profile, chi_coordinate, ksn_reaches, sl_reaches,
@@ -264,8 +267,7 @@ def hypsometric_integral(ctx, params):
         values = np.sort(ctx.elevations)[::-1]
         relative_height = (values - hmin) / relief
         relative_area = np.linspace(0.0, 1.0, values.size)
-        return float(np.trapezoid(relative_height, relative_area)
-                     if hasattr(np, "trapezoid") else np.trapz(relative_height, relative_area))
+        return float(_trapezoid(relative_height, relative_area))
     return (hmean - hmin) / relief
 
 

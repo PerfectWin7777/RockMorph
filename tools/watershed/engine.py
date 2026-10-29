@@ -47,7 +47,7 @@ from qgis.core import (                     # type: ignore
     QgsCoordinateTransform,
     QgsProject,
 )
-from PyQt5.QtCore import QCoreApplication   # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication   # type: ignore
 
 from ...base.base_engine import BaseEngine
 from ...core.raster import RasterReader

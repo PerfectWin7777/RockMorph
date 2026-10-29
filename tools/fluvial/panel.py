@@ -26,7 +26,7 @@ import math
 from sqlite3 import connect
 import numpy as np # type: ignore
 
-from PyQt5.QtWidgets import (  # type: ignore
+from qgis.PyQt.QtWidgets import (  # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QSpinBox, QDoubleSpinBox,
     QComboBox, QLabel,
@@ -37,8 +37,8 @@ from PyQt5.QtWidgets import (  # type: ignore
     QCheckBox, QSlider, QWidget, QFrame,
     QMessageBox
 )
-from PyQt5.QtCore import Qt, QCoreApplication, pyqtSignal    # type: ignore
-from PyQt5.QtGui import QColor  # type: ignore
+from qgis.PyQt.QtCore import Qt, QCoreApplication, pyqtSignal    # type: ignore
+from qgis.PyQt.QtGui import QColor  # type: ignore
 from qgis.gui import QgsMapLayerComboBox, QgsRubberBand, QgsColorButton, QgsCollapsibleGroupBox  # type: ignore
 from qgis.core import (  # type: ignore
     QgsMapLayerProxyModel, QgsWkbTypes,
@@ -47,7 +47,7 @@ from qgis.core import (  # type: ignore
     QgsPointXY, QgsField, QgsFields,
     QgsWkbTypes as WkbTypes,
 )
-from PyQt5.QtCore import QVariant  # type: ignore
+from qgis.PyQt.QtCore import QVariant  # type: ignore
 
 from ...base.base_panel import BasePanel, ComputeWorker
 from ...core.exporter import RockMorphExporter

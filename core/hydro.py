@@ -31,7 +31,7 @@ from qgis.core import (  # type: ignore
     QgsCoordinateTransform, QgsGeometry, QgsWkbTypes,
     QgsSpatialIndex, QgsDistanceArea, QgsPointXY,
 )
-from PyQt5.QtCore import QCoreApplication  # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
 
 def tr(message):

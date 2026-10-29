@@ -9,8 +9,8 @@ RockMorphLineStyleRow briques.
 Authors: RockMorph contributors / Tony
 """
 
-from PyQt5.QtWidgets import QGridLayout, QLabel, QPushButton # type: ignore
-from PyQt5.QtCore import pyqtSignal, QCoreApplication, Qt # type: ignore
+from qgis.PyQt.QtWidgets import QGridLayout, QLabel, QPushButton # type: ignore
+from qgis.PyQt.QtCore import pyqtSignal, QCoreApplication, Qt # type: ignore
 from qgis.gui import QgsCollapsibleGroupBox  # type: ignore
 
 from ...widgets.style_widgets import RockMorphLineStyleRow

@@ -11,7 +11,7 @@ No UI logic — pure computation.
 import numpy as np # type: ignore
 from osgeo import gdal  # type: ignore 
 from qgis.core import QgsRasterLayer, QgsProject  # type: ignore
-from PyQt5.QtCore import QCoreApplication  # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
 
 def tr(message):

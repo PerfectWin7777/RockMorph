@@ -143,7 +143,7 @@ from qgis.core import (  # type: ignore
      QgsRasterLayer, QgsWkbTypes,
     QgsRasterLayer, 
 )
-from PyQt5.QtCore import QCoreApplication  # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
 from ...base.base_engine import BaseEngine
 from ...core.hydro import (
@@ -151,7 +151,7 @@ from ...core.hydro import (
     sample_river_hydraulics,
     sample_river_native_pixels
 )
-from ...core.utils import smooth_data
+from ...core.utils import smooth_data, trapezoid
 
 
 def tr(message):
@@ -1037,7 +1037,7 @@ class FluvialEngine(BaseEngine):
 
         chi_rev = np.zeros(len(dist_rev))
         for i in range(1, len(dist_rev)):
-            chi_rev[i] = chi_rev[i - 1] + np.trapz(
+            chi_rev[i] = chi_rev[i - 1] + trapezoid(
                 integrand[i - 1 : i + 1],
                 dist_rev[i - 1 : i + 1],
             )

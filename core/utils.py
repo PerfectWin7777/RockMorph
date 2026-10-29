@@ -7,6 +7,10 @@ General purpose geomorphometry utilities.
 
 import numpy as np  # type: ignore
 
+# NumPy 2.0 renamed np.trapz to np.trapezoid and later releases removed the
+# old name (audit C6). Every RockMorph module integrates through this alias.
+trapezoid = getattr(np, "trapezoid", None) or getattr(np, "trapz")
+
 # --- Soft Import for SciPy ---
 # Standard in most QGIS distributions, but we provide a fallback
 # to ensure the plugin never crashes on import.
@@ -61,6 +65,27 @@ def smooth_data(y: np.ndarray, window_size: int) -> np.ndarray:
     else:
         return _smooth_hanning(y, window_size)
 
+
+
+def smooth_with_gaps(values, window_size: int) -> list:
+    """
+    Smooth a profile that may contain missing samples (None or NaN).
+
+    Each contiguous run of valid samples is smoothed on its own with
+    ``smooth_data``; gaps stay gaps (returned as None for JSON/Plotly).
+    Smoothing across a gap would invent elevations, and converting None to
+    float32 crashed the swath tool whenever a station was all NoData
+    (audit M12). Runs shorter than 3 samples are kept unsmoothed.
+    """
+    array = np.array([np.nan if v is None else v for v in values], dtype=np.float64)
+    out = array.copy()
+    valid = np.isfinite(array)
+    # Boundaries of the valid runs: +1 where a run starts, -1 after it ends.
+    edges = np.diff(np.concatenate(([0], valid.astype(np.int8), [0])))
+    for start, stop in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+        if stop - start >= 3:
+            out[start:stop] = smooth_data(array[start:stop], window_size)
+    return [None if not np.isfinite(v) else float(v) for v in out]
 
 
 # Pure NumPy smoothing function

@@ -11,11 +11,11 @@ Authors: RockMorph contributors
 import os
 import tempfile
 import uuid
-from PyQt5.QtWidgets import (QWidget, # type: ignore
+from qgis.PyQt.QtWidgets import (QWidget, # type: ignore
 QHBoxLayout, QVBoxLayout, QCheckBox, QLineEdit, QPushButton, QFileDialog,
 QLabel
                               )
-from PyQt5.QtCore import pyqtSignal, Qt, QCoreApplication # type: ignore
+from qgis.PyQt.QtCore import pyqtSignal, Qt, QCoreApplication # type: ignore
 
 def tr(message: str) -> str:
     return QCoreApplication.translate("RockMorph", message)

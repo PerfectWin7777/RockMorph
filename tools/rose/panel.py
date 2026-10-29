@@ -1,15 +1,15 @@
 
 # tools/rose/panel.py
 
-from PyQt5.QtWidgets import ( # type: ignore
+from qgis.PyQt.QtWidgets import ( # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QSpinBox, QComboBox,
     QCheckBox, QSlider, QLineEdit,
     QColorDialog, QSizePolicy,QDoubleSpinBox
 )
-from PyQt5.QtWebEngineWidgets import QWebEngineView # type: ignore
-from PyQt5.QtCore import Qt, QCoreApplication # type: ignore
-from PyQt5.QtGui import QColor # type: ignore
+from ...base.webengine import QWebEngineView
+from qgis.PyQt.QtCore import Qt, QCoreApplication # type: ignore
+from qgis.PyQt.QtGui import QColor # type: ignore
 from qgis.PyQt.QtWidgets import QFileDialog # type: ignore
 from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox  # type: ignore
 from qgis.core import QgsMapLayerProxyModel # type: ignore

@@ -9,9 +9,9 @@ Wraps qgis.gui elements to provide a seamless visual integration.
 Authors: RockMorph contributors / Tony
 """
 
-from PyQt5.QtWidgets import QWidget, QHBoxLayout, QDoubleSpinBox, QComboBox, QLabel, QCheckBox  # type: ignore
-from PyQt5.QtCore import pyqtSignal, QCoreApplication, Qt  # type: ignore
-from PyQt5.QtGui import QColor  # type: ignore
+from qgis.PyQt.QtWidgets import QWidget, QHBoxLayout, QDoubleSpinBox, QComboBox, QLabel, QCheckBox  # type: ignore
+from qgis.PyQt.QtCore import pyqtSignal, QCoreApplication, Qt  # type: ignore
+from qgis.PyQt.QtGui import QColor  # type: ignore
 from qgis.gui import QgsColorButton  # type: ignore
 
 def tr(message: str) -> str:

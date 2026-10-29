@@ -215,17 +215,19 @@
                     tickfont: { family: 'Times New Roman', size: 10 },
                     range: [1.0, Math.max(2.5, Math.max.apply(null, values) + 0.2)]
                 },
+                // Class limits of the Iat methodology (El Hamdouni et al., 2008):
+                // class 1 below 1.1, class 2 from 1.1 to 1.5, class 3 above.
                 shapes: [
                     {
                         type: 'line',
                         xref: 'paper', x0: 0, x1: 1,
-                        yref: 'y', y0: 1.4, y1: 1.4,
+                        yref: 'y', y0: 1.1, y1: 1.1,
                         line: { color: '#e67e22', width: 1.5, dash: 'dash' }
                     },
                     {
                         type: 'line',
                         xref: 'paper', x0: 0, x1: 1,
-                        yref: 'y', y0: 1.8, y1: 1.8,
+                        yref: 'y', y0: 1.5, y1: 1.5,
                         line: { color: '#2ecc71', width: 1.5, dash: 'dash' }
                     }
                 ]

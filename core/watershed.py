@@ -76,7 +76,7 @@ from collections import deque
 from typing import Optional
 
 from qgis.core import QgsGeometry, QgsPointXY  # type: ignore
-from PyQt5.QtCore import QCoreApplication       # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication       # type: ignore
 from osgeo import gdal, ogr                     # type: ignore
 
 

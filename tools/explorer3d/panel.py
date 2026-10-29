@@ -1,5 +1,5 @@
 """
-PyQt5 panel for the RockMorph 3D Explorer.
+Qt panel for the RockMorph 3D Explorer.
 
 Architecture
 ------------
@@ -31,7 +31,7 @@ from qgis.PyQt.QtWebEngineWidgets import QWebEnginePage  # type: ignore
 from qgis.core import QgsMapLayerProxyModel  # type: ignore
 from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox # type: ignore
 
-from PyQt5.QtWebEngineWidgets import QWebEngineView # type: ignore
+from ...base.webengine import QWebEngineView
 
 from ...base.base_panel import BasePanel, ComputeWorker
 from .engine import Explorer3DEngine
