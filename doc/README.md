@@ -12,6 +12,7 @@ proposés sont décrits dans les documents, mais pas appliqués.
 | [04_feuille_de_route.md](04_feuille_de_route.md) | Priorités, plan d'intégration des ~60 indices, workflow automatique, stratégie pour l'article |
 | [05_catalogue_indices.md](05_catalogue_indices.md) | Catalogue des indices géomorphologiques : RockMorph et GSV-Studio côte à côte, ce qui est correct, à corriger ou manquant |
 | [06_gsv_studio_inventaire.md](06_gsv_studio_inventaire.md) | Étape 4 (prise de notes) : où se trouve la logique d'indices dans GSV-Studio, les 55 indices un par un, bugs, classifications, dépendances, croisement avec RockMorph, plan de portage et questions |
+| [07_journal_refactorisation.md](07_journal_refactorisation.md) | Journal of the implementation (English): every architecture, science and UI decision with GSV-Studio vs literature, audit fixes applied, tests on real Sierra Nevada data, points to decide |
 
 ## Résumé en 10 lignes
 

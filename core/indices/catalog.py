@@ -684,6 +684,14 @@ SPECS: Tuple[IndexSpec, ...] = (
             Classification("SL_Seeber_Gornitz_1983", "Seeber & Gornitz (1983)", "Seeber & Gornitz (1983)",
                            "doi:10.1016/0040-1951(83)90201-9", rules(
                                (-INF, 200.0, "Low", 3), (200.0, 500.0, "Moderate", 2), (500.0, INF, "High", 1))),
+            # Kept so that results produced with GSV-Studio can be reproduced
+            # exactly; not the values of the paper it cited (see doc/07, D-S2).
+            Classification("SL_GSV_legacy", "GSV-Studio legacy (100 / 300)", "GSV-Studio",
+                           "GSV-Studio registry", rules(
+                               (-INF, 100.0, "Class 3: SL < 100", 3), (100.0, 300.0, "Class 2: 100–300", 2),
+                               (300.0, INF, "Class 1: SL ≥ 300", 1)),
+                           description="Thresholds used by GSV-Studio under the El Hamdouni et al. (2008) "
+                                       "name; the paper uses 300 / 500."),
         ),
         default_classification="SL_ElHamdouni_2008",
     ),
