@@ -216,3 +216,13 @@ def test_every_index_runs_on_a_complete_context():
     for spec in SPECS:
         value = compute_index(spec.key, ctx)
         assert value is not None, f"{spec.key} returned None on a complete context ({ctx.warnings})"
+
+
+def test_rank_classes_put_highest_values_in_class_one():
+    from core.indices.multicriteria import rank_classes
+    values = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, np.nan])
+    classes, breaks = rank_classes(values, "Quantiles", 4)
+    assert classes[-2] == 1 and classes[0] == 4 and np.isnan(classes[-1])
+    assert len(breaks) == 3
+    classes, _ = rank_classes(values, "Equal intervals", 2)
+    assert classes[:4].tolist() == [2, 2, 2, 2] and classes[4:8].tolist() == [1, 1, 1, 1]

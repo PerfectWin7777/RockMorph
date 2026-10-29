@@ -356,7 +356,7 @@ class ClassificationEditor(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._spec: Optional[IndexSpec] = None
+        self._schemes: Dict[str, Classification] = {}
         self._loading = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -404,32 +404,46 @@ class ClassificationEditor(QWidget):
         a ``Classification`` (published or edited), ``NONE_KEY`` when the
         user chose "No classification", or None for the index default.
         """
-        self._spec = spec
+        if spec is None:
+            self.set_schemes(None, None, None)
+            return
+        self.set_schemes(spec.classifications, spec.default_classification, current,
+                         empty_text=tr("No published classification for this index."))
+
+    def set_schemes(self, schemes: Optional[Sequence[Classification]], default_key: Optional[str],
+                    current=None, allow_none: bool = True, empty_text: str = "",
+                    none_label: str = "") -> None:
+        """
+        Generic form of ``set_index`` for schemes that do not belong to a
+        catalogue index (e.g. the final Iat classes). ``schemes`` None
+        disables the editor; ``allow_none`` adds the "No classification"
+        entry (renamed by ``none_label``, e.g. "Values are already class
+        scores" in the Iat tool).
+        """
+        self._schemes = {s.key: s for s in (schemes or ())}
         self._loading = True
         self.scheme_combo.clear()
-        self.scheme_combo.addItem(tr("No classification"), self.NONE_KEY)
-        if spec is not None:
-            for scheme in spec.classifications:
-                self.scheme_combo.addItem(scheme.label, scheme.key)
+        if allow_none:
+            self.scheme_combo.addItem(none_label or tr("No classification"), self.NONE_KEY)
+        for scheme in schemes or ():
+            self.scheme_combo.addItem(scheme.label, scheme.key)
         self._loading = False
-        has = spec is not None and bool(spec.classifications)
-        self.setEnabled(spec is not None)
-        if not has:
-            self.scheme_combo.setCurrentIndex(0)
+        self.setEnabled(schemes is not None)
+        if not schemes:
             self._load_rules(None)
-            self.reference.setText(tr("No published classification for this index.") if spec else "")
+            self.reference.setText(empty_text if schemes is not None else "")
             return
-        if current == self.NONE_KEY:
+        if current == self.NONE_KEY and allow_none:
             self.scheme_combo.setCurrentIndex(0)
             self._load_rules(None)
             return
-        key = current.key.replace(":custom", "") if current is not None else spec.default_classification
+        key = current.key.replace(":custom", "") if isinstance(current, Classification) else default_key
         position = self.scheme_combo.findData(key) if key else 0
         self._loading = True
         self.scheme_combo.setCurrentIndex(max(position, 0))
         self._loading = False
         self._load_rules(self._published())
-        if current is not None and current.key.endswith(":custom"):
+        if isinstance(current, Classification) and current.key.endswith(":custom"):
             self._load_rules(current)
 
     def choice(self):
@@ -471,9 +485,9 @@ class ClassificationEditor(QWidget):
 
     def _published(self) -> Optional[Classification]:
         key = self.scheme_combo.currentData()
-        if self._spec is None or key in (None, self.NONE_KEY):
+        if key in (None, self.NONE_KEY):
             return None
-        return self._spec.classification(key)
+        return self._schemes.get(key)
 
     def _on_scheme_changed(self, _row: int) -> None:
         if self._loading:

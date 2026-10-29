@@ -282,3 +282,39 @@ def composite_index(columns: Mapping[str, np.ndarray], method: str,
         with np.errstate(invalid="ignore"):
             result = np.nanmean(matrix, axis=0)
     return result, info
+
+
+# ---------------------------------------------------------------------------
+# Classes of a continuous synthesis value (AHP, composite)
+# ---------------------------------------------------------------------------
+
+CLASS_BREAK_METHODS = ("None", "Quantiles", "Equal intervals")
+
+
+def rank_classes(values: np.ndarray, method: str = "Quantiles",
+                 n_classes: int = 4) -> Tuple[np.ndarray, List[float]]:
+    """
+    Divide a continuous result into ``n_classes`` classes, class 1 holding
+    the HIGHEST values (most active / highest priority, the convention of
+    the Iat classes).
+
+    "Quantiles": equal numbers of basins per class (robust to skewed
+    values, the usual choice for relative maps). "Equal intervals": equal
+    value ranges between min and max (keeps the meaning of the scale).
+    Returns the class number per basin (NaN when the value is missing) and
+    the inner break values in increasing order.
+    """
+    x = np.asarray(values, dtype=float)
+    out = np.full(x.shape, np.nan)
+    finite = np.isfinite(x)
+    if method == "None" or not np.any(finite) or n_classes < 2:
+        return out, []
+    if method == "Equal intervals":
+        lo, hi = float(np.min(x[finite])), float(np.max(x[finite]))
+        breaks = list(np.linspace(lo, hi, n_classes + 1)[1:-1])
+    else:
+        breaks = list(np.quantile(x[finite], np.linspace(0, 1, n_classes + 1)[1:-1]))
+    # Position 0 = lowest values; class 1 = highest values.
+    position = np.searchsorted(np.asarray(breaks), x[finite], side="right")
+    out[finite] = n_classes - position
+    return out, [float(b) for b in breaks]

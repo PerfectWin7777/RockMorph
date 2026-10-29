@@ -116,6 +116,36 @@ TOOL_REGISTRY = {
             }
         }
     },
+    "synthesis": {
+        "name": tr("Synthesis & Statistics"),
+        "icon": "synthesis.png",
+        "tools": {
+            "iat": {
+                "name": tr("Relative Active Tectonics (Iat)"),
+                "module_path": ".tools.synthesis.iat_panel",
+                "class_name": "IatPanel",
+                "desc": tr("Combines classified indices into the Iat of El Hamdouni et al. (2008).")
+            },
+            "ahp": {
+                "name": tr("AHP Weighting"),
+                "module_path": ".tools.synthesis.ahp_panel",
+                "class_name": "AhpPanel",
+                "desc": tr("Weights index fields with Saaty's pairwise comparisons and consistency ratio.")
+            },
+            "composite": {
+                "name": tr("Composite Index"),
+                "module_path": ".tools.synthesis.composite_panel",
+                "class_name": "CompositePanel",
+                "desc": tr("Combines rescaled index fields by mean, weights, min/max or first principal component.")
+            },
+            "statistics": {
+                "name": tr("Statistics & Machine Learning"),
+                "module_path": ".tools.synthesis.statistics_panel",
+                "class_name": "StatisticsPanel",
+                "desc": tr("PCA, k-means, hierarchical clustering, DBSCAN, t-SNE/UMAP and outlier detection.")
+            }
+        }
+    },
     "visualization": {
         "name": tr("3D & Exploration"),
         "icon": "visual.png",

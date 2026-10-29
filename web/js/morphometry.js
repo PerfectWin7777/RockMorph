@@ -120,6 +120,19 @@ function renderResults(payload) {
     fillChartControls();
     fillProfileControls();
     renderDiagnostics();
+    // Tools that produce a dedicated figure (Iat components, PCA biplot...)
+    // open on it; the morphometry tool opens on the table.
+    var target = payload.defaultFigure ? "charts" : activeTab();
+    selectTab(target);
+}
+
+function selectTab(name) {
+    document.querySelectorAll("nav button").forEach(function (b) {
+        b.classList.toggle("active", b.getAttribute("data-tab") === name);
+    });
+    document.querySelectorAll("main section").forEach(function (s) {
+        s.classList.toggle("active", s.id === name);
+    });
     renderActiveTab();
 }
 
@@ -140,12 +153,8 @@ function renderActiveTab() {
 
 document.getElementById("tabs").addEventListener("click", function (event) {
     var button = event.target.closest("button");
-    if (!button) { return; }
-    document.querySelectorAll("nav button").forEach(function (b) { b.classList.remove("active"); });
-    document.querySelectorAll("main section").forEach(function (s) { s.classList.remove("active"); });
-    button.classList.add("active");
-    document.getElementById(button.getAttribute("data-tab")).classList.add("active");
-    if (STATE.payload) { renderActiveTab(); }
+    if (!button || !STATE.payload) { return; }
+    selectTab(button.getAttribute("data-tab"));
 });
 
 // ---------------------------------------------------------------------------
@@ -316,7 +325,14 @@ function renderChart() {
 function renderPrebuilt(id, target) {
     var fig = (STATE.payload.figures || []).filter(function (f) { return f.id === id; })[0];
     if (!fig) { return; }
-    var layout = baseLayout(fig.layout || {});
+    // Merge axis settings one level deep so a figure that sets, e.g., an
+    // axis title keeps the themed grid colours and automargin.
+    var base = baseLayout();
+    var extra = fig.layout || {};
+    var layout = Object.assign(base, extra);
+    ["xaxis", "yaxis"].forEach(function (axis) {
+        layout[axis] = Object.assign({}, baseLayout()[axis], extra[axis] || {});
+    });
     Plotly.react(target, fig.data, layout, PLOT_CONFIG);
     setNote(fig.note || "");
 }
