@@ -514,3 +514,46 @@ def build_channel_layer(result: MorphometryResult, name: str) -> Optional[QgsVec
     provider.addFeatures(features)
     layer.updateExtents()
     return layer
+
+
+# ---------------------------------------------------------------------------
+# Viewer payload
+# ---------------------------------------------------------------------------
+
+def _json_number(value) -> Optional[float]:
+    """None for missing/NaN/inf so the payload is strict JSON."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def result_payload(result: MorphometryResult, title: str) -> dict:
+    """Data for ``web/js/morphometry.js`` (format documented there)."""
+    indices = []
+    for selection in result.selections:
+        spec = get(selection.key)
+        scheme = selection.classification
+        indices.append({
+            "key": spec.key, "name": spec.name, "unit": spec.unit,
+            "classification": scheme.label if scheme else None,
+            "classes": [{"label": r.label, "score": r.score} for r in scheme.rules] if scheme else None,
+        })
+    basins = []
+    for row in result.rows:
+        basins.append({
+            "id": str(row.basin_id), "label": row.label,
+            "values": {k: _json_number(v) for k, v in row.values.items()},
+            "classes": {k: [c[0], c[1]] for k, c in row.classes.items()},
+            "warnings": list(row.warnings),
+            "profile": row.channel,
+        })
+    crs = result.work_crs.authid() or result.work_crs.description()
+    subtitle = tr("{0} basin(s) · {1} index(es) · work CRS {2} · {3:.1f} s").format(
+        len(result.rows), len(result.selections), crs, result.elapsed_s)
+    if result.cancelled:
+        subtitle += " · " + tr("cancelled: partial results")
+    return {"title": title, "subtitle": subtitle, "indices": indices, "basins": basins}
