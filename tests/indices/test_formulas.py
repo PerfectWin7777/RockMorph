@@ -226,3 +226,27 @@ def test_rank_classes_put_highest_values_in_class_one():
     assert len(breaks) == 3
     classes, _ = rank_classes(values, "Equal intervals", 2)
     assert classes[:4].tolist() == [2, 2, 2, 2] and classes[4:8].tolist() == [1, 1, 1, 1]
+
+
+def test_segment_breakpoints_finds_one_knick_and_stops():
+    from core.indices.profiles import segment_breakpoints
+    rng = np.random.default_rng(0)
+    chi = np.linspace(0, 10, 400)
+    z = np.where(chi < 6, 100 + 50 * chi, 100 + 50 * 6 + 150 * (chi - 6))
+    z = z + rng.normal(0, 1.0, chi.size)
+    found = segment_breakpoints(chi, z, max_breaks=5)
+    assert len(found) == 1                              # BIC stops after the real break
+    assert abs(chi[found[0]["index"]] - 6.0) < 0.1
+    straight = segment_breakpoints(chi, 100 + 50 * chi + rng.normal(0, 1.0, chi.size), 5)
+    assert straight == []
+
+
+def test_segment_breakpoints_is_fast_on_long_profiles():
+    import time
+    from core.indices.profiles import segment_breakpoints
+    x = np.linspace(0, 1, 6000)
+    y = np.abs(x - 0.3) + np.abs(x - 0.7) + np.random.default_rng(1).normal(0, 0.001, x.size)
+    start = time.time()
+    found = segment_breakpoints(x, y, max_breaks=3)
+    assert time.time() - start < 1.0
+    assert {round(x[b["index"]], 1) for b in found} >= {0.3, 0.7}

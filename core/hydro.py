@@ -323,6 +323,13 @@ class MainRiverExtractor:
         if len(final_points) < 2:
             return None
 
+        # The trace walks UP from the outlet, so the points run outlet ->
+        # source. Reverse them: the documented (and expected) orientation is
+        # source -> outlet, the order of every profile array. With the old
+        # orientation, exported k_sn segments, knickpoints and profile points
+        # were mirrored along the river (audit C3).
+        final_points.reverse()
+
         # Build final geometry in stream CRS
         river_geom = QgsGeometry.fromPolylineXY(final_points)
 
@@ -818,9 +825,12 @@ def sample_river_native_pixels(
             if col == -1:
                 continue
 
-            # Skip duplicate pixel — same pixel as previous step
-            # if col == prev_col and row == prev_row:
-            #     continue
+            # One sample per DEM cell: the 0.3-pixel step visits each cell
+            # about three times, and the repeated elevations produced runs of
+            # zero gradient followed by jumps, i.e. saw-tooth SL and k_sn
+            # (audit C8).
+            if col == prev_col and row == prev_row:
+                continue
 
             prev_col = col
             prev_row = row

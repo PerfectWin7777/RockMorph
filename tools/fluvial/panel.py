@@ -53,7 +53,7 @@ from ...base.base_panel import BasePanel, ComputeWorker
 from ...core.exporter import RockMorphExporter
 from ...widgets.export_group import RockMorphExportGroup
 from .style_manager import FluvialStyleWidget
-from .engine import FluvialEngine
+from .engine import MIN_SEGMENT_PTS, FluvialEngine
 
 
 def tr(message):
@@ -633,30 +633,37 @@ class FluvialPanel(BasePanel):
         ksn_method = self.ksn_method_combo.currentData()
 
         for r in self._results:
-            dist  = np.array(r["distances_m"])
-            area  = np.array(r["area_m2"])
-            slope = np.array(r["slope_local"])
+            # Lists may hold None (JSON nulls): dtype=float turns them into NaN.
+            dist  = np.array(r["distances_m"], dtype=float)
+            area  = np.array(r["area_m2"], dtype=float)
+            slope = np.array(r["slope_local"], dtype=float)
+            elev  = np.array(r["elevations"], dtype=float)
 
-            # Recompute chi
+            # χ in the same source → outlet order as every other array.
             chi = self._engine._compute_chi(dist, area, theta_ref, a0)
-            r["chi"]     = chi.tolist()
+            r["chi"]     = self._engine._sanitize_list(chi)
             r["chi_max"] = round(float(np.nanmax(chi)), 4)
 
-            # Recompute ksn profile
+            # Same window as the full computation (stored by the engine);
+            # window_size=None made the former code raise TypeError (audit C5).
             ksn_prof, th_local = self._engine._compute_ksn_loglog_V3(
-                slope, area, theta_ref, window_size=None
+                slope, area, theta_ref, int(r.get("ksn_window", MIN_SEGMENT_PTS))
             )
-            r["ksn_profile"] = np.nan_to_num(ksn_prof, nan=0.0).tolist()
-            r["ksn_mean"]    = round(float(np.nanmean(ksn_prof)), 2)
-            r["ksn_max"]     = round(float(np.nanmax(ksn_prof)),  2)
-            r["theta_local"] = round(float(np.nanmean(th_local)), 4)
+            # Missing k_sn stays missing (it was replaced by 0, which biased
+            # the curves and the mean).
+            r["ksn_profile"] = self._engine._sanitize_list(ksn_prof)
+            finite = np.isfinite(ksn_prof)
+            r["ksn_mean"]    = round(float(np.nanmean(ksn_prof)), 2) if finite.any() else 0
+            r["ksn_max"]     = round(float(np.nanmax(ksn_prof)),  2) if finite.any() else 0
+            r["theta_local"] = round(float(np.nanmean(th_local)), 4) if np.isfinite(th_local).any() else 0
             r["theta_ref"]   = theta_ref
 
-            # Recompute ksn segments
+            # Knickpoints keep their position; their χ follows the new θ.
             knickpoints = r.get("knickpoints", [])
+            for kp in knickpoints:
+                kp["chi"] = round(float(chi[kp["idx"]]), 4)
             r["ksn_segments"] = self._engine._compute_ksn_segments(
-                chi, np.array(r["elevations"]),
-                slope, area, theta_ref, knickpoints, ksn_method
+                chi, elev, slope, area, theta_ref, knickpoints, ksn_method
             )
 
         self._refresh_tree()
@@ -1209,6 +1216,23 @@ class FluvialPanel(BasePanel):
         ]
     
 
+
+    @staticmethod
+    def _distance_to_crs_units(result: dict):
+        """
+        Function converting a distance from the source (metres, as in
+        ``distances_m``) into a length along ``result["geom"]`` in the units
+        of its CRS. QgsGeometry.interpolate/curveSubstring work in CRS units,
+        so metres were read as degrees in a geographic CRS (audit C3). The
+        conversion is proportional: the fraction of the profile length is the
+        fraction of the geometry length.
+        """
+        distances = [d for d in result["distances_m"] if d is not None]
+        total_m = float(distances[-1]) if distances else 0.0
+        total_crs = result["geom"].length()
+        factor = total_crs / total_m if total_m > 0 else 1.0
+        return lambda distance_m: float(distance_m) * factor
+
     def _on_export_geopackage(self):
         if not self._results:
             self.show_error(tr("No data to export. Compute first."))
@@ -1255,11 +1279,13 @@ class FluvialPanel(BasePanel):
         for r in self._results:
             geom = r["geom"]
             dists = r["distances_m"]
+            to_crs = self._distance_to_crs_units(r)
             for seg in r["ksn_segments"]:
-                # On coupe la géométrie entre la distance i0 et i1
+                # Cut the river between the two segment ends (metres along
+                # the profile, converted to the units of the geometry CRS).
                 d_start = dists[seg["idx_start"]]
                 d_end   = dists[seg["idx_end"]]
-                sub_geom = QgsGeometry(geom.constGet().curveSubstring(d_start, d_end))
+                sub_geom = QgsGeometry(geom.constGet().curveSubstring(to_crs(d_start), to_crs(d_end)))
                 
                 feat = QgsFeature(f_reach)
                 feat.setGeometry(sub_geom)
@@ -1282,9 +1308,10 @@ class FluvialPanel(BasePanel):
         feats_knk = []
         for r in self._results:
             geom = r["geom"]
+            to_crs = self._distance_to_crs_units(r)
             for kp in r["knickpoints"]:
-                # Interpoler la position géographique à partir de la distance
-                pt_geom = geom.interpolate(kp["dist_m"])
+                # Position along the river from the distance to the source.
+                pt_geom = geom.interpolate(to_crs(kp["dist_m"]))
                 feat = QgsFeature(f_knk)
                 feat.setGeometry(pt_geom)
                 feat.setAttributes([r["label"], kp["elev_m"], kp["dist_m"], kp["chi"]])
@@ -1306,8 +1333,9 @@ class FluvialPanel(BasePanel):
         feats_pts = []
         for r in self._results:
             geom = r["geom"]
+            to_crs = self._distance_to_crs_units(r)
             for i in range(len(r["distances_m"])):
-                pt_geom = geom.interpolate(r["distances_m"][i])
+                pt_geom = geom.interpolate(to_crs(r["distances_m"][i]))
                 feat = QgsFeature(f_pts)
                 feat.setGeometry(pt_geom)
                 feat.setAttributes([r["label"], r["distances_m"][i], r["elevations"][i], 

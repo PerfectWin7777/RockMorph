@@ -515,10 +515,12 @@
                     var z_mouth = r.elevations[r.elevations.length - 1];
                     var ksn_mean = r.ksn_mean || 0;
 
-                    // z = z_mouth + k_sn * (chi_max - chi)
+                    // Steady state: z = z_outlet + k_sn * chi (chi = 0 at the
+                    // outlet). The former (chi_max - chi) form compensated the
+                    // reversed chi array of the engine (audit C1).
                     var eq_z = [
-                        z_mouth + ksn_mean * (chi_max - chi_min),
-                        z_mouth,
+                        z_mouth + ksn_mean * chi_min,
+                        z_mouth + ksn_mean * chi_max,
                     ];
                     traces.push({
                         x: [chi_min, chi_max],

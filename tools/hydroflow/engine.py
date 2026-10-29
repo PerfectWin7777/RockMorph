@@ -23,6 +23,7 @@ from qgis.PyQt.QtCore import QCoreApplication, QVariant  # type: ignore
 import processing  # type: ignore
 
 from ...base.base_engine import BaseEngine
+from ...core.processing_ids import FILL_SINKS_IDS, first_available, grass_id
 from ...core.raster import RasterReader
 
 
@@ -87,10 +88,12 @@ class HydroFlowEngine(BaseEngine):
             # region_param = f"{extent.xMinimum()},{extent.xMaximum()},{extent.yMinimum()},{extent.yMaximum()}"
 
             watershed_results = processing.run(
-                "grass7:r.watershed",
+                grass_id("r.watershed"),
                 {
                     "elevation": conditioned_dem,
                     "threshold": threshold_cells,
+                    # -a: positive accumulation even where flow leaves the
+                    # region (otherwise negative); output = cell counts.
                     "-a": True,
                     "accumulation": fac_path if out_fac and fac_path != "TEMPORARY_OUTPUT" else ("TEMPORARY_OUTPUT" if out_fac else None),
                     "drainage": fdr_path if out_fdr and fdr_path != "TEMPORARY_OUTPUT" else ("TEMPORARY_OUTPUT" if out_fdr else None),
@@ -158,25 +161,29 @@ class HydroFlowEngine(BaseEngine):
         Applies pit-filling to guarantee continuous flow paths.
         Uses native QGIS Fill Depressions or falls back to GRASS.
         """
-        try:
-            # Native Wang & Liu depression fill is highly stable on all QGIS 3 platforms
-            result = processing.run(
-                "native:filldepressions",
-                {
+        # Wang & Liu (2006) sink filling. The former id "native:filldepressions"
+        # does not exist, so the code always fell through to GRASS (audit M5).
+        fill_id = first_available(FILL_SINKS_IDS)
+        if fill_id is not None:
+            try:
+                result = processing.run(fill_id, {
                     "INPUT": dem_layer,
-                    "OUTPUT": "TEMPORARY_OUTPUT"
-                }
-            )
-            out_path = result.get("OUTPUT")
-            if out_path:
-                return QgsRasterLayer(out_path, "dem_filled", "gdal")
-        except Exception:
-            pass
+                    "BAND": 1,
+                    # Minimum slope (degrees) imposed across filled flats so
+                    # that every cell keeps a downslope neighbour.
+                    "MIN_SLOPE": 0.01,
+                    "OUTPUT_FILLED_DEM": "TEMPORARY_OUTPUT",
+                })
+                out_path = result.get("OUTPUT_FILLED_DEM")
+                if out_path:
+                    return QgsRasterLayer(out_path, "dem_filled", "gdal")
+            except Exception as error:  # fall back to GRASS below
+                print(f"[HydroFlow] {fill_id} failed, trying GRASS r.fill.dir: {error}")
 
         # Fallback to GRASS r.fill.dir
         try:
             result = processing.run(
-                "grass7:r.fill.dir",
+                grass_id("r.fill.dir"),
                 {
                     "input": dem_layer,
                     "output": "TEMPORARY_OUTPUT",
@@ -204,7 +211,7 @@ class HydroFlowEngine(BaseEngine):
 
         try:
             result = processing.run(
-                "grass7:r.stream.extract",
+                grass_id("r.stream.extract"),
                 {
                     "elevation": dem_layer,
                     "threshold": threshold,

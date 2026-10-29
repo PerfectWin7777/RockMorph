@@ -368,3 +368,110 @@ def analyze_cross_profile(distance: np.ndarray, elevation: np.ndarray,
         "vfw_m": vfw, "esc_m": esc, "eld_m": eld, "erd_m": erd,
         "eh_mean_m": eh_mean, "vf": vfw / eh_mean,
     }
+
+
+# ---------------------------------------------------------------------------
+# Piecewise-linear segmentation (knickpoints on chi-plots)
+# ---------------------------------------------------------------------------
+
+def _split_rss(x: np.ndarray, y: np.ndarray, min_points: int):
+    """
+    Residual sums of squares of the best two-line fit for every split.
+
+    For a split at position j the left line is fitted on x[:j] and the right
+    line on x[j:]. All splits are evaluated at once from cumulative sums
+    (Σx, Σy, Σx², Σxy, Σy²), i.e. in O(n) instead of the O(n²) cost of one
+    least-squares fit per candidate. Returns (positions, rss) or None when
+    the segment is too short to hold two fits of ``min_points`` points.
+    """
+    n = x.size
+    if n < 2 * min_points:
+        return None
+    cumulative = [np.concatenate(([0.0], np.cumsum(v)))
+                  for v in (np.ones(n), x, y, x * x, x * y, y * y)]
+    totals = [c[-1] for c in cumulative]
+    positions = np.arange(min_points, n - min_points + 1)
+
+    def rss(count, sx, sy, sxx, sxy, syy):
+        with np.errstate(invalid="ignore", divide="ignore"):
+            vx = sxx - sx * sx / count
+            cxy = sxy - sx * sy / count
+            vy = syy - sy * sy / count
+            value = vy - np.where(vx > 1e-12, cxy * cxy / vx, 0.0)
+        return np.maximum(value, 0.0)
+
+    left = rss(*(c[positions] for c in cumulative))
+    right = rss(*(t - c[positions] for t, c in zip(totals, cumulative)))
+    return positions, left + right
+
+
+def _line_rss(x: np.ndarray, y: np.ndarray) -> float:
+    """RSS of one least-squares line (0 for fewer than 3 points)."""
+    if x.size < 3:
+        return 0.0
+    coefficients = np.polyfit(x, y, 1)
+    return float(np.sum((y - np.polyval(coefficients, x)) ** 2))
+
+
+def segment_breakpoints(x: np.ndarray, y: np.ndarray, max_breaks: int,
+                        min_points: int = 8) -> List[Dict[str, float]]:
+    """
+    Knickpoints as breaks of a piecewise-linear fit of y(x) (e.g. Z vs chi).
+
+    Global greedy search: at each step the single split, among ALL current
+    segments, that reduces the residual sum of squares the most is added,
+    and only if it lowers the Bayesian information criterion
+        BIC = n·ln(RSS/n) + p·ln(n),  p = 3k + 2 for k breaks
+    (two line parameters per segment plus one position per break). The
+    search stops at ``max_breaks`` or when BIC no longer improves, so a
+    straight profile gets no knickpoint.
+
+    This replaces RockMorph's former recursive split, which could return up
+    to 2^k − 1 breaks, kept the breaks nearest the source rather than the
+    strongest, and cost O(n²) per level (audit C7).
+
+    Returns one dict per break, in increasing position:
+    {"index": first point of the downstream segment, "gain": RSS reduction,
+     "rank": 1 for the strongest break}.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = x.size
+    if n < 2 * min_points or max_breaks < 1:
+        return []
+    segments = [(0, n)]
+    rss_of = {(0, n): _line_rss(x, y)}
+    total_rss = rss_of[(0, n)]
+
+    def bic(rss_value: float, breaks: int) -> float:
+        return n * math.log(max(rss_value, 1e-12) / n) + (3 * breaks + 2) * math.log(n)
+
+    breaks: List[Dict[str, float]] = []
+    current_bic = bic(total_rss, 0)
+    while len(breaks) < max_breaks:
+        best = None
+        for start, stop in segments:
+            found = _split_rss(x[start:stop], y[start:stop], min_points)
+            if found is None:
+                continue
+            positions, rss_values = found
+            k = int(np.argmin(rss_values))
+            gain = rss_of[(start, stop)] - float(rss_values[k])
+            if best is None or gain > best[0]:
+                best = (gain, start, stop, start + int(positions[k]))
+        if best is None or best[0] <= 0:
+            break
+        gain, start, stop, split = best
+        new_rss = total_rss - gain
+        new_bic = bic(new_rss, len(breaks) + 1)
+        if new_bic >= current_bic:
+            break
+        segments.remove((start, stop))
+        segments += [(start, split), (split, stop)]
+        rss_of[(start, split)] = _line_rss(x[start:split], y[start:split])
+        rss_of[(split, stop)] = _line_rss(x[split:stop], y[split:stop])
+        total_rss, current_bic = new_rss, new_bic
+        breaks.append({"index": split, "gain": gain})
+    for rank, item in enumerate(sorted(breaks, key=lambda b: -b["gain"]), start=1):
+        item["rank"] = rank
+    return sorted(breaks, key=lambda b: b["index"])
