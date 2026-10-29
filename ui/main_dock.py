@@ -25,6 +25,11 @@ from qgis.PyQt.QtCore import Qt, QCoreApplication, QStringListModel  # type: ign
 from ..base.registry import TOOL_REGISTRY, get_all_tools
 
 
+# Top-level package of the plugin, whatever its folder is called; registry
+# module paths are relative to it (see base/registry.py).
+PLUGIN_PACKAGE = __name__.split(".")[0]
+
+
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
 
@@ -210,7 +215,7 @@ class RockMorphDock(QDockWidget):
         if tool_id not in self._panels:
             info = self._flat_tools[tool_id]
             try:
-                module = importlib.import_module(info["module_path"])
+                module = importlib.import_module(info["module_path"], package=PLUGIN_PACKAGE)
                 PanelClass = getattr(module, info["class_name"])
                 panel_instance = PanelClass(self.iface, self.panel_container)
                 self._panels[tool_id] = panel_instance

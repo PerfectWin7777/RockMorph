@@ -12,7 +12,7 @@ toolbars, and quick search widgets will adapt dynamically on launch.
 Authors: RockMorph contributors / Tony
 """
 
-from PyQt5.QtCore import QCoreApplication  # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
@@ -20,6 +20,10 @@ def tr(message):
 # ── CENTRAL TOOL CLASSIFICATION REGISTRY ─────────────────────────────
 # Grouped by geomorphological/tectonic families.
 # Each tool declares its module path and class name for lazy loading.
+# Module paths are RELATIVE to the plugin package (leading dot): QGIS names
+# the package after the plugin folder ("RockMorph", "rockmorph", or
+# "RockMorph-main" when installed from a GitHub zip), so an absolute
+# "rockmorph.tools…" path fails on case-sensitive systems.
 TOOL_REGISTRY = {
     "structural": {
         "name": tr("Structural Geology"),
@@ -27,13 +31,13 @@ TOOL_REGISTRY = {
         "tools": {
             "rose": {
                 "name": tr("Rose Diagram"),
-                "module_path": "rockmorph.tools.rose.panel",
+                "module_path": ".tools.rose.panel",
                 "class_name": "RosePanel",
                 "desc": tr("Plots structural strike and dip directions on a polar grid.")
             },
             "digitizer": {
                 "name": tr("Geological Digitizer"),
-                "module_path": "rockmorph.tools.digitizer.panel",
+                "module_path": ".tools.digitizer.panel",
                 "class_name": "DigitizerPanel",
                 "desc": tr("Specialized topological tools for digitizing geological features.")
             }
@@ -45,25 +49,25 @@ TOOL_REGISTRY = {
         "tools": {
             "fluvial_toolbox": {
                 "name": tr("Fluvial Toolbox"),
-                "module_path": "rockmorph.tools.fluvial.panel",
+                "module_path": ".tools.fluvial.panel",
                 "class_name": "FluvialPanel",
                 "desc": tr("Computes geomorphic indices like continuous k_sn and Chi-plots.")
             },
             "smf": {
                 "name": tr("Mountain Front Sinuosity (Smf)"),
-                "module_path": "rockmorph.tools.smf.panel",
+                "module_path": ".tools.smf.panel",
                 "class_name": "SMFPanel",
                 "desc": tr("Extracts and measures scarp sinuosity and tectonic activity classes.")
             },
             "ncp": {
                 "name": tr("Normalized Channel Profile"),
-                "module_path": "rockmorph.tools.ncp.panel",
+                "module_path": ".tools.ncp.panel",
                 "class_name": "NCPPanel",
                 "desc": tr("Plots and analyzes normalized longitudinal river profiles.")
             },
             "hydroflow": {
                 "name": tr("HydroFlow Routing"),
-                "module_path": "rockmorph.tools.hydroflow.panel",
+                "module_path": ".tools.hydroflow.panel",
                 "class_name": "HydroFlowPanel",
                 "desc": tr("Computes hydrological routing and extracts topologically ordered networks [1.13.2].")
             }
@@ -75,27 +79,40 @@ TOOL_REGISTRY = {
         "tools": {
             "swath": {
                 "name": tr("Swath Profile"),
-                "module_path": "rockmorph.tools.swath.panel",
+                "module_path": ".tools.swath.panel",
                 "class_name": "SwathPanel",
                 "desc": tr("Extracts topographic swath envelope profiles along paths.")
             },
             "hypsometry": {
                 "name": tr("Hypsometric Curve"),
-                "module_path": "rockmorph.tools.hypsometry.panel",
+                "module_path": ".tools.hypsometry.panel",
                 "class_name": "HypsometryPanel",
                 "desc": tr("Computes basin-scale hypsometric curves and integral values.")
             },
             "watershed": {
                 "name": tr("Watershed Subdivision"),
-                "module_path": "rockmorph.tools.watershed.panel",
+                "module_path": ".tools.watershed.panel",
                 "class_name": "WatershedPanel",
                 "desc": tr("Hierarchically subdivides watersheds into ranked sub-basins based on confluences or area thresholds.")
             },
             "terrainderivatives": {
                 "name": tr("Terrain Derivatives"),
-                "module_path": "rockmorph.tools.terrainderivatives.panel",
+                "module_path": ".tools.terrainderivatives.panel",
                 "class_name": "TerrainDerivativesPanel",
                 "desc": tr("Computes slope, aspect, hillshading, TPI, TRI, and python-native openness or Sky View Factor.")
+            }
+        }
+    },
+    "morphometry": {
+        "name": tr("Morphometry & Active Tectonics"),
+        "icon": "morphometry.png",
+        "tools": {
+            "morphometry": {
+                "name": tr("Morphometric Indices"),
+                "module_path": ".tools.morphometry.panel",
+                "class_name": "MorphometryPanel",
+                "desc": tr("Computes, classifies and charts 60 published basin, relief, network, "
+                           "channel and active-tectonics indices for your own basins.")
             }
         }
     },
@@ -105,7 +122,7 @@ TOOL_REGISTRY = {
         "tools": {
             "explorer3d": {
                 "name": tr("3D Explorer"),
-                "module_path": "rockmorph.tools.explorer3d.panel",
+                "module_path": ".tools.explorer3d.panel",
                 "class_name": "Explorer3DPanel",
                 "desc": tr("Interactive 3D rendering and terrain model fly-throughs.")
             }
