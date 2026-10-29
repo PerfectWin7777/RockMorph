@@ -10,7 +10,8 @@ proposés sont décrits dans les documents, mais pas appliqués.
 | [02_rust.md](02_rust.md) | Faut-il ajouter du Rust ? Mesures de performance, goulots d'étranglement, recommandation |
 | [03_qwebengine.md](03_qwebengine.md) | Peut-on se passer de QWebEngine ? Risques sous Windows et Qt6, alternatives, plan de migration |
 | [04_feuille_de_route.md](04_feuille_de_route.md) | Priorités, plan d'intégration des ~60 indices, workflow automatique, stratégie pour l'article |
-| [05_catalogue_indices.md](05_catalogue_indices.md) | Catalogue des indices géomorphologiques : ce que RockMorph calcule déjà, ce qui est à corriger, ce qui manque |
+| [05_catalogue_indices.md](05_catalogue_indices.md) | Catalogue des indices géomorphologiques : RockMorph et GSV-Studio côte à côte, ce qui est correct, à corriger ou manquant |
+| [06_gsv_studio_inventaire.md](06_gsv_studio_inventaire.md) | Étape 4 (prise de notes) : où se trouve la logique d'indices dans GSV-Studio, les 55 indices un par un, bugs, classifications, dépendances, croisement avec RockMorph, plan de portage et questions |
 
 ## Résumé en 10 lignes
 
