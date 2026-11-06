@@ -207,6 +207,11 @@ const terrainFragmentShader = `
     uniform bool uLandCover;
     uniform float uTreeLine;           // normalised elevation
     uniform float uSnowLine;           // normalised elevation
+    uniform float uRockSlope;          // degrees: bare rock above this slope
+    uniform vec3 uForestColor;         // land-cover colours, sRGB as picked
+    uniform vec3 uGrassColor;
+    uniform vec3 uRockColor;
+    uniform vec3 uSnowColor;
 
     varying vec3 vNormal;
     varying vec3 vWorldNormal;
@@ -248,31 +253,36 @@ const terrainFragmentShader = `
                    mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
     }
 
-    // Generic mountain land cover (linear albedo): vegetation below the tree
-    // line, alpine grass above, bare rock on steep slopes, snow above the
-    // snow line on slopes gentle enough to hold it (lower on north faces).
+    // Mountain land cover (linear albedo) from four user colours: forest
+    // below the tree line, alpine grass / bare soil above it, rock on slopes
+    // steeper than uRockSlope (±6° transition), snow above the snow line on
+    // slopes gentle enough to hold it (a little lower on north faces).
+    // Each colour is modulated by ±12 % of noise so patches do not look
+    // flat. The ×1.3 brings these natural (dark) albedos to the brightness
+    // of the colour-map modes under the same light.
     vec3 landCoverAlbedo(float h, vec3 trueNormal) {
         float slopeDeg = degrees(acos(clamp(trueNormal.z, 0.0, 1.0)));
         float n1 = valueNoise(vUv * 180.0);
         float n2 = valueNoise(vUv * 45.0);
         float jitter = (n1 - 0.5) * 0.04 + (n2 - 0.5) * 0.06;
+        float shade = 0.88 + 0.24 * n1;
 
-        vec3 forest = mix(vec3(0.035, 0.065, 0.025), vec3(0.06, 0.09, 0.035), n1);
-        vec3 grass  = mix(vec3(0.13, 0.13, 0.06), vec3(0.18, 0.16, 0.09), n2);
-        vec3 rock   = mix(vec3(0.17, 0.155, 0.14), vec3(0.26, 0.24, 0.21), n1);
-        vec3 snow   = vec3(0.78, 0.80, 0.84);
+        vec3 forest = srgbToLinear(uForestColor) * shade;
+        vec3 grass  = srgbToLinear(uGrassColor) * (0.88 + 0.24 * n2);
+        vec3 rock   = srgbToLinear(uRockColor) * shade;
+        vec3 snow   = srgbToLinear(uSnowColor);
 
         float alpine = smoothstep(uTreeLine - 0.04, uTreeLine + 0.04, h + jitter);
         vec3 albedo = mix(forest, grass, alpine);
 
-        float rockiness = smoothstep(28.0, 40.0, slopeDeg + jitter * 120.0);
+        float rockiness = smoothstep(uRockSlope - 6.0, uRockSlope + 6.0, slopeDeg + jitter * 120.0);
         rockiness = max(rockiness, smoothstep(uSnowLine - 0.10, uSnowLine, h) * 0.6);
         albedo = mix(albedo, rock, rockiness);
 
         float northBias = clamp(trueNormal.y, -1.0, 1.0) * 0.04;   // +y = north-facing
         float snowCover = smoothstep(uSnowLine - 0.02, uSnowLine + 0.03, h + jitter + northBias)
-                        * (1.0 - smoothstep(38.0, 52.0, slopeDeg));
-        return mix(albedo, snow, snowCover);
+                        * (1.0 - smoothstep(uRockSlope + 4.0, uRockSlope + 18.0, slopeDeg));
+        return mix(albedo, snow, snowCover) * 1.3;
     }
 
     void main() {
@@ -373,7 +383,12 @@ const terrainFragmentShader = `
         float haze = 1.0 - exp(-viewDistance * 0.004 * uAtmosphere);
         color = mix(color, srgbToLinear(uHazeColor) * 1.1, haze);
 
-        color = acesFilm(color * uExposure);
+        // Calibration: exposure 1.0 (slider 100 %) renders open, sunlit
+        // ground with the mean brightness of the classic hillshade while
+        // keeping shaded slopes readable (measured on the Sierra Nevada
+        // test scene). Without the 0.5 factor the realistic style was about
+        // twice as bright as the classic one.
+        color = acesFilm(color * uExposure * 0.5);
         gl_FragColor = vec4(linearToSrgb(color), 1.0);
     }
 `;
@@ -532,6 +547,13 @@ const realism = {
     exposure: 1.0,
     treeLineM: null,        // null → 55 % of the elevation range
     snowLineM: null,        // null → 85 % of the elevation range
+    rockSlopeDeg: 35.0,     // bare rock above this slope
+    landColors: {           // sRGB, as shown in the colour buttons
+        forest: "#3f5034",
+        grass: "#8a8460",
+        rock: "#7a6f63",
+        snow: "#eef1f5",
+    },
 };
 
 /** Normalised (0–1) tree and snow lines for the current DEM. */
@@ -576,6 +598,11 @@ function createCustomMaterial(useVertexColors, solidColorObj, heightTexture, wid
             uLandCover: { value: colorMode === "natural" },
             uTreeLine: { value: lines.tree },
             uSnowLine: { value: lines.snow },
+            uRockSlope: { value: realism.rockSlopeDeg },
+            uForestColor: { value: new THREE.Color(realism.landColors.forest) },
+            uGrassColor: { value: new THREE.Color(realism.landColors.grass) },
+            uRockColor: { value: new THREE.Color(realism.landColors.rock) },
+            uSnowColor: { value: new THREE.Color(realism.landColors.snow) },
         },
         side: THREE.DoubleSide,
         extensions: { derivatives: true },
@@ -597,6 +624,13 @@ function _applyRealismUniforms() {
         if (uniforms.uLandCover) uniforms.uLandCover.value = colorMode === "natural";
         if (uniforms.uTreeLine) uniforms.uTreeLine.value = lines.tree;
         if (uniforms.uSnowLine) uniforms.uSnowLine.value = lines.snow;
+        if (uniforms.uRockSlope) uniforms.uRockSlope.value = realism.rockSlopeDeg;
+        if (uniforms.uForestColor) {
+            uniforms.uForestColor.value.set(realism.landColors.forest);
+            uniforms.uGrassColor.value.set(realism.landColors.grass);
+            uniforms.uRockColor.value.set(realism.landColors.rock);
+            uniforms.uSnowColor.value.set(realism.landColors.snow);
+        }
     }
     bakeDirty = true;
 }
@@ -649,7 +683,7 @@ const structuralFragmentShader = `
 
         vec3 finalLighting = ambient + (uSunColor * NdotL * uSunIntensity);
         if (uRenderStyle == 1) {
-            vec3 linear = pow(uSolidColor, vec3(2.2)) * finalLighting * 1.4 * uExposure;
+            vec3 linear = pow(uSolidColor, vec3(2.2)) * finalLighting * 0.7 * uExposure;
             gl_FragColor = vec4(pow(acesFilm(linear), vec3(1.0 / 2.2)), 1.0);
         } else {
             gl_FragColor = vec4(uSolidColor * finalLighting, 1.0);
@@ -1142,7 +1176,7 @@ function processPythonCommand(command) {
 
             case "set_natural_colors":
                 colorMode = "natural";
-                _applyNaturalColors(command.payload.tree_line_m ?? null, command.payload.snow_line_m ?? null);
+                _applyNaturalColors(command.payload);
                 break;
 
             case "set_shading_mode":
@@ -1771,13 +1805,17 @@ function _applyColormap() {
 }
 
 /**
- * Natural land-cover colouring (realistic style): computed in the shader
- * from elevation, slope and aspect; tree and snow lines in metres (null =
- * automatic).
+ * Natural land-cover colouring: computed in the shader from elevation,
+ * slope and aspect. ``settings`` (all optional) = {tree_line_m,
+ * snow_line_m (null = automatic), rock_slope_deg, colors: {forest, grass,
+ * rock, snow}}; missing entries keep their current value.
  */
-function _applyNaturalColors(treeLineM, snowLineM) {
-    realism.treeLineM = (treeLineM === undefined) ? realism.treeLineM : treeLineM;
-    realism.snowLineM = (snowLineM === undefined) ? realism.snowLineM : snowLineM;
+function _applyNaturalColors(settings) {
+    const p = settings || {};
+    if ("tree_line_m" in p) realism.treeLineM = p.tree_line_m;
+    if ("snow_line_m" in p) realism.snowLineM = p.snow_line_m;
+    if (p.rock_slope_deg !== undefined && p.rock_slope_deg !== null) realism.rockSlopeDeg = p.rock_slope_deg;
+    if (p.colors) Object.assign(realism.landColors, p.colors);
     _applyRealismUniforms();
     _updateLegendWidget();
 }
@@ -2614,21 +2652,34 @@ function _exportViewport(format, dpi) {
         renderer.setClearColor(0xffffff, 1.0);
     }
 
-    // 3. Render the clean WebGL frame
+    // 3. Render the clean WebGL frame at the requested resolution: the
+    //    drawing buffer is enlarged by dpi / 96 (the screen reference),
+    //    within the 8192-px WebGL limit and at most 4×. The resolution
+    //    choice was ignored before (exports came out at screen size).
+    const exportScale = Math.max(1, Math.min(4, (dpi || 96) / 96, 8192 / Math.max(width, height)));
+    const screenRatio = renderer.getPixelRatio();
+    renderer.setPixelRatio(exportScale);
+    renderer.setSize(width, height, false);
     renderer.setViewport(0, 0, width, height);
     renderer.setScissor(0, 0, width, height);
     renderer.setScissorTest(false);
     renderer.clear();
     renderer.render(scene, camera);
 
-    // 4. Capture the raw WebGL canvas
-    const webglCanvas = renderer.domElement;
+    // 4. Capture the raw WebGL canvas (read before the next frame clears it)
+    const webglCanvas = document.createElement("canvas");
+    webglCanvas.width = renderer.domElement.width;
+    webglCanvas.height = renderer.domElement.height;
+    webglCanvas.getContext("2d").drawImage(renderer.domElement, 0, 0);
 
-    // 5. Restore screen visibility helpers
+    // 5. Restore the screen resolution and helpers. The animation loop is
+    //    still running: calling _animate() again here started a second
+    //    loop at every export, slowing QGIS down a little more each time.
+    renderer.setPixelRatio(screenRatio);
+    renderer.setSize(width, height, false);
     if (gridObj) gridObj.mesh.visible = tempGridVisible;
     axesSceneVisible = tempAxesVisible;
     renderer.setClearColor(0x000000, 0.0);
-    _animate(); // Resume loop
 
     // ── CASE A: VECTOR SVG EXPORT (For Adobe Illustrator) ────────────────
     if (format === "svg") {
@@ -2636,7 +2687,7 @@ function _exportViewport(format, dpi) {
         let legendSVGGroup = "";
         let gradientStops = "";
 
-        if (legendVisibleUserPref && colorMode !== "solid" && originalDEMValues) {
+        if (legendVisibleUserPref && colorMode !== "solid" && colorMode !== "natural" && originalDEMValues) {
             const minZ = colorBoundsAuto ? elevationStats.min : colorBoundsMin;
             const maxZ = colorBoundsAuto ? elevationStats.max : colorBoundsMax;
             const legendX = 25;
@@ -2743,15 +2794,18 @@ ${gradientStops}        </linearGradient>
     // ── CASE B: RASTER EXPORTS (PNG / JPG / PDF) ─────────────────────────
     // We create a temporary 2D canvas to merge WebGL and the Legend perfectly
     const mergeCanvas = document.createElement("canvas");
-    mergeCanvas.width = width;
-    mergeCanvas.height = height;
+    mergeCanvas.width = webglCanvas.width;
+    mergeCanvas.height = webglCanvas.height;
     const mergeCtx = mergeCanvas.getContext("2d");
 
-    // Step 1: Draw the 3D terrain as base layer
+    // Step 1: Draw the 3D terrain as base layer, then work in screen
+    // coordinates scaled to the export resolution so the legend keeps its
+    // layout and stays sharp.
     mergeCtx.drawImage(webglCanvas, 0, 0);
+    mergeCtx.scale(webglCanvas.width / width, webglCanvas.height / height);
 
     // Step 2: Overlay the colorbar legend natively on top using Canvas 2D API
-    if (legendVisibleUserPref && colorMode !== "solid" && originalDEMValues) {
+    if (legendVisibleUserPref && colorMode !== "solid" && colorMode !== "natural" && originalDEMValues) {
         const minZ = colorBoundsAuto ? elevationStats.min : colorBoundsMin;
         const maxZ = colorBoundsAuto ? elevationStats.max : colorBoundsMax;
 
@@ -2973,8 +3027,7 @@ function _initStandaloneOnBoot() {
                 _applySolidColor(style.solid_color);
             } else if (style.color_mode === "natural") {
                 colorMode = "natural";
-                const lines = style.natural_lines || {};
-                _applyNaturalColors(lines.tree_line_m ?? null, lines.snow_line_m ?? null);
+                _applyNaturalColors(style.natural_lines || {});
             } else {
                 currentColormapName = style.colormap;
                 currentColormapReverse = style.reverse_cmap;

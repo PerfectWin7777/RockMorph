@@ -698,7 +698,9 @@ class Explorer3DPanel(BasePanel):
         layout_natural = QFormLayout(page_natural)
         layout_natural.setContentsMargins(0, 4, 0, 0)
         layout_natural.setSpacing(6)
-        self.chk_natural_auto = QCheckBox(tr("Automatic lines (55 % and 85 % of the relief)"))
+        self.chk_natural_auto = QCheckBox(tr("Automatic lines"))
+        self.chk_natural_auto.setToolTip(tr("Tree line at 55 % and snow line at 85 % of the relief "
+                                            "of the DEM. Untick to set them in metres."))
         self.chk_natural_auto.setChecked(True)
         layout_natural.addRow("", self.chk_natural_auto)
         self.spin_tree_line = QDoubleSpinBox()
@@ -715,6 +717,28 @@ class Explorer3DPanel(BasePanel):
         self.spin_snow_line.setToolTip(tr("Elevation above which gentle slopes are snow-covered."))
         self.spin_snow_line.setEnabled(False)
         layout_natural.addRow(tr("Snow line:"), self.spin_snow_line)
+        self.spin_rock_slope = QDoubleSpinBox()
+        self.spin_rock_slope.setRange(10.0, 70.0)
+        self.spin_rock_slope.setDecimals(0)
+        self.spin_rock_slope.setValue(35.0)
+        self.spin_rock_slope.setSuffix(" °")
+        self.spin_rock_slope.setToolTip(tr("Slopes steeper than this show bare rock (±6° transition). "
+                                           "Snow does not hold on slopes ~5–20° steeper."))
+        layout_natural.addRow(tr("Rock from slope:"), self.spin_rock_slope)
+
+        # One colour per cover type (the shader adds a little texture noise).
+        self._land_color_buttons = {}
+        for key, label, default in (("forest", tr("Forest (below tree line):"), "#3f5034"),
+                                    ("grass", tr("Alpine grass / soil:"), "#8a8460"),
+                                    ("rock", tr("Bare rock (steep slopes):"), "#7a6f63"),
+                                    ("snow", tr("Snow (above snow line):"), "#eef1f5")):
+            button = RockMorphColorButton()
+            button.setAllowOpacity(False)
+            button.setColor(QColor(default))
+            button.setDefaultColor(QColor(default))
+            button.setShowNull(False)
+            self._land_color_buttons[key] = button
+            layout_natural.addRow(label, button)
         note = QLabel(tr("Best with the realistic rendering style (Lights page)."))
         note.setWordWrap(True)
         note.setStyleSheet("color: #666;")
@@ -1188,6 +1212,9 @@ class Explorer3DPanel(BasePanel):
         self.chk_natural_auto.toggled.connect(self._slot_natural_colors_changed)
         self.spin_tree_line.valueChanged.connect(self._slot_natural_colors_changed)
         self.spin_snow_line.valueChanged.connect(self._slot_natural_colors_changed)
+        self.spin_rock_slope.valueChanged.connect(self._slot_natural_colors_changed)
+        for button in self._land_color_buttons.values():
+            button.colorChanged.connect(self._slot_natural_colors_changed)
 
         # ── Page 3 — Lights ──────────────────────────────────────────────
         self.combo_render_style.currentIndexChanged.connect(self._slot_realism_changed)
@@ -1860,11 +1887,18 @@ class Explorer3DPanel(BasePanel):
             self._slot_natural_colors_changed()
 
     def _natural_lines_payload(self) -> dict:
-        """Tree/snow lines in metres, or None for the automatic lines."""
-        if self.chk_natural_auto.isChecked():
-            return {"tree_line_m": None, "snow_line_m": None}
-        return {"tree_line_m": self.spin_tree_line.value(),
-                "snow_line_m": self.spin_snow_line.value()}
+        """
+        Land-cover settings for the viewer: tree/snow lines in metres (None
+        = automatic), rock slope in degrees and the four cover colours.
+        """
+        automatic = self.chk_natural_auto.isChecked()
+        return {
+            "tree_line_m": None if automatic else self.spin_tree_line.value(),
+            "snow_line_m": None if automatic else self.spin_snow_line.value(),
+            "rock_slope_deg": self.spin_rock_slope.value(),
+            "colors": {key: button.color().name()
+                       for key, button in self._land_color_buttons.items()},
+        }
 
     def _slot_natural_colors_changed(self) -> None:
         """Send the land-cover lines to the shader (natural colour mode only)."""

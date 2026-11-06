@@ -338,10 +338,25 @@ slider.
 
 **D-3D5 — Natural land cover (4th colour mode).** Illustrative colouring
 from elevation, TRUE slope (without exaggeration) and aspect: forest below
-the tree line, alpine grass above, rock on slopes steeper than ~30–40°, snow
-above the snow line on slopes that can hold it, slightly lower on north
-faces. Lines default to 55 % and 85 % of the relief and can be set in
-metres. It is a visual aid, not a land-cover map.
+the tree line, alpine grass / soil above, rock on slopes steeper than the
+rock slope (35° by default, ±6° transition), snow above the snow line on
+slopes that can hold it, slightly lower on north faces. Lines default to
+55 % and 85 % of the relief and can be set in metres; the four colours are
+editable. It is a visual aid, not a land-cover map.
+
+**D-3D5b — Brightness calibration.** The first version of the realistic
+style was ~2.2× brighter than the classic hillshade on the Sierra Nevada
+scene (mean luminance 0.55 vs 0.25 on the terrain). Exposure 100 % is now
+calibrated to 0.41 with a colour map (shaded slopes stay readable, where the
+classic style crushes them to black) and 0.27 in natural colours; the
+Exposure slider (40–250 %) adjusts it.
+
+**D-3D5c — Image export.** The requested resolution was ignored (exports
+came out at screen size) and, on high-DPI screens, the picture was cropped;
+it is now rendered at dpi / 96 times the view size (≤ 4×, ≤ 8192 px; e.g.
+4000 × 2375 px at 300 dpi for a 1280 × 760 view). Each export also started
+an extra animation loop, slowing QGIS a little more after every export; the
+natural colour mode exports without the elevation colour bar.
 
 **D-3D6 — Data sent to the viewer.** The mesh stays at ≤ 400 cells per
 side (interactivity) but a separate height texture of ≤ 1024 cells per side
