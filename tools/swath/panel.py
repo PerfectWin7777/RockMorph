@@ -8,7 +8,7 @@ Inherits BasePanel.
 from qgis.PyQt.QtWidgets import ( # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QLineEdit, QSizePolicy
+    QCheckBox, QLineEdit, QSizePolicy, QComboBox
 )
 from qgis.PyQt.QtGui import QColor # type: ignore
 from ...base.webengine import QWebEngineView
@@ -16,8 +16,11 @@ from qgis.PyQt.QtCore import Qt, QCoreApplication # type: ignore
 from qgis.gui import QgsMapLayerComboBox, QgsRubberBand, QgsCollapsibleGroupBox   # type: ignore
 from qgis.core import (  # type: ignore
     QgsMapLayerProxyModel, QgsWkbTypes,Qgis,
-    QgsPointXY, QgsGeometry, QgsProject,QgsCoordinateTransform
+    QgsPointXY, QgsGeometry, QgsProject,QgsCoordinateTransform,
+    QgsCoordinateReferenceSystem, QgsExpression, QgsExpressionContext,
+    QgsExpressionContextUtils, QgsFeatureRequest,
 )
+import bisect
 import json
 import os
 import math
@@ -84,6 +87,15 @@ class SwathPanel(BasePanel):
         self.line_combo = QgsMapLayerComboBox()
         self.line_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
         input_layout.addRow(tr("Profile line:"), self.line_combo)
+
+        # Which feature of the line layer is profiled (the tool used to take
+        # the first feature silently). Defaults to the selected feature.
+        self.feature_combo = QComboBox()
+        self.feature_combo.setToolTip(tr("Line of the layer used for the swath. By default the "
+                                         "feature selected on the map, otherwise the first one."))
+        input_layout.addRow(tr("Line feature:"), self.feature_combo)
+        self.line_combo.layerChanged.connect(self._on_line_layer_changed)
+        self._on_line_layer_changed(self.line_combo.currentLayer())
 
         root.addWidget(input_group)
 
@@ -288,6 +300,7 @@ class SwathPanel(BasePanel):
             "compute_q":      self.q_check.isChecked(),
             "compute_relief": self.relief_check.isChecked(),
             "compute_hyps":   self.hyps_check.isChecked(),
+            "feature_id":     self.feature_combo.currentData(),
         }
 
         if not self._engine.validate(**params):
@@ -341,6 +354,10 @@ class SwathPanel(BasePanel):
 
     def _on_result(self, data: dict):
         self._last_data = data
+        for warning in data.get("warnings", []):
+            self.show_info(warning)
+        if self.tracking_check.isChecked():
+            self._draw_swath_rubber_band()
         data["title"] = self.title_edit.text()
         # Inject current styles into data
         data["styles"] = self.style_manager.get_all_styles()
@@ -378,50 +395,28 @@ class SwathPanel(BasePanel):
 
     def _on_plot_hover(self, distance):
         """
-        Called when user hovers over the Plotly chart.
-        Only executes if the tracking checkbox is checked.
+        Chart → map: red point at ``distance`` metres along the swath.
+
+        The position is interpolated between the two stations that bracket
+        the distance, using the station coordinates returned by the engine
+        (DEM CRS). This is exact for any CRS and follows a reversed
+        (high-to-low) profile; the former code interpolated metres along the
+        first feature in DEM CRS units (degrees for a geographic DEM).
         """
-        # --- CRITICAL CONDITION ---
-        if not self.tracking_check.isChecked():
+        if not self.tracking_check.isChecked() or not self._last_data:
             return
-            
-        line_layer = self.line_combo.currentLayer()
-        dem_layer = self.dem_combo.currentLayer()
-        if not line_layer or not dem_layer: 
+        data = self._last_data
+        xs, ys, ds = data.get("station_x"), data.get("station_y"), data.get("distances")
+        if not xs or not ds:
             return
-
-        feature = next(line_layer.getFeatures(), None)
-        if not feature: 
-            return
-
-        # --- CRITICAL: CRS HANDLING ---
-        # 1. Get the geometries and CRS
-        geometry = feature.geometry()
-        line_crs = line_layer.crs()
-        dem_crs  = dem_layer.crs() # This one is metric (meters)
-
-        # 2. Transform the line to the DEM's metric CRS
-        # We MUST interpolate in meters to match the Plotly X-axis
-        if line_crs != dem_crs:
-            transform = QgsCoordinateTransform(line_crs, dem_crs, QgsProject.instance())
-            geometry.transform(transform)
-
-        # 3. Interpolate the point (Distance is in meters, Geometry is now in meters)
-        point_geom = geometry.interpolate(distance)
-
-        # DEBUG PRINT: Now it should NOT be None
-        # print(f"Hover dist: {distance:.2f} | Point: {point_geom.asPoint().toString() if not point_geom.isEmpty() else 'EMPTY'}")
-
-        if point_geom and not point_geom.isEmpty():
-            # 4. Set the marker
-            # We tell the RubberBand that this point is in dem_crs
-            self.map_marker.setToGeometry(point_geom, dem_crs)
-            self.map_marker.show()
-            
-            # Optional: Refresh canvas if the point doesn't appear immediately
-            # self.iface.mapCanvas().refresh()
-
-
+        i = bisect.bisect_left(ds, distance)
+        i = min(max(i, 1), len(ds) - 1)
+        span = ds[i] - ds[i - 1]
+        t = 0.0 if span <= 0 else min(max((distance - ds[i - 1]) / span, 0.0), 1.0)
+        point = QgsPointXY(xs[i - 1] + t * (xs[i] - xs[i - 1]), ys[i - 1] + t * (ys[i] - ys[i - 1]))
+        crs = QgsCoordinateReferenceSystem.fromWkt(data["station_crs"])
+        self.map_marker.setToGeometry(QgsGeometry.fromPointXY(point), crs)
+        self.map_marker.show()
 
     def _on_plot_leave(self):
         """Hides the map marker when mouse leaves the plot area."""
@@ -429,64 +424,64 @@ class SwathPanel(BasePanel):
             self.map_marker.hide()
 
     def _draw_swath_rubber_band(self):
-        """Draws a transparent polygon on the map to visualize the swath width."""
-        line_layer = self.line_combo.currentLayer()
-        if not line_layer:
+        """
+        Outline of the band actually sampled: the ends of every transversal,
+        returned by the engine in the DEM CRS (the former buffer was redrawn
+        around the FIRST feature, whatever line had been computed).
+        """
+        band = (self._last_data or {}).get("band")
+        if not band:
             return
-
-        feature = next(line_layer.getFeatures(), None)
-        if not feature:
-            return
-
         if not self.swath_rubber_band:
             self.swath_rubber_band = QgsRubberBand(self.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
-            # Nice semi-transparent blue for scientific UI
             self.swath_rubber_band.setColor(QColor(45, 106, 159, 40))
             self.swath_rubber_band.setStrokeColor(QColor(45, 106, 159, 180))
             self.swath_rubber_band.setWidth(1)
         else:
-            self.swath_rubber_band.reset(QgsWkbTypes.PolygonGeometry)  # ← reset instead of creating a new one each time
-
-        canvas_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
-        line_crs   = line_layer.crs()
-    
-        # Create a buffer (rectangle) around the line representing the swath width
-        geom = feature.geometry()
-        width = self.width_spin.value()
-        if width <= 0: return
-
-        # Reproject line to canvas CRS if needed
-        if line_crs != canvas_crs:
-            xform = QgsCoordinateTransform(
-                line_crs, canvas_crs, QgsProject.instance()
-            )
-            geom.transform(xform)
-
-        # Now buffer in canvas CRS units
-        # If canvas CRS is geographic — convert metres to degrees approx
-        if canvas_crs.isGeographic():
-            centroid = geom.centroid().asPoint()
-            
-            lat_rad   = math.radians(centroid.y())
-            width_deg = width / (111320.0 * math.cos(lat_rad))
-            buffer_dist = width_deg
-        else:
-            buffer_dist = width
-
-        
-        # 3. Create the buffer geometry — using Flat end caps to create a rectangular swath instead of rounded
-        # CapFlat creates a rectangular buffer instead of rounded ends
-        # (distance, segments, cap, join, miter)
-        swath_buffer = geom.buffer(buffer_dist, 5, Qgis.EndCapStyle.Flat, Qgis.JoinStyle.Miter, 2.0)
-
-        # 4. Set geometry and CRITICAL: ensure it's shown
-        self.swath_rubber_band.setToGeometry(swath_buffer, canvas_crs)
-        self.swath_rubber_band.show() # Force visibility
-        
-        # 5. Force QGIS to redraw the canvas so the blue box appears immediately
+            self.swath_rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        ring = [QgsPointXY(x, y) for x, y in band]
+        ring.append(ring[0])
+        crs = QgsCoordinateReferenceSystem.fromWkt(self._last_data["station_crs"])
+        self.swath_rubber_band.setToGeometry(QgsGeometry.fromPolygonXY([ring]), crs)
+        self.swath_rubber_band.show()
         self.iface.mapCanvas().refresh()
 
-    
+    def _on_line_layer_changed(self, layer=None) -> None:
+        """List the features of the line layer; preselect the selected one."""
+        previous = getattr(self, "_watched_line_layer", None)
+        if previous is not None:
+            try:
+                previous.selectionChanged.disconnect(self._fill_feature_combo)
+            except (TypeError, RuntimeError):
+                pass
+        self._watched_line_layer = layer
+        if layer is not None:
+            layer.selectionChanged.connect(self._fill_feature_combo)
+        self._fill_feature_combo()
+
+    def _fill_feature_combo(self, *args) -> None:
+        self.feature_combo.blockSignals(True)
+        self.feature_combo.clear()
+        layer = self.line_combo.currentLayer()
+        if layer is not None:
+            context = QgsExpressionContext(QgsExpressionContextUtils.globalProjectLayerScopes(layer))
+            display = QgsExpression(layer.displayExpression())
+            for count, feature in enumerate(layer.getFeatures(QgsFeatureRequest().setNoAttributes()
+                                                              if not display.referencedColumns() else
+                                                              QgsFeatureRequest())):
+                if count >= 5000:     # very large layers: list the first 5000
+                    break
+                context.setFeature(feature)
+                name = display.evaluate(context)
+                text = f"#{feature.id()}" + (f" — {name}" if name not in (None, "") else "")
+                self.feature_combo.addItem(text, feature.id())
+            selected = layer.selectedFeatureIds()
+            if selected:
+                index = self.feature_combo.findData(selected[0])
+                if index >= 0:
+                    self.feature_combo.setCurrentIndex(index)
+        self.feature_combo.blockSignals(False)
+
     # def _on_canvas_move(self, point: QgsPointXY):
     #     """
     #     Handles mouse movement on map canvas. 

@@ -127,7 +127,8 @@ class SwathEngine(BaseEngine):
             compute_q     = compute_q,
             compute_relief= compute_relief,
             compute_hyps  = compute_hyps,
-            progress_callback = progress_callback 
+            progress_callback = progress_callback,
+            feature_id    = kwargs.get("feature_id"),
         
         )
 
@@ -143,7 +144,10 @@ class SwathEngine(BaseEngine):
                 profiles_to_flip = {
                     "mean": data["mean"], "min": data["min"], "max": data["max"],
                     "q1": data.get("q1"), "q3": data.get("q3"),
-                    "relief": data.get("relief"), "hyps": data.get("hyps")
+                    "relief": data.get("relief"), "hyps": data.get("hyps"),
+                    # Station positions follow the reversed profile, so the
+                    # map marker stays on the right side of the line.
+                    "station_x": data.get("station_x"), "station_y": data.get("station_y"),
                 }
                 new_dist, new_profs = reorient_profile_high_to_low(data["distances"], profiles_to_flip)
                 

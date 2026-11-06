@@ -426,6 +426,17 @@ elevation), statistics table (lengths, relief, slopes, ascent/descent),
 Exports: chart PNG/SVG/PDF (3D: PNG), CSV of every sample, layer of the
 profile lines with their statistics.
 
+**Swath fixes.** (1) The tool silently profiled the FIRST feature of the
+line layer: a "Line feature" list now chooses it (default: the feature
+selected on the map); a multi-part line, formerly chained into one path
+with straight jumps, uses its longest part with a warning. (2) The map
+marker interpolated metres along the first feature in DEM CRS units
+(degrees for a geographic DEM) and ignored a profile reversed "high to
+low": it is now placed between the sampled stations returned by the engine
+(test with a geographic DEM and a reversed profile: 2 m from the expected
+point). The band drawn on the map is the outline of the transversals
+actually sampled.
+
 **Swath in 3D (assessment).** Possible with Plotly: the swath sampler
 already evaluates a stations × transverse-samples grid but reduces it to
 statistics and drops the positions. Keeping the grid (e.g. 400 × 100
