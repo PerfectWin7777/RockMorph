@@ -57,6 +57,7 @@ from ...core.watershed import (
     build_upstream_csr,
     find_outlets,
     propagate_labels_bfs,
+    upstream_mask,
     subbasins_from_labels,
     pixel_area,
     world_to_pixel,
@@ -205,7 +206,7 @@ class WatershedEngine(BaseEngine):
  
         # ── Step 4 : Resolve outlet ───────────────────────────────────
         _progress(30, tr("Locating outlet…"))
-        px_area_m2 = pixel_area(gt, fdir_reader.is_geographic)
+        px_area_m2 = pixel_area(gt, fdir_reader.is_geographic, shape[0])
  
         outlet_rc, outlet_warn = self._resolve_outlet(
             outlet_layer, facc_reader, facc_array, fdir_layer, shape, gt
@@ -233,21 +234,25 @@ class WatershedEngine(BaseEngine):
                 "or the accumulation raster may be incorrect."
             ))
  
-        # If user provided an outlet point, add it as an extra barrier
-        # so the engine delineates only the area upstream of that point.
-        if outlet_rc is not None and outlet_rc != (-1, -1):
+        # If the user provided an outlet point, only its basin is subdivided:
+        # confluences outside the area draining to it are dropped and the
+        # outlet becomes the main (largest) seed. Before, it was merely
+        # appended at the END of the list, which broke the descending-area
+        # order the propagation relies on, and the whole raster was still
+        # subdivided (audit M8).
+        user_outlet = outlet_rc is not None and outlet_rc != (-1, -1)
+        if user_outlet:
             r_out, c_out = outlet_rc
             outlet_flat  = r_out * shape[1] + c_out
- 
-            # Check it's not already in the list
-            existing_ids = {o["idx"] for o in outlets}
-            if outlet_flat not in existing_ids:
-                outlets.append({
-                    "idx":     outlet_flat,
-                    "row":     r_out,
-                    "col":     c_out,
-                    "area_m2": float(facc_array[r_out, c_out]) * px_area_m2,
-                })
+            inside = upstream_mask(outlet_flat, csr_indices, csr_indptr, size)
+            outlets = [o for o in outlets if inside[o["idx"]] and o["idx"] != outlet_flat]
+            outlets.append({
+                "idx":     outlet_flat,
+                "row":     r_out,
+                "col":     c_out,
+                "area_m2": float(facc_array[r_out, c_out]) * px_area_m2,
+            })
+            outlets.sort(key=lambda o: o["area_m2"], reverse=True)
  
         # ── Step 6 : BFS upstream label propagation ───────────────────
         _progress(60, tr("Propagating sub-basin labels…"))
@@ -258,6 +263,7 @@ class WatershedEngine(BaseEngine):
             outlets     = outlets,
             size        = size,
             shape       = shape,
+            extend_trunk_downstream = not user_outlet,
         )
  
         # ── Step 7 : Build sub-basin dicts + polygons ─────────────────

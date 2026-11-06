@@ -159,6 +159,12 @@ def detect_encoding(fdir_array: np.ndarray) -> str:
     unique_vals = np.unique(valid).astype(int)
     unique_set  = set(unique_vals.tolist())
 
+    # GRASS r.watershed writes NEGATIVE directions where the flow leaves the
+    # computational region (-1 … -8); HydroFlow produces this raster, so it
+    # must be recognised (it raised "Unrecognised D8 encoding" before).
+    if int(unique_vals.min()) < 0 and {abs(v) for v in unique_set} <= {1, 2, 3, 4, 5, 6, 7, 8}:
+        return "grass"
+
     if unique_set & {16, 32, 64, 128}:
         return "esri"
 
@@ -213,6 +219,9 @@ def build_downstream(fdir_array: np.ndarray, encoding: str) -> np.ndarray:
     downstream = np.arange(size, dtype=np.int32)
 
     flat_fdir = fdir_array.ravel()
+    if encoding == "grass":
+        # Negative GRASS codes: same direction, flow leaving the region.
+        flat_fdir = np.abs(flat_fdir)
     offsets   = D8_OFFSETS[encoding]
 
     # Row and column index for every flat pixel
@@ -514,6 +523,30 @@ def build_upstream_csr(
 # 5. propagate_labels_bfs
 # ===========================================================================
 
+def upstream_mask(
+    start:       int,
+    csr_indices: np.ndarray,
+    csr_indptr:  np.ndarray,
+    size:        int,
+) -> np.ndarray:
+    """
+    Boolean flat mask of every pixel draining to ``start`` (included), by a
+    BFS on the upstream CSR graph. Used to restrict the subdivision to the
+    basin of a user-defined outlet (audit M8).
+    """
+    mask = np.zeros(size, dtype=bool)
+    mask[start] = True
+    queue = deque([start])
+    while queue:
+        curr = queue.popleft()
+        for k in range(int(csr_indptr[curr]), int(csr_indptr[curr + 1])):
+            up = int(csr_indices[k])
+            if not mask[up]:
+                mask[up] = True
+                queue.append(up)
+    return mask
+
+
 def propagate_labels_bfs(
     downstream:  np.ndarray,
     csr_indices: np.ndarray,
@@ -521,9 +554,15 @@ def propagate_labels_bfs(
     outlets:     list[dict],
     size:        int,
     shape:       tuple[int, int],
+    extend_trunk_downstream: bool = True,
 ) -> np.ndarray:
     """
     Assign sub-basin labels by BFS going UPSTREAM from outlet seeds.
+
+    ``extend_trunk_downstream``: when True (whole-raster mode) the trunk of
+    the largest outlet is followed downstream to the raster edge and seeded,
+    so the residual area along the main river is labelled too. When the user
+    gave an outlet, nothing downstream of it belongs to the result: False.
 
     Why BFS upstream and not topological-sort downstream?
     -------------------------------------------------------
@@ -552,7 +591,8 @@ def propagate_labels_bfs(
     because we seed in descending area order).
 
     Complexity: O(N) — each pixel is enqueued and dequeued at most once.
-    Wall time on 2000×2000: ~0.02s for the BFS itself.
+    Measured wall time on 2000×2000 with a convergent network: ~4 s (pure
+    Python loop over the pixels; the former "~0.02 s" was not measured).
 
     Parameters
     ----------
@@ -584,17 +624,19 @@ def propagate_labels_bfs(
     for label_id, outlet in enumerate(outlets, start=1):
         start_idx = outlet["idx"]
 
-        if start_idx == main_outlet_idx:
+        if start_idx == main_outlet_idx and extend_trunk_downstream:
             # MAGIE GÉOMORPHOLOGIQUE : "Seed the Trunk"
             # On suit l'eau en aval jusqu'au vrai bord du MNT pour fermer le vide
             curr = start_idx
             path = [curr]
+            seen = {curr}      # set: membership test in O(1) (a list made it O(n²))
             while downstream[curr] != curr:
-                next_node = downstream[curr]
-                if next_node in path:  # Sécurité anti-boucle infinie (au cas où)
+                next_node = int(downstream[curr])
+                if next_node in seen or next_node < 0:  # loop guard / flows off the raster
                     break
                 curr = next_node
                 path.append(curr)
+                seen.add(curr)
                 
             # Toute cette ligne (les 20 derniers pixels jusqu'à la mer) devient la source du BFS
             for node in path:
@@ -796,6 +838,7 @@ def mask_to_polygon_numpy(
     ring    = [start]
     prev    = None
     current = start
+    used_edges = 0
 
     for _ in range(len(adjacency) + 2):
         neighbours = adjacency.get(current, [])
@@ -806,12 +849,17 @@ def mask_to_polygon_numpy(
                 break
         if next_pt is None or next_pt == start:
             ring.append(start)
+            used_edges += 1
             break
         ring.append(next_pt)
+        used_edges += 1
         prev    = current
         current = next_pt
 
-    if len(ring) < 4:
+    # This tracer follows ONE ring. A mask with several parts or with holes
+    # leaves boundary edges unused: return None so the caller uses GDAL
+    # Polygonize instead of silently dropping the other parts (audit M8).
+    if len(ring) < 4 or used_edges != len(edge_set):
         return None
 
     qgs_points = [QgsPointXY(x, y) for x, y in ring]
@@ -888,7 +936,9 @@ def mask_to_polygon(
     n_pixels = int(np.count_nonzero(mask))
 
     if method == "numpy":
-        return mask_to_polygon_numpy(mask, geo_transform)
+        result = mask_to_polygon_numpy(mask, geo_transform)
+        # Multi-part or holed masks are not handled by the tracer.
+        return result if result is not None else mask_to_polygon_gdal(mask, geo_transform)
 
     if method == "gdal":
         return mask_to_polygon_gdal(mask, geo_transform)
@@ -913,12 +963,14 @@ def mask_to_polygon(
 # Utility helpers
 # ===========================================================================
 
-def pixel_area(geo_transform: tuple, crs_is_geographic: bool) -> float:
+def pixel_area(geo_transform: tuple, crs_is_geographic: bool, rows: int = 1) -> float:
     """
     Area of one raster pixel in m².
 
     For projected CRS: |px_width × px_height|.
-    For geographic CRS: approximate conversion at centre latitude.
+    For geographic CRS: approximate conversion at the latitude of the
+    raster centre (``rows`` = number of rows). The former code used the
+    latitude of the FIRST row, i.e. the northern edge (audit M8).
     """
     _, px_w, _, y0, _, px_h = geo_transform
     pw = abs(px_w)
@@ -927,7 +979,7 @@ def pixel_area(geo_transform: tuple, crs_is_geographic: bool) -> float:
     if not crs_is_geographic:
         return pw * ph
 
-    centre_lat_deg     = y0 + ph / 2.0
+    centre_lat_deg     = y0 + px_h * rows / 2.0
     metres_per_deg_lat = math.pi / 180.0 * 6_371_000.0
     metres_per_deg_lon = (
         math.pi / 180.0 * 6_371_000.0
