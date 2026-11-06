@@ -77,6 +77,13 @@ TOOL_REGISTRY = {
         "name": tr("Topographic Analysis"),
         "icon": "terrain.png",
         "tools": {
+            "profiles": {
+                "name": tr("Topographic Profiles"),
+                "module_path": ".tools.profiles.panel",
+                "class_name": "ProfilesPanel",
+                "desc": tr("Simple and serial cross-section profiles, drawn or from lines, with crossings, "
+                           "map/chart hover link and a 3D view.")
+            },
             "swath": {
                 "name": tr("Swath Profile"),
                 "module_path": ".tools.swath.panel",

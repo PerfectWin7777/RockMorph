@@ -397,6 +397,42 @@ the action name is logged now.
 Tested in Chromium (WebGL 2 and forced WebGL 1) on the Sierra Nevada DEM
 (1000 × 867 texture, 334 × 289 mesh), and the panel in headless QGIS.
 
+## 6c. Topographic Profiles tool
+
+**D-P1 — Two modes.** "Along the lines" (one profile per line, from a
+layer and/or drawn on the map: left click = vertex, right click = finish,
+Esc = cancel) and "Serial cross-sections" (perpendicular to each line,
+centred, every N m, L m long, numbered from the start of the line; the
+local direction is taken over ±spacing/4 so sections follow the trend of
+the baseline, not one digitising segment).
+
+**D-P2 — Metric distances, DEM never resampled.** Lines are processed in a
+metric work CRS (as in the morphometry tool); points are transformed to the
+DEM CRS and elevations read by bilinear interpolation at the DEM cell size
+(or a user step). Same profile with a UTM and a geographic DEM: relief
+2398 m in both, length 21 061 m.
+
+**D-P3 — Hover both ways.** Chart → map: red point and highlighted line
+(2D and 3D views). Map → chart: the mouse within 8 px of a profile line
+moves the chart cursor. Crossings with a line/polygon layer (faults,
+contacts, rivers; polygon boundaries) are marked; shared boundaries are
+reported once.
+
+**D-P4 — Display.** Vertical exaggeration (true scale = 1, axes in km and
+m), stacked cross-sections drawn relative to their own low point and
+offset by 1.15 × the largest relief (no overlap; hover shows the real
+elevation), statistics table (lengths, relief, slopes, ascent/descent),
+3D view: profiles over a square terrain area 30 % wider than the profiles.
+Exports: chart PNG/SVG/PDF (3D: PNG), CSV of every sample, layer of the
+profile lines with their statistics.
+
+**Swath in 3D (assessment).** Possible with Plotly: the swath sampler
+already evaluates a stations × transverse-samples grid but reduces it to
+statistics and drops the positions. Keeping the grid (e.g. 400 × 100
+values) allows a 3D "swath block" (surface in distance × offset ×
+elevation, or in true coordinates) with the min/mean/max envelopes as
+lines along the centreline. Not implemented yet.
+
 ## 7. Points to decide
 
 1. D-S1/D-S2: SL reach 200 m and 300/500 classes by default (vs GSV 100/300).

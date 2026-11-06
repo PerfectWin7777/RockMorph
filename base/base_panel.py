@@ -3,6 +3,7 @@
 from abc import ABCMeta, abstractmethod
 import inspect
 import os
+import re
 
 from qgis.PyQt.QtGui import QDesktopServices  # type: ignore
 from .webengine import QWebChannel, QWebEngineSettings, QWebEngineView
@@ -57,6 +58,12 @@ class _BaseBridge(QObject):
         if hasattr(self._panel, "_on_plot_leave"):
             self._panel._on_plot_leave()
     
+    @pyqtSlot(int, float)
+    def on_profile_hover(self, profile_index, distance):
+        """Hover on one of several profiles: (profile index, distance in m)."""
+        if hasattr(self._panel, "_on_profile_hover"):
+            self._panel._on_profile_hover(profile_index, distance)
+
     @pyqtSlot(int)
     def receive_click_id(self, fid: int):
         # Pass clicked feature ID to panel's click handler, if it exists
@@ -405,12 +412,10 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         with open(html_path, "r", encoding="utf-8") as f:
             html_content = f.read()
 
-        # Patch relative JS src → absolute file:/// paths
-        for script in ("qwebchannel.js", "plotly.min.js", "bridge.js"):
-            html_content = html_content.replace(
-                f'src="js/{script}"',
-                f'src="file:///{js_dir}/{script}"'
-            )
+        # Patch every relative "js/…" script to an absolute file:/// path
+        # (setHtml does not resolve relative scripts reliably on Windows).
+        html_content = re.sub(r'src="js/([^"]+)"',
+                              lambda m: f'src="file:///{js_dir}/{m.group(1)}"', html_content)
 
         # Write patched HTML to a temp file next to the original
         # so that relative resources (images, etc.) still resolve
@@ -446,7 +451,8 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
 
     def _save_export(self, svg_data_url: str) -> None:
         """Called by JS bridge after Plotly.toImage()."""
-        self._exporter.save_image( svg_data_url, self._pending_export_path)
+        # The resolution chosen in the export dialog was ignored (always 300).
+        self._exporter.save_image(svg_data_url, self._pending_export_path, self._pending_export_dpi)
 
     
     # ── Help / Documentation Trigger ─────────────────────────────────────
