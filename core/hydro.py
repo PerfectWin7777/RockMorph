@@ -29,7 +29,7 @@ import numpy as np  # type: ignore
 from qgis.core import (  # type: ignore
     QgsVectorLayer, QgsRasterLayer, QgsProject,
     QgsCoordinateTransform, QgsGeometry, QgsWkbTypes,
-    QgsSpatialIndex, QgsDistanceArea, QgsPointXY,
+    QgsSpatialIndex, QgsDistanceArea, QgsPointXY, QgsUnitTypes,
 )
 from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
@@ -105,6 +105,11 @@ class MainRiverExtractor:
             QgsProject.instance().transformContext()
         )
         self._da.setEllipsoid('WGS84')
+
+        # Snapping tolerance in the units of the stream CRS. The tolerance is
+        # given in metres, but QgsPointXY.distance() works in CRS units, so
+        # "2 m" became 2 DEGREES in a geographic CRS (audit M9).
+        self._snap_units = self._metres_to_crs_units(stream_layer.crs(), snap_dist_m)
 
         # Resolve label field
         self._resolved_label = self._resolve_label_field(
@@ -260,39 +265,53 @@ class MainRiverExtractor:
             return None
 
         # ── Step 3 : connectivity graph with fuzzy snap ───────────
+        # Segment j is upstream of segment i when the END of j lies within
+        # the snapping tolerance of the START of i. Ends are bucketed in a
+        # grid of cell = tolerance, so each start only checks the 3×3
+        # neighbouring cells instead of every segment (O(n) instead of
+        # O(n²), audit M9).
         n = len(segments)
+        tol = max(self._snap_units, 1e-12)
+        grid = {}
+        for j, seg in enumerate(segments):
+            key = (math.floor(seg['end'].x() / tol), math.floor(seg['end'].y() / tol))
+            grid.setdefault(key, []).append(j)
         upstream_map = {i: [] for i in range(n)}
-        for i in range(n):
-            s_node = segments[i]['start']
-            for j in range(n):
-                if i == j:
-                    continue
-                if s_node.distance(segments[j]['end']) <= self.snap_dist_m:
-                    upstream_map[i].append(j)
+        for i, seg in enumerate(segments):
+            s_node = seg['start']
+            cx, cy = math.floor(s_node.x() / tol), math.floor(s_node.y() / tol)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for j in grid.get((cx + dx, cy + dy), ()):
+                        if j != i and s_node.distance(segments[j]['end']) <= tol:
+                            upstream_map[i].append(j)
 
         # ── Step 4 : cumulative upstream weights (cycle-safe) ─────
+        # Longest upstream length for every segment, computed with an
+        # explicit stack (the recursive version could exceed Python's
+        # recursion limit on long networks). A segment met again while it
+        # is being processed closes a cycle: that branch is cut there.
         weights = {}
-
-        def get_w(idx, visiting=None):
-            if idx in weights:
-                return weights[idx]
-            if visiting is None:
-                visiting = set()
-            if idx in visiting:
-                # Cycle detected — cut here
-                return segments[idx]['len']
-            visiting.add(idx)
-            up_idxs = upstream_map[idx]
-            if not up_idxs:
-                weights[idx] = segments[idx]['len']
-            else:
-                weights[idx] = segments[idx]['len'] + max(
-                    get_w(u, visiting) for u in up_idxs
-                )
-            return weights[idx]
-
-        for i in range(n):
-            get_w(i)
+        for root in range(n):
+            if root in weights:
+                continue
+            on_path = {root}
+            stack = [(root, iter(upstream_map[root]))]
+            while stack:
+                idx, children = stack[-1]
+                pending = None
+                for child in children:
+                    if child not in weights and child not in on_path:
+                        pending = child
+                        break
+                if pending is not None:
+                    on_path.add(pending)
+                    stack.append((pending, iter(upstream_map[pending])))
+                    continue
+                stack.pop()
+                on_path.discard(idx)
+                finished = [weights[u] for u in upstream_map[idx] if u in weights]
+                weights[idx] = segments[idx]['len'] + (max(finished) if finished else 0.0)
 
         # ── Step 5 : best outlet = max cumulative weight ──────────
         best_outlet_idx = max(range(n), key=lambda i: weights[i])
@@ -345,6 +364,14 @@ class MainRiverExtractor:
     # DEM orientation helper
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _metres_to_crs_units(crs, metres: float) -> float:
+        """Length in CRS units of ``metres`` (1° of latitude for degrees)."""
+        if crs.isGeographic():
+            return metres / 111320.0
+        factor = QgsUnitTypes.fromUnitToUnitFactor(QgsUnitTypes.DistanceMeters, crs.mapUnits())
+        return metres * factor
+
     def _orient_segment(self, part: list) -> list:
         """
         Orient a polyline segment so that part[0] is upstream (high elev)
@@ -362,7 +389,11 @@ class MainRiverExtractor:
         z_first = self._get_z(pt_first)
         z_last  = self._get_z(pt_last)
 
-        # If first point is lower than last → reverse
+        # Keep the digitised direction when an end has no elevation (outside
+        # the DEM or NoData): comparing with a -9999 placeholder could flip a
+        # correct segment (audit M9). Otherwise the higher end is upstream.
+        if z_first is None or z_last is None:
+            return part
         if z_first < z_last:
             return part[::-1]
         return part
@@ -370,9 +401,9 @@ class MainRiverExtractor:
     def _get_z(self, pt: QgsPointXY) -> float:
         """Sample DEM elevation at a QgsPointXY (in DEM CRS)."""
         val, ok = self.dem_layer.dataProvider().sample(pt, 1)
-        if ok and not math.isnan(val):
+        if ok and val is not None and not math.isnan(val):
             return val
-        return -9999.0
+        return None
 
     # ------------------------------------------------------------------
     # CRS helpers

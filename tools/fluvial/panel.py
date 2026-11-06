@@ -984,56 +984,39 @@ class FluvialPanel(BasePanel):
         if not knickpoints:
             return
 
-        basin_layer = self.basin_combo.currentLayer()
-        if basin_layer is None:
-            return
-
-        # Get the feature geometry to locate knickpoints on the river
-        # We use dist_m to interpolate the position on the river geometry
-        river_geom = self._get_river_geom(result["fid"])
-        if river_geom is None:
+        # The main river geometry is kept in the result, in the CRS of the
+        # stream layer and oriented source -> outlet (audit M10: the former
+        # lookup always returned None, so no marker was ever drawn).
+        river_geom = result.get("geom")
+        stream_layer = self.stream_combo.currentLayer()
+        if river_geom is None or river_geom.isEmpty() or stream_layer is None:
             return
 
         canvas     = self.iface.mapCanvas()
         canvas_crs = canvas.mapSettings().destinationCrs()
-        basin_crs  = basin_layer.crs()
-
+        # Knickpoints lie on the river: transform from the STREAM CRS (the
+        # former code used the basin CRS).
         transform = None
-        if basin_crs != canvas_crs:
-            transform = QgsCoordinateTransform(
-                basin_crs, canvas_crs, QgsProject.instance()
-            )
+        if stream_layer.crs() != canvas_crs:
+            transform = QgsCoordinateTransform(stream_layer.crs(), canvas_crs, QgsProject.instance())
+        to_crs = self._distance_to_crs_units(result)
 
         for kp in knickpoints:
-            dist_m = kp.get("dist_m", 0.0)
-            # Interpolate point along river at dist_m
-            pt = river_geom.interpolate(dist_m)
+            pt = river_geom.interpolate(to_crs(kp.get("dist_m", 0.0)))
             if pt.isEmpty():
                 continue
-
             pt_xy = pt.asPoint()
             if transform:
                 pt_xy = transform.transform(pt_xy)
 
             rb = QgsRubberBand(canvas, WkbTypes.PointGeometry)
             rb.setColor(QColor(231, 76, 60))    # red
-            rb.setIconSize(10)
+            rb.setIconSize(10 if kp.get("rank", 1) == 1 else 8)
             rb.setIcon(QgsRubberBand.ICON_CIRCLE)
             rb.addPoint(pt_xy)
             self._rubber_bands.append(rb)
 
         canvas.refresh()
-
-    def _get_river_geom(self, fid: int):
-        """
-        Retrieves the main river geometry for a basin fid
-        from the stream layer intersected with the basin.
-        Returns None if unavailable.
-        """
-        # The river geometry is not stored in results (too heavy).
-        # We fall back to None — knickpoints appear in the plot only.
-        # Future: store geom reference in results dict.
-        return None
 
     # ------------------------------------------------------------------
     # Context menu helpers
