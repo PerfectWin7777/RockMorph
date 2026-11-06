@@ -8,6 +8,10 @@ Wraps GDAL to provide clean numpy arrays and coordinate utilities.
 No UI logic — pure computation.
 """
 
+import os
+import threading
+from collections import OrderedDict
+
 import numpy as np # type: ignore
 from osgeo import gdal  # type: ignore 
 from qgis.core import QgsRasterLayer, QgsProject  # type: ignore
@@ -16,6 +20,54 @@ from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
+
+
+# ---------------------------------------------------------------------------
+# Shared cache of decoded bands (audit M7)
+# ---------------------------------------------------------------------------
+# Several tools create a RasterReader for the same DEM many times (the
+# fluvial profile sampler once per basin, each terrain-derivative solver...),
+# and every instance used to read and decode the WHOLE raster again. Decoded
+# bands are now kept in a small LRU cache keyed by file, band, size and
+# modification time, so an edited file is re-read. Cached arrays are
+# READ-ONLY: callers that need to modify a DEM copy it first (all current
+# callers do), and an accidental in-place write raises instead of silently
+# corrupting the DEM seen by other tools.
+
+_CACHE_SIZE = 3
+_cache: "OrderedDict[tuple, tuple]" = OrderedDict()
+_cache_lock = threading.Lock()   # readers may run in worker threads
+
+
+def _cache_key(path: str, band: int):
+    try:
+        stat = os.stat(path)
+        return (os.path.abspath(path), band, stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        return None   # not a plain file (e.g. a GDAL connection string): no caching
+
+
+def clear_raster_cache() -> None:
+    """Drop every cached band (e.g. on plugin unload)."""
+    with _cache_lock:
+        _cache.clear()
+
+
+def gdal_source_path(layer: QgsRasterLayer) -> str:
+    """
+    Path GDAL can open for ``layer``. QGIS sources may carry provider
+    options after a '|' (e.g. 'file.gpkg|layername=dem'); GDAL needs the
+    part before it, or a GPKG:file:table string for GeoPackage rasters.
+    """
+    source = layer.source()
+    if "|" not in source:
+        return source
+    path, _, options = source.partition("|")
+    for option in options.split("|"):
+        key, _, value = option.partition("=")
+        if key.strip().lower() in ("layername", "table") and path.lower().endswith(".gpkg"):
+            return f"GPKG:{path}:{value.strip()}"
+    return path
 
 
 class RasterReader:
@@ -163,55 +215,52 @@ class RasterReader:
 
     def _open(self):
         """
-        Read raster using GDAL dataset directly into numpy
-        without gdal_array — avoids NumPy version conflict.
+        Read the band as float32 with NoData -> NaN, from the shared cache
+        when the same file and band were read before.
+
+        GDAL converts every pixel type to Float32 during the read
+        (buf_type), so Int8, Int64 and UInt64 rasters (GDAL types 12-14,
+        missing from the former type table, which then reshaped bytes with
+        the wrong item size) are read correctly, and no intermediate copy in
+        the original type is made.
         """
-        path = self._layer.source()
-        
-        self._ds = gdal.Open(path, gdal.GA_ReadOnly)
-        if self._ds is None:
+        path = gdal_source_path(self._layer)
+        key = _cache_key(path, self._band)
+        if key is not None:
+            with _cache_lock:
+                cached = _cache.get(key)
+                if cached is not None:
+                    _cache.move_to_end(key)
+            if cached is not None:
+                self._array, self._gt, self.nodata = cached
+                return
+
+        dataset = gdal.Open(path, gdal.GA_ReadOnly)
+        if dataset is None:
             raise IOError(tr(f"GDAL could not open raster: {path}"))
 
-        self._gt = self._ds.GetGeoTransform()
-
-        band = self._ds.GetRasterBand(self._band)
+        self._gt = dataset.GetGeoTransform()
+        band = dataset.GetRasterBand(self._band)
         self.nodata = band.GetNoDataValue()
+        xsize, ysize = dataset.RasterXSize, dataset.RasterYSize
 
-        # Read using struct — avoids gdal_array entirely
-        import struct
-        xsize  = self._ds.RasterXSize
-        ysize  = self._ds.RasterYSize
-
-        # Read as bytes then convert via numpy frombuffer
-        data_type = band.DataType  # GDT_Float32=6, GDT_Int16=3, etc.
-        
-        # Use gdal.GDT to numpy dtype mapping
-        gdal_to_numpy = {
-            1: np.uint8,
-            2: np.uint16,
-            3: np.int16,
-            4: np.uint32,
-            5: np.int32,
-            6: np.float32,
-            7: np.float64,
-        }
-        dtype = gdal_to_numpy.get(data_type, np.float32)
-        
-        # ReadRaster returns raw bytes — no gdal_array needed
-        raw_bytes = band.ReadRaster(
-            0, 0, xsize, ysize,
-            xsize, ysize,
-            data_type
-        )
-        raw = np.frombuffer(raw_bytes, dtype=dtype)\
-                .reshape((ysize, xsize))\
-                .astype(np.float32)
-
+        # Raw bytes converted to Float32 by GDAL — no gdal_array import,
+        # which avoids NumPy ABI conflicts in some QGIS builds.
+        raw_bytes = band.ReadRaster(0, 0, xsize, ysize, xsize, ysize, gdal.GDT_Float32)
+        array = np.frombuffer(raw_bytes, dtype=np.float32).reshape((ysize, xsize)).copy()
         if self.nodata is not None:
-            raw[raw == self.nodata] = np.nan
+            array[array == np.float32(self.nodata)] = np.nan
+        array.setflags(write=False)
+        self._array = array
+        band = None
+        dataset = None
 
-        self._array = raw
-        self._ds = None
+        if key is not None:
+            with _cache_lock:
+                _cache[key] = (self._array, self._gt, self.nodata)
+                _cache.move_to_end(key)
+                while len(_cache) > _CACHE_SIZE:
+                    _cache.popitem(last=False)
 
     def __repr__(self):
         rows, cols = self.shape
