@@ -97,12 +97,38 @@ let globalSlopeContrast = 0.3;  // 0.0 (no effect) to 1.0 (accentuate steep inci
 let globalMultidirectional = false; // Toggle between single sun and GIS 4-way hillshading
 
 // ---------------------------------------------------------------------------
-// 1. TERRAIN SHADERS (With Vertex Colors for Colormaps)
+// 1. TERRAIN SHADERS
 // ---------------------------------------------------------------------------
+//
+// Two rendering styles share one shader:
+//
+//   uRenderStyle 0 — "Classic hillshade": the original RockMorph lighting
+//                    (Lambert/Oren-Nayar sun, hemisphere ambient, slope
+//                    darkening, no tone mapping). Kept for figures that
+//                    must match earlier exports.
+//   uRenderStyle 1 — "Realistic": linear-space lighting with
+//                    * per-pixel normals from the high-resolution height
+//                      texture, using the true cell size and the current
+//                      vertical exaggeration (the old code used a fixed
+//                      factor of 30 whatever the DEM);
+//                    * soft cast shadows and sky-view-factor ambient
+//                      occlusion, both BAKED into uShadowAO (see the bake
+//                      shader below) so the per-frame cost is one fetch;
+//                    * sky + ground-bounce ambient, ACES filmic tone mapping
+//                      and sRGB output;
+//                    * aerial perspective (distance haze);
+//                    * optional "natural" land-cover colouring from
+//                      elevation, true slope and aspect.
+//
+// Heights in uHeightmap are normalised: 0 = z_min, 1 = z_max. In model
+// space the terrain spans uModelSize (x east, y north) and a normalised
+// height of 1 stands uHeightRange units high (exaggeration included);
+// uRealHeightRange is the same height without exaggeration, used where the
+// TRUE slope matters (land cover).
 
 const terrainVertexShader = `
     attribute vec3 color;
-    
+
     uniform vec3 uSunDirection;
     uniform vec3 uSunColor;
     uniform float uSunIntensity;
@@ -115,54 +141,38 @@ const terrainVertexShader = `
     varying vec3 vColor;
     varying vec2 vUv;
     varying vec3 vViewPosition;
-    varying vec3 vGouraudLighting; // Pass per-vertex calculated light color to fragment shader
+    varying vec3 vGouraudLighting; // per-vertex lighting (classic Gouraud mode)
+    varying vec3 vModelPosition;   // terrain mesh is not transformed: model = world
 
     void main() {
+        vModelPosition = position;
         vNormal = normalize(normalMatrix * normal);
         vWorldNormal = normalize(normal);
         vColor = color;
         vUv = uv;
 
-        // View space position for flat shader screen derivatives calculation
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
         vViewPosition = -mvPosition.xyz;
 
-        // Default flat lighting fallback
         vGouraudLighting = vec3(1.0);
-
-        if (uShadingMode == 1) { // Pure Gouraud per-vertex lighting mode
-            vec3 normalVec = normalize(vNormal);
-            vec3 worldNormalVec = normalize(vWorldNormal);
-            
-            // Hemisphere Ambient Light calculation
+        if (uShadingMode == 1) {
+            vec3 n = normalize(vWorldNormal);
             vec3 skyColor = vec3(0.55, 0.68, 0.85);
             vec3 groundColor = vec3(0.20, 0.17, 0.13);
-            float hemiMix = worldNormalVec.z * 0.5 + 0.5;
-            vec3 ambient = mix(groundColor, skyColor, hemiMix) * uAmbientIntensity;
-            
-            // Standard diffuse term
+            vec3 ambient = mix(groundColor, skyColor, n.z * 0.5 + 0.5) * uAmbientIntensity;
             vec3 L0 = normalize(uSunDirection);
-            float diffuseTerm = 0.0;
-
+            float diffuseTerm = max(dot(n, L0), 0.0);
             if (uMultidirectional) {
                 vec3 L1 = vec3(-L0.y, L0.x, L0.z);
                 vec3 L2 = vec3(-L0.x, -L0.y, L0.z);
                 vec3 L3 = vec3(L0.y, -L0.x, L0.z);
-
-                float d0 = max(dot(normalVec, L0), 0.0);
-                float d1 = max(dot(normalVec, L1), 0.0);
-                float d2 = max(dot(normalVec, L2), 0.0);
-                float d3 = max(dot(normalVec, L3), 0.0);
-
-                diffuseTerm = d0 * 0.4 + d1 * 0.2 + d2 * 0.2 + d3 * 0.2;
-            } else {
-                diffuseTerm = max(dot(normalVec, L0), 0.0);
+                diffuseTerm = max(dot(n, L0), 0.0) * 0.4 + max(dot(n, L1), 0.0) * 0.2
+                            + max(dot(n, L2), 0.0) * 0.2 + max(dot(n, L3), 0.0) * 0.2;
             }
-            
             vGouraudLighting = ambient + (uSunColor * diffuseTerm * uSunIntensity);
         }
-        
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+
+        gl_Position = projectionMatrix * mvPosition;
     }
 `;
 
@@ -174,7 +184,7 @@ const terrainFragmentShader = `
     uniform float uAmbientIntensity;
     uniform vec3 uSolidColor;
     uniform bool uUseVertexColors;
-    
+
     uniform float uRoughness;
     uniform float uSlopeContrast;
     uniform bool uMultidirectional;
@@ -183,96 +193,357 @@ const terrainFragmentShader = `
     uniform float uZScale;
     uniform int uShadingMode;
 
+    uniform int uRenderStyle;          // 0 classic, 1 realistic
+    uniform vec2 uModelSize;           // terrain extent in model units
+    uniform float uHeightRange;        // model units for a normalised height of 1 (exaggerated)
+    uniform float uRealHeightRange;    // same, without vertical exaggeration
+    uniform sampler2D uShadowAO;       // r = sun visibility, g = sky-view factor
+    uniform bool uCastShadows;
+    uniform float uAOStrength;         // 0 none … 1 full sky-view factor
+    uniform float uAtmosphere;         // aerial perspective strength
+    uniform float uExposure;
+    uniform vec3 uSkyTint;             // sky colour lighting the shaded slopes
+    uniform vec3 uHazeColor;
+    uniform bool uLandCover;
+    uniform float uTreeLine;           // normalised elevation
+    uniform float uSnowLine;           // normalised elevation
+
     varying vec3 vNormal;
     varying vec3 vWorldNormal;
     varying vec3 vColor;
     varying vec2 vUv;
     varying vec3 vViewPosition;
     varying vec3 vGouraudLighting;
+    varying vec3 vModelPosition;
+
+    float heightAt(vec2 uv) { return texture2D(uHeightmap, uv).r; }
+
+    // Central-difference normal of the height texture for a given vertical
+    // range: horizontal spacing = 2 texels in model units.
+    vec3 heightNormal(vec2 uv, float verticalRange) {
+        vec2 t = 1.0 / uTextureSize;
+        float dzdx = (heightAt(uv + vec2(t.x, 0.0)) - heightAt(uv - vec2(t.x, 0.0)))
+                     * verticalRange / (2.0 * t.x * uModelSize.x);
+        float dzdy = (heightAt(uv + vec2(0.0, t.y)) - heightAt(uv - vec2(0.0, t.y)))
+                     * verticalRange / (2.0 * t.y * uModelSize.y);
+        return normalize(vec3(-dzdx, -dzdy, 1.0));
+    }
+
+    vec3 srgbToLinear(vec3 c) { return pow(max(c, 0.0), vec3(2.2)); }
+    vec3 linearToSrgb(vec3 c) { return pow(max(c, 0.0), vec3(1.0 / 2.2)); }
+
+    // ACES filmic curve (Narkowicz 2015 fit): natural roll-off of highlights
+    // instead of clipping sunlit summits to white.
+    vec3 acesFilm(vec3 x) {
+        return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+    }
+
+    // Small value noise to break uniform land-cover patches.
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float valueNoise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+                   mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+    }
+
+    // Generic mountain land cover (linear albedo): vegetation below the tree
+    // line, alpine grass above, bare rock on steep slopes, snow above the
+    // snow line on slopes gentle enough to hold it (lower on north faces).
+    vec3 landCoverAlbedo(float h, vec3 trueNormal) {
+        float slopeDeg = degrees(acos(clamp(trueNormal.z, 0.0, 1.0)));
+        float n1 = valueNoise(vUv * 180.0);
+        float n2 = valueNoise(vUv * 45.0);
+        float jitter = (n1 - 0.5) * 0.04 + (n2 - 0.5) * 0.06;
+
+        vec3 forest = mix(vec3(0.035, 0.065, 0.025), vec3(0.06, 0.09, 0.035), n1);
+        vec3 grass  = mix(vec3(0.13, 0.13, 0.06), vec3(0.18, 0.16, 0.09), n2);
+        vec3 rock   = mix(vec3(0.17, 0.155, 0.14), vec3(0.26, 0.24, 0.21), n1);
+        vec3 snow   = vec3(0.78, 0.80, 0.84);
+
+        float alpine = smoothstep(uTreeLine - 0.04, uTreeLine + 0.04, h + jitter);
+        vec3 albedo = mix(forest, grass, alpine);
+
+        float rockiness = smoothstep(28.0, 40.0, slopeDeg + jitter * 120.0);
+        rockiness = max(rockiness, smoothstep(uSnowLine - 0.10, uSnowLine, h) * 0.6);
+        albedo = mix(albedo, rock, rockiness);
+
+        float northBias = clamp(trueNormal.y, -1.0, 1.0) * 0.04;   // +y = north-facing
+        float snowCover = smoothstep(uSnowLine - 0.02, uSnowLine + 0.03, h + jitter + northBias)
+                        * (1.0 - smoothstep(38.0, 52.0, slopeDeg));
+        return mix(albedo, snow, snowCover);
+    }
 
     void main() {
-        vec3 normal = vec3(0.0);
-        vec3 worldNormal = vec3(0.0);
-
-        // ── CASE 1: PHONG SHADING (High-fidelity per-pixel normal mapping) ─
-        if (uShadingMode == 0) {
-            vec2 texelSize = 1.0 / uTextureSize;
-
-            float hL = texture2D(uHeightmap, vUv + vec2(-texelSize.x, 0.0)).r;
-            float hR = texture2D(uHeightmap, vUv + vec2(texelSize.x, 0.0)).r;
-            float hB = texture2D(uHeightmap, vUv + vec2(0.0, -texelSize.y)).r;
-            float hT = texture2D(uHeightmap, vUv + vec2(0.0, texelSize.y)).r;
-
-            float scale = 30.0 * uZScale;
-            float dX = (hR - hL) * scale;
-            float dY = (hT - hB) * scale;
-
-            worldNormal = normalize(vec3(-dX, -dY, 1.0));
-            normal = worldNormal;
-        } 
-        // ── CASE 2: FLAT SHADING (Faceted screen-space derivatives) ────────
-        else if (uShadingMode == 2) {
-            // Compute geometric normal vector of the triangle face dynamically
-            vec3 fdx = dFdx(vViewPosition);
-            vec3 fdy = dFdy(vViewPosition);
-            normal = normalize(cross(fdx, fdy));
-            worldNormal = normal; 
+        // ── Surface normal (shading mode) ──────────────────────────────
+        vec3 normal;
+        if (uShadingMode == 2) {
+            // Faceted look: normal of the triangle itself, from the screen
+            // derivatives of the model-space position (same space as the sun).
+            normal = normalize(cross(dFdx(vModelPosition), dFdy(vModelPosition)));
+            if (normal.z < 0.0) normal = -normal;
+        } else if (uShadingMode == 1 && uRenderStyle == 1) {
+            normal = normalize(vWorldNormal);
+        } else {
+            normal = heightNormal(vUv, uHeightRange);
         }
 
-        vec3 baseTerrainColor = uUseVertexColors ? vColor : uSolidColor;
-        vec3 finalColor = vec3(0.0);
+        vec3 baseColor = uUseVertexColors ? vColor : uSolidColor;
 
-        // ── CASE 3: GOURAUD SHADING ──────────────────────────────────────
-        if (uShadingMode == 1) {
-            finalColor = baseTerrainColor * vGouraudLighting;
-        } 
-        // ── PER-PIXEL SHADING CALCULATION (Phong & Flat) ──────────────────
-        else {
-            // Hemisphere Ambient Light (Cool sky / Warm ground reflection)
-            vec3 skyColor = vec3(0.55, 0.68, 0.85);
-            vec3 groundColor = vec3(0.20, 0.17, 0.13);
-            float hemiMix = worldNormal.z * 0.5 + 0.5;
-            vec3 ambient = mix(groundColor, skyColor, hemiMix) * uAmbientIntensity;
-            
-            // Multidirectional Shading (GIS 4-Axis Mode) vs Single-Directional Shading
-            vec3 L0 = normalize(uSunDirection);
-            float diffuseTerm = 0.0;
-
-            if (uMultidirectional) {
-                vec3 L1 = vec3(-L0.y, L0.x, L0.z);
-                vec3 L2 = vec3(-L0.x, -L0.y, L0.z);
-                vec3 L3 = vec3(L0.y, -L0.x, L0.z);
-
-                float d0 = max(dot(normal, L0), 0.0);
-                float d1 = max(dot(normal, L1), 0.0);
-                float d2 = max(dot(normal, L2), 0.0);
-                float d3 = max(dot(normal, L3), 0.0);
-
-                diffuseTerm = d0 * 0.4 + d1 * 0.2 + d2 * 0.2 + d3 * 0.2;
+        // ── CLASSIC STYLE (unchanged lighting model) ────────────────────
+        if (uRenderStyle == 0) {
+            vec3 finalColor;
+            if (uShadingMode == 1) {
+                finalColor = baseColor * vGouraudLighting;
             } else {
-                diffuseTerm = max(dot(normal, L0), 0.0);
+                vec3 skyColor = vec3(0.55, 0.68, 0.85);
+                vec3 groundColor = vec3(0.20, 0.17, 0.13);
+                vec3 ambient = mix(groundColor, skyColor, normal.z * 0.5 + 0.5) * uAmbientIntensity;
+                vec3 L0 = normalize(uSunDirection);
+                float diffuseTerm = max(dot(normal, L0), 0.0);
+                if (uMultidirectional) {
+                    vec3 L1 = vec3(-L0.y, L0.x, L0.z);
+                    vec3 L2 = vec3(-L0.x, -L0.y, L0.z);
+                    vec3 L3 = vec3(L0.y, -L0.x, L0.z);
+                    diffuseTerm = max(dot(normal, L0), 0.0) * 0.4 + max(dot(normal, L1), 0.0) * 0.2
+                                + max(dot(normal, L2), 0.0) * 0.2 + max(dot(normal, L3), 0.0) * 0.2;
+                }
+                float roughness2 = uRoughness * uRoughness * 1.8;
+                float orenNayar = 1.0 - 0.75 * (roughness2 / (roughness2 + 0.25));
+                float slopeFactor = pow(clamp(normal.z, 0.0, 1.0), 1.0 + uSlopeContrast * 25.0);
+                vec3 lighting = ambient * slopeFactor + uSunColor * diffuseTerm * orenNayar * uSunIntensity;
+                finalColor = baseColor * lighting * mix(1.0, slopeFactor, uSlopeContrast * 0.75);
             }
-
-            // Apply amplified Oren-Nayar retro-reflection factor
-            float roughness2 = uRoughness * uRoughness * 1.8;
-            float orenNayarFactor = 1.0 - 0.75 * (roughness2 / (roughness2 + 0.25));
-            float directDiffuse = diffuseTerm * orenNayarFactor;
-            
-            // Slope shading accentuation (darken steep incisions based on normal Z tilt)
-            float slopeFactor = pow(clamp(worldNormal.z, 0.0, 1.0), 1.0 + uSlopeContrast * 25.0);
-            
-            vec3 baseLighting = (ambient * slopeFactor) + (uSunColor * directDiffuse * uSunIntensity);
-            
-            // Apply slope shadow globally to both ambient and diffuse components for maximum tectonic pop
-            finalColor = baseTerrainColor * baseLighting * mix(1.0, slopeFactor, uSlopeContrast * 0.75);
+            gl_FragColor = vec4(finalColor, 1.0);
+            return;
         }
 
-        gl_FragColor = vec4(finalColor, 1.0);
+        // ── REALISTIC STYLE ─────────────────────────────────────────────
+        float h = heightAt(vUv);
+        vec3 albedo;
+        if (uLandCover) {
+            albedo = landCoverAlbedo(h, heightNormal(vUv, uRealHeightRange));
+        } else {
+            albedo = srgbToLinear(baseColor);
+        }
+
+        vec2 bake = texture2D(uShadowAO, vUv).rg;
+        float sunVisibility = uCastShadows ? bake.r : 1.0;
+        float skyView = mix(1.0, bake.g, uAOStrength);
+
+        vec3 L0 = normalize(uSunDirection);
+        float direct = max(dot(normal, L0), 0.0);
+        if (uMultidirectional) {
+            // GIS multidirectional option kept in the realistic style: the
+            // three extra lights only fill shaded slopes (no cast shadow).
+            vec3 L1 = vec3(-L0.y, L0.x, L0.z);
+            vec3 L2 = vec3(-L0.x, -L0.y, L0.z);
+            vec3 L3 = vec3(L0.y, -L0.x, L0.z);
+            direct = direct * 0.55 * sunVisibility
+                   + (max(dot(normal, L1), 0.0) + max(dot(normal, L2), 0.0)
+                      + max(dot(normal, L3), 0.0)) * 0.15;
+        } else {
+            direct *= sunVisibility;
+        }
+        float roughness2 = uRoughness * uRoughness * 1.8;
+        float orenNayar = 1.0 - 0.5 * (roughness2 / (roughness2 + 0.25));
+
+        // Irradiance balance: with the default sun (intensity 1.5, 45°) and
+        // ambient (0.3), flat open ground receives ~25 % of its light from
+        // the sky, the usual clear-day ratio.
+        vec3 sunLight = srgbToLinear(uSunColor) * uSunIntensity * direct * orenNayar;
+        // Sky light: strongest on surfaces facing up, reduced by the
+        // portion of sky hidden by the surrounding relief.
+        vec3 skyLight = srgbToLinear(uSkyTint) * uAmbientIntensity * 1.1
+                      * (0.55 + 0.45 * normal.z) * skyView;
+        // Light reflected by the opposite valley side (warm, weak).
+        vec3 bounce = vec3(0.30, 0.25, 0.20) * uAmbientIntensity * 0.35
+                    * (1.0 - normal.z) * skyView;
+
+        // Optional slope accentuation, milder than in the classic style.
+        float slopeFactor = mix(1.0, pow(clamp(normal.z, 0.0, 1.0), 1.0 + uSlopeContrast * 6.0),
+                                uSlopeContrast * 0.5);
+        vec3 color = albedo * (sunLight + skyLight + bounce) * slopeFactor;
+
+        // Aerial perspective: exponential haze with view distance (the
+        // model is ~100 units wide, so 0.004/unit gives ~35 % haze across
+        // the scene at full strength).
+        float viewDistance = length(vViewPosition);
+        float haze = 1.0 - exp(-viewDistance * 0.004 * uAtmosphere);
+        color = mix(color, srgbToLinear(uHazeColor) * 1.1, haze);
+
+        color = acesFilm(color * uExposure);
+        gl_FragColor = vec4(linearToSrgb(color), 1.0);
     }
 `;
 
 
+// ---------------------------------------------------------------------------
+// 1b. LIGHTING BAKE (cast shadows + sky-view factor → uShadowAO texture)
+// ---------------------------------------------------------------------------
+//
+// Rendered once into a texture the size of the height texture, then only
+// when the sun, the vertical exaggeration or the softness change. Per texel:
+//
+//   r — sun visibility: a ray is marched from the surface towards the sun
+//       through the height field; the soft penumbra keeps the smallest
+//       ratio (clearance / distance) met along the ray (Quilez' soft
+//       shadows). 1 = lit, 0 = in the shadow of the relief.
+//   g — sky-view factor (Zakšek et al., 2011): mean over 16 azimuths of
+//       1 − sin(horizon elevation angle), the horizon searched up to ~60
+//       texels away. It darkens valley floors and gorges the way diffuse
+//       skylight does, and is a published relief-visualisation index.
+
+const bakeVertexShader = `
+    varying vec2 vUv;
+    void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+    }
+`;
+
+const bakeFragmentShader = `
+    uniform sampler2D uHeightmap;
+    uniform vec2 uTextureSize;
+    uniform vec2 uModelSize;
+    uniform float uHeightRange;
+    uniform vec3 uSunDirection;
+    uniform float uShadowSoftness;    // 0 sharp … 1 very soft
+
+    varying vec2 vUv;
+
+    float heightAt(vec2 uv) { return texture2D(uHeightmap, uv).r * uHeightRange; }
+
+    float sunVisibility(vec2 uv, float z0, vec3 L) {
+        if (L.z <= 0.0) return 0.0;                       // sun below the horizon
+        float texel = max(uModelSize.x / uTextureSize.x, uModelSize.y / uTextureSize.y);
+        float k = mix(48.0, 4.0, uShadowSoftness);        // penumbra sharpness
+        float t = texel;
+        float visibility = 1.0;
+        vec3 origin = vec3(uv * uModelSize, z0 + texel * 0.25);
+        for (int i = 0; i < 160; i++) {
+            vec3 p = origin + L * t;
+            vec2 q = p.xy / uModelSize;
+            if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) break;
+            if (p.z > uHeightRange * 1.05) break;         // above every summit
+            float clearance = p.z - heightAt(q);
+            visibility = min(visibility, k * clearance / t);
+            if (visibility <= 0.0) break;
+            t += max(texel * 0.75, t * 0.04);
+        }
+        return smoothstep(0.0, 1.0, clamp(visibility, 0.0, 1.0));
+    }
+
+    float skyViewFactor(vec2 uv, float z0) {
+        vec2 texel = 1.0 / uTextureSize;
+        float texelModel = max(uModelSize.x / uTextureSize.x, uModelSize.y / uTextureSize.y);
+        float sum = 0.0;
+        for (int d = 0; d < 16; d++) {
+            float a = float(d) * 0.392699;                // 2π / 16
+            vec2 dir = vec2(cos(a), sin(a));
+            float maxTan = 0.0;
+            float r = 1.5;
+            for (int s = 0; s < 10; s++) {
+                vec2 q = uv + dir * r * texel;
+                if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) break;
+                float dz = heightAt(q) - z0;
+                maxTan = max(maxTan, dz / (r * texelModel));
+                r *= 1.55;
+            }
+            sum += 1.0 - maxTan / sqrt(1.0 + maxTan * maxTan);   // 1 − sin(horizon angle)
+        }
+        return sum / 16.0;
+    }
+
+    void main() {
+        float z0 = heightAt(vUv);
+        gl_FragColor = vec4(sunVisibility(vUv, z0, normalize(uSunDirection)),
+                            skyViewFactor(vUv, z0), 0.0, 1.0);
+    }
+`;
+
+let bakeState = null;          // {target, scene, camera, material}
+let bakeDirty = false;         // re-bake requested (done once per frame at most)
+
+/** Create (or resize) the render target and full-screen pass of the bake. */
+function _setupLightingBake(heightTexture, texWidth, texHeight) {
+    if (bakeState) {
+        bakeState.target.dispose();
+        bakeState.material.dispose();
+    }
+    const target = new THREE.WebGLRenderTarget(texWidth, texHeight, {
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        format: THREE.RGBAFormat,
+        type: THREE.UnsignedByteType,
+        depthBuffer: false,
+        stencilBuffer: false,
+    });
+    const material = new THREE.ShaderMaterial({
+        vertexShader: bakeVertexShader,
+        fragmentShader: bakeFragmentShader,
+        uniforms: {
+            uHeightmap: { value: heightTexture },
+            uTextureSize: { value: new THREE.Vector2(texWidth, texHeight) },
+            uModelSize: { value: new THREE.Vector2(1, 1) },
+            uHeightRange: { value: 1.0 },
+            uSunDirection: { value: sunDirection.clone() },
+            uShadowSoftness: { value: realism.shadowSoftness },
+        },
+        depthTest: false,
+        depthWrite: false,
+    });
+    const quadScene = new THREE.Scene();
+    quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material));
+    bakeState = { target, scene: quadScene, camera: new THREE.Camera(), material };
+    bakeDirty = true;
+}
+
+/** Render the bake now if something it depends on changed. */
+function _bakeLightingIfNeeded() {
+    if (!bakeDirty || !bakeState || !renderer) return;
+    const terrainObj = _findTerrainObject();
+    if (!terrainObj) return;
+    const t = terrainObj.mesh.material.uniforms;
+    const u = bakeState.material.uniforms;
+    u.uModelSize.value.copy(t.uModelSize.value);
+    u.uHeightRange.value = t.uHeightRange.value;
+    u.uSunDirection.value.copy(sunDirection);
+    u.uShadowSoftness.value = realism.shadowSoftness;
+    const previous = renderer.getRenderTarget();
+    renderer.setRenderTarget(bakeState.target);
+    renderer.render(bakeState.scene, bakeState.camera);
+    renderer.setRenderTarget(previous);
+    t.uShadowAO.value = bakeState.target.texture;
+    bakeDirty = false;
+}
+
+/**
+ * Realistic-rendering settings (driven by the "Realism" controls of the
+ * panel through the "update_realism" command).
+ */
+const realism = {
+    style: 1,               // 1 realistic, 0 classic hillshade
+    castShadows: true,
+    shadowSoftness: 0.35,
+    aoStrength: 0.85,
+    atmosphere: 0.25,
+    exposure: 1.0,
+    treeLineM: null,        // null → 55 % of the elevation range
+    snowLineM: null,        // null → 85 % of the elevation range
+};
+
+/** Normalised (0–1) tree and snow lines for the current DEM. */
+function _landCoverLines() {
+    const range = Math.max(1e-6, elevationStats.max - elevationStats.min);
+    const tree = realism.treeLineM === null ? 0.55 : (realism.treeLineM - elevationStats.min) / range;
+    const snow = realism.snowLineM === null ? 0.85 : (realism.snowLineM - elevationStats.min) / range;
+    return { tree, snow };
+}
+
 function createCustomMaterial(useVertexColors, solidColorObj, heightTexture, width, height) {
+    const lines = _landCoverLines();
     return new THREE.ShaderMaterial({
         vertexShader: terrainVertexShader,
         fragmentShader: terrainFragmentShader,
@@ -287,14 +558,47 @@ function createCustomMaterial(useVertexColors, solidColorObj, heightTexture, wid
             uRoughness: { value: globalRoughness },
             uSlopeContrast: { value: globalSlopeContrast },
             uMultidirectional: { value: globalMultidirectional },
-            uShadingMode: { value: currentShadingMode }, // Bind shading mode uniform
-            // Analytical Heightmap Shading Uniforms [New]
+            uShadingMode: { value: currentShadingMode },
             uHeightmap: { value: heightTexture || null },
             uTextureSize: { value: new THREE.Vector2(width || 100, height || 100) },
-            uZScale: { value: currentZScale }
+            uZScale: { value: currentZScale },
+            uRenderStyle: { value: realism.style },
+            uModelSize: { value: new THREE.Vector2(100, 100) },
+            uHeightRange: { value: 1.0 },
+            uRealHeightRange: { value: 1.0 },
+            uShadowAO: { value: null },
+            uCastShadows: { value: realism.castShadows },
+            uAOStrength: { value: realism.aoStrength },
+            uAtmosphere: { value: realism.atmosphere },
+            uExposure: { value: realism.exposure },
+            uSkyTint: { value: new THREE.Color(0.60, 0.72, 0.90) },
+            uHazeColor: { value: new THREE.Color(0.72, 0.79, 0.88) },
+            uLandCover: { value: colorMode === "natural" },
+            uTreeLine: { value: lines.tree },
+            uSnowLine: { value: lines.snow },
         },
-        side: THREE.DoubleSide
+        side: THREE.DoubleSide,
+        extensions: { derivatives: true },
     });
+}
+
+/** Push the realism settings into the terrain and structure materials. */
+function _applyRealismUniforms() {
+    const lines = _landCoverLines();
+    for (const id in sceneObjects) {
+        const obj = sceneObjects[id];
+        const uniforms = obj && obj.mesh && obj.mesh.material && obj.mesh.material.uniforms;
+        if (!uniforms) continue;
+        if (uniforms.uRenderStyle) uniforms.uRenderStyle.value = realism.style;
+        if (uniforms.uCastShadows) uniforms.uCastShadows.value = realism.castShadows;
+        if (uniforms.uAOStrength) uniforms.uAOStrength.value = realism.aoStrength;
+        if (uniforms.uAtmosphere) uniforms.uAtmosphere.value = realism.atmosphere;
+        if (uniforms.uExposure) uniforms.uExposure.value = realism.exposure;
+        if (uniforms.uLandCover) uniforms.uLandCover.value = colorMode === "natural";
+        if (uniforms.uTreeLine) uniforms.uTreeLine.value = lines.tree;
+        if (uniforms.uSnowLine) uniforms.uSnowLine.value = lines.snow;
+    }
+    bakeDirty = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -318,9 +622,15 @@ const structuralFragmentShader = `
     uniform float uSunIntensity;
     uniform float uAmbientIntensity;
     uniform vec3 uSolidColor;
+    uniform int uRenderStyle;   // 1: same linear lighting + ACES as the realistic terrain
+    uniform float uExposure;
 
     varying vec3 vNormal;
     varying vec3 vWorldNormal;
+
+    vec3 acesFilm(vec3 x) {
+        return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+    }
 
     void main() {
         vec3 normal = normalize(vNormal);
@@ -338,7 +648,12 @@ const structuralFragmentShader = `
         vec3 ambient = mix(groundColor, skyColor, hemiMix) * (uAmbientIntensity + 0.25);
 
         vec3 finalLighting = ambient + (uSunColor * NdotL * uSunIntensity);
-        gl_FragColor = vec4(uSolidColor * finalLighting, 1.0);
+        if (uRenderStyle == 1) {
+            vec3 linear = pow(uSolidColor, vec3(2.2)) * finalLighting * 1.4 * uExposure;
+            gl_FragColor = vec4(pow(acesFilm(linear), vec3(1.0 / 2.2)), 1.0);
+        } else {
+            gl_FragColor = vec4(uSolidColor * finalLighting, 1.0);
+        }
     }
 `;
 
@@ -351,7 +666,9 @@ function createStructuralMaterial(solidColorObj) {
             uSunColor: { value: sunColor },
             uSunIntensity: { value: sunIntensity },
             uAmbientIntensity: { value: ambientIntensity },
-            uSolidColor: { value: solidColorObj || new THREE.Color(0xffffff) }
+            uSolidColor: { value: solidColorObj || new THREE.Color(0xffffff) },
+            uRenderStyle: { value: realism.style },
+            uExposure: { value: realism.exposure }
         },
         side: THREE.DoubleSide
     });
@@ -373,6 +690,8 @@ function updateSceneUniforms() {
             if (uniforms.uMultidirectional) uniforms.uMultidirectional.value = globalMultidirectional;
         }
     }
+    // Cast shadows depend on the sun direction: re-bake on the next frame.
+    bakeDirty = true;
 }
 
 
@@ -506,6 +825,7 @@ function _onWindowResize() {
 function _animate() {
     requestAnimationFrame(_animate);
     controls.update();
+    _bakeLightingIfNeeded();
 
     const container = document.getElementById("viewport-container");
     const width = container.clientWidth;
@@ -640,7 +960,8 @@ function _createLabelSprite(text, color) {
 
 function processPythonCommand(command) {
     if (!command || !command.action) return;
-    console.log("[JS Receive Command] Action reçue : " + command.action + " | Données : " + JSON.stringify(command.payload));
+    // Log the action only: payloads (DEM grids) can weigh several megabytes.
+    console.log("[JS Receive Command] " + command.action);
     try {
         switch (command.action) {
 
@@ -807,6 +1128,23 @@ function processPythonCommand(command) {
                 break;
 
             // ── Shading (legacy, kept for compatibility) ─────────────────
+            case "update_realism": {
+                const p = command.payload;
+                if (p.style !== undefined) realism.style = p.style === "classic" ? 0 : 1;
+                if (p.shadows !== undefined) realism.castShadows = !!p.shadows;
+                if (p.shadow_softness !== undefined) realism.shadowSoftness = p.shadow_softness;
+                if (p.ao !== undefined) realism.aoStrength = p.ao;
+                if (p.atmosphere !== undefined) realism.atmosphere = p.atmosphere;
+                if (p.exposure !== undefined) realism.exposure = p.exposure;
+                _applyRealismUniforms();
+                break;
+            }
+
+            case "set_natural_colors":
+                colorMode = "natural";
+                _applyNaturalColors(command.payload.tree_line_m ?? null, command.payload.snow_line_m ?? null);
+                break;
+
             case "set_shading_mode":
                 _updateShadingMode(command.payload.mode);
                 break;
@@ -837,6 +1175,42 @@ function processPythonCommand(command) {
 // ---------------------------------------------------------------------------
 // TERRAIN BUILD
 // ---------------------------------------------------------------------------
+
+/**
+ * Float height texture normalised to [0, 1] between z_min and z_max.
+ * Rows are written south to north (texture v grows northwards, like the
+ * plane's uv). NoData becomes the lowest elevation so that it neither casts
+ * shadows nor blocks the sky.
+ */
+function _buildHeightTexture(data) {
+    const grid = (data.texture_values && data.texture_width > 1) ? data.texture_values : data.z_values;
+    const texHeight = grid.length;
+    const texWidth = grid[0].length;
+    const range = (data.z_max - data.z_min) || 1.0;
+    // WebGL 2 has one-channel float textures; WebGL 1 (older GPUs/drivers,
+    // where QtWebEngine falls back) only has RGBA float textures
+    // (OES_texture_float). A RedFormat texture there reads as zero, which
+    // flattened the shading.
+    const webgl2 = !!(renderer && renderer.capabilities.isWebGL2);
+    const channels = webgl2 ? 1 : 4;
+    const values = new Float32Array(texWidth * texHeight * channels);
+    for (let j = 0; j < texHeight; j++) {
+        const row = grid[j];
+        const offset = (texHeight - 1 - j) * texWidth;
+        for (let i = 0; i < texWidth; i++) {
+            const z = row[i];
+            values[(offset + i) * channels] = (z === null || z === undefined || isNaN(z) || z === data.nodata_value)
+                ? 0.0 : (z - data.z_min) / range;
+        }
+    }
+    const texture = new THREE.DataTexture(values, texWidth, texHeight,
+        webgl2 ? THREE.RedFormat : THREE.RGBAFormat, THREE.FloatType);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.needsUpdate = true;
+    return { texture, width: texWidth, height: texHeight };
+}
 
 function _buildTerrain(data) {
     // console.log("[RockMorph 3D] Building terrain:", data.element_id,
@@ -902,7 +1276,6 @@ function _buildTerrain(data) {
     const positions = geometry.attributes.position.array;
     // ── Generate High-Fidelity Float32 Heightmap Texture for GPU Shading ──
 
-    const floatData = new Float32Array(width * height);
     const colors = [];
     const indices = [];
 
@@ -913,10 +1286,6 @@ function _buildTerrain(data) {
 
     let vi = 0;
     for (let j = 0; j < height; j++) {
-        // Pre-calculate the mirrored row offset to align texture with WebGL UV coordinates (Y-Flip)
-        const mirroredY = height - 1 - j;
-        const rowOffset = mirroredY * width;
-
         for (let i = 0; i < width; i++) {
             const rawZ = data.z_values[j][i];
             let z = 0;
@@ -932,9 +1301,6 @@ function _buildTerrain(data) {
             const c = _sampleRamp(activeRamp, currentColormapReverse ? 1 - t : t);
             colors.push(c.r, c.g, c.b);
 
-            // Populate the Float32 heightmap texture array directly by writing to the mirrored row
-            const normZ = (rawZ - data.z_min) / (data.z_max - data.z_min || 1.0);
-            floatData[rowOffset + i] = isNaN(normZ) ? 0.0 : normZ;
 
             // Build index buffer, skip NoData quads
             if (j < height - 1 && i < width - 1) {
@@ -961,14 +1327,17 @@ function _buildTerrain(data) {
         geometry.attributes.normal.needsUpdate = true;
     }
 
-    // Generate heightmap texture using the pre-populated floatData array
-    const heightTexture = new THREE.DataTexture(floatData, width, height, THREE.RedFormat, THREE.FloatType);
-    heightTexture.minFilter = THREE.LinearFilter;
-    heightTexture.magFilter = THREE.LinearFilter;
-    heightTexture.needsUpdate = true;
+    // Height texture for per-pixel shading, shadows and ambient occlusion:
+    // the high-resolution grid when the engine sent one, else the mesh grid.
+    const tex = _buildHeightTexture(data);
+    const heightTexture = tex.texture;
 
     // ShaderMaterial customized with standard parameters and heightmap texture
-    const material = createCustomMaterial(true, null, heightTexture, width, height);
+    const material = createCustomMaterial(true, null, heightTexture, tex.width, tex.height);
+    material.uniforms.uModelSize.value.set(modelWidth * scaleFactor, modelHeight * scaleFactor);
+    material.uniforms.uRealHeightRange.value = elevRange * scaleFactor;
+    material.uniforms.uHeightRange.value = elevRange * baseExaggeration * currentZScale * scaleFactor;
+    _setupLightingBake(heightTexture, tex.width, tex.height);
 
     const terrainMesh = new THREE.Mesh(geometry, material);
     scene.add(terrainMesh);
@@ -1008,9 +1377,13 @@ function _buildTerrain(data) {
     } else if (colorMode === "solid") {
         const fallbackSolidColor = "#4a90d9";
         _applySolidColor(fallbackSolidColor);
+    } else if (colorMode === "natural") {
+        _applyColormap();          // keeps vertex colours ready for a switch back
+        _applyNaturalColors();
     } else {
         _applyColormap();
     }
+    _applySkyGradient();           // haze colour of the new materials
 
     _updateLegendWidget();
 
@@ -1204,7 +1577,11 @@ function _updateZScale(scale) {
 
     // Sync the Z-Scale uniform value with the GPU fragment shader
     if (terrainObj.mesh.material && terrainObj.mesh.material.uniforms && terrainObj.mesh.material.uniforms.uZScale) {
-        terrainObj.mesh.material.uniforms.uZScale.value = scale;
+        const uniforms = terrainObj.mesh.material.uniforms;
+        uniforms.uZScale.value = scale;
+        uniforms.uHeightRange.value = Math.max(1.0, elevationStats.max - elevationStats.min)
+            * baseExaggeration * currentZScale * scaleFactor;
+        bakeDirty = true;   // shadows and sky-view factor follow the exaggeration
     }
 
 
@@ -1387,8 +1764,21 @@ function _applyColormap() {
     const uniforms = terrainObj.mesh.material.uniforms;
     if (uniforms) {
         uniforms.uUseVertexColors.value = true;
+        uniforms.uLandCover.value = false;
     }
 
+    _updateLegendWidget();
+}
+
+/**
+ * Natural land-cover colouring (realistic style): computed in the shader
+ * from elevation, slope and aspect; tree and snow lines in metres (null =
+ * automatic).
+ */
+function _applyNaturalColors(treeLineM, snowLineM) {
+    realism.treeLineM = (treeLineM === undefined) ? realism.treeLineM : treeLineM;
+    realism.snowLineM = (snowLineM === undefined) ? realism.snowLineM : snowLineM;
+    _applyRealismUniforms();
     _updateLegendWidget();
 }
 
@@ -1399,6 +1789,7 @@ function _applySolidColor(hexColor) {
     const uniforms = terrainObj.mesh.material.uniforms;
     if (uniforms) {
         uniforms.uUseVertexColors.value = false;
+        uniforms.uLandCover.value = false;
         uniforms.uSolidColor.value.set(hexColor);
     }
     _updateLegendWidget();
@@ -1440,6 +1831,7 @@ function _applyClassifiedColors() {
     const uniforms = terrainObj.mesh.material.uniforms;
     if (uniforms) {
         uniforms.uUseVertexColors.value = true;
+        uniforms.uLandCover.value = false;
     }
 
     _updateLegendWidget();
@@ -1471,6 +1863,14 @@ function _applySkyGradient() {
     }
     if (renderer) renderer.setClearColor(0x000000, 0);
     if (scene) scene.background = null;
+
+    // Distant relief fades towards the horizon colour of the sky (lightened,
+    // as real haze is brighter than the sky above it).
+    const haze = skyColorBottom.clone().lerp(new THREE.Color(0.80, 0.85, 0.92), 0.55);
+    for (const id in sceneObjects) {
+        const u = sceneObjects[id].mesh && sceneObjects[id].mesh.material && sceneObjects[id].mesh.material.uniforms;
+        if (u && u.uHazeColor) u.uHazeColor.value.copy(haze);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2100,7 +2500,7 @@ function _updateLegendWidget() {
     }
 
     // Hide legend if solid color mode is active OR if the user unchecked it in Python UI
-    if (colorMode === "solid" || !legendVisibleUserPref) {
+    if (colorMode === "solid" || colorMode === "natural" || !legendVisibleUserPref) {
         legend.style.display = "none";
         return;
     }
@@ -2571,6 +2971,10 @@ function _initStandaloneOnBoot() {
                 _applyClassifiedColors();
             } else if (style.color_mode === "solid") {
                 _applySolidColor(style.solid_color);
+            } else if (style.color_mode === "natural") {
+                colorMode = "natural";
+                const lines = style.natural_lines || {};
+                _applyNaturalColors(lines.tree_line_m ?? null, lines.snow_line_m ?? null);
             } else {
                 currentColormapName = style.colormap;
                 currentColormapReverse = style.reverse_cmap;
@@ -2580,6 +2984,9 @@ function _initStandaloneOnBoot() {
             globalRoughness = style.roughness;
             globalSlopeContrast = style.slope_contrast;
             globalMultidirectional = style.multidirectional;
+            if (style.realism) {
+                processPythonCommand({ action: "update_realism", payload: style.realism });
+            }
             updateSceneUniforms();
         }
     }

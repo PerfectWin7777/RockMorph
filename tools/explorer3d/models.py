@@ -38,6 +38,11 @@ class ThreeDRaster(ThreeDElement):
     nodata_value: Optional[float] = None
     color_ramp: str = "terrain"
     label: str = ""  # Clean display name from QGIS layer
+    # Higher-resolution elevation grid for per-pixel shading (normals,
+    # shadows, ambient occlusion); rows from north to south like z_values.
+    texture_width: int = 0
+    texture_height: int = 0
+    texture_values: Optional[List[List[Optional[float]]]] = None
 
 
 @dataclass

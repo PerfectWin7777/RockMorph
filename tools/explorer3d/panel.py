@@ -608,7 +608,8 @@ class Explorer3DPanel(BasePanel):
         self.combo_symbology_render_mode.addItems([
             tr("Continuous Colormap (Scientific)"),
             tr("Classified Intervals (Discrete)"),
-            tr("Solid Uniform Fill")
+            tr("Solid Uniform Fill"),
+            tr("Natural Land Cover (Realistic)")
         ])
         layout_render = QHBoxLayout()
         layout_render.addWidget(QLabel(tr("Render Mode:")))
@@ -687,6 +688,39 @@ class Explorer3DPanel(BasePanel):
         layout_solid.addStretch()
         self.stacked_symbology_settings.addWidget(page_solid)
 
+        # --- Page 3: Natural land cover ---
+        # Colours computed in the shader from elevation, true slope and
+        # aspect: forest below the tree line, alpine grass above it, bare
+        # rock on slopes steeper than ~30–40°, snow above the snow line on
+        # slopes that can hold it (a little lower on north faces). It is an
+        # illustration, not a land-cover map: the lines are user choices.
+        page_natural = QWidget()
+        layout_natural = QFormLayout(page_natural)
+        layout_natural.setContentsMargins(0, 4, 0, 0)
+        layout_natural.setSpacing(6)
+        self.chk_natural_auto = QCheckBox(tr("Automatic lines (55 % and 85 % of the relief)"))
+        self.chk_natural_auto.setChecked(True)
+        layout_natural.addRow("", self.chk_natural_auto)
+        self.spin_tree_line = QDoubleSpinBox()
+        self.spin_tree_line.setRange(-500.0, 9000.0)
+        self.spin_tree_line.setDecimals(0)
+        self.spin_tree_line.setSuffix(" m")
+        self.spin_tree_line.setToolTip(tr("Elevation above which forest gives way to alpine grassland."))
+        self.spin_tree_line.setEnabled(False)
+        layout_natural.addRow(tr("Tree line:"), self.spin_tree_line)
+        self.spin_snow_line = QDoubleSpinBox()
+        self.spin_snow_line.setRange(-500.0, 9000.0)
+        self.spin_snow_line.setDecimals(0)
+        self.spin_snow_line.setSuffix(" m")
+        self.spin_snow_line.setToolTip(tr("Elevation above which gentle slopes are snow-covered."))
+        self.spin_snow_line.setEnabled(False)
+        layout_natural.addRow(tr("Snow line:"), self.spin_snow_line)
+        note = QLabel(tr("Best with the realistic rendering style (Lights page)."))
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #666;")
+        layout_natural.addRow(note)
+        self.stacked_symbology_settings.addWidget(page_natural)
+
         # Add the stacked widget as a row inside the GroupBox
         symb_layout.addWidget(self.stacked_symbology_settings)
         layout.addWidget(self.group_symbology)
@@ -733,6 +767,38 @@ class Explorer3DPanel(BasePanel):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(8)
+
+        # ── GroupBox 0: Realistic rendering ───────────────────────────────
+        # Realistic: per-pixel normals from the high-resolution DEM texture,
+        # soft cast shadows, sky-view-factor ambient occlusion, distance haze
+        # and filmic tone mapping. Classic: the former hillshade look, kept
+        # for figures that must match earlier exports.
+        self.group_realism = QgsCollapsibleGroupBox(tr("Realistic rendering"))
+        realism_layout = QVBoxLayout(self.group_realism)
+        realism_layout.setSpacing(6)
+        self.combo_render_style = QComboBox()
+        self.combo_render_style.addItem(tr("Realistic (shadows, sky light, haze)"), "realistic")
+        self.combo_render_style.addItem(tr("Classic hillshade (previous look)"), "classic")
+        realism_layout.addWidget(self.combo_render_style)
+        self.chk_cast_shadows = QCheckBox(tr("Cast shadows of the relief"))
+        self.chk_cast_shadows.setChecked(True)
+        self.chk_cast_shadows.setToolTip(tr("Ridges shade the slopes and valleys behind them, "
+                                            "following the sun azimuth and altitude."))
+        realism_layout.addWidget(self.chk_cast_shadows)
+        self._add_labeled_slider(realism_layout, tr("Shadow softness:"), "slider_shadow_softness",
+                                 min_val=0, max_val=100, default=35,
+                                 tooltip=tr("0 = sharp shadow edges, 100 = very soft penumbra."))
+        self._add_labeled_slider(realism_layout, tr("Sky occlusion (sky-view factor):"), "slider_ao",
+                                 min_val=0, max_val=100, default=85,
+                                 tooltip=tr("Darkens valley floors and gorges that see less of the sky "
+                                            "(sky-view factor, Zakšek et al. 2011)."))
+        self._add_labeled_slider(realism_layout, tr("Atmospheric haze:"), "slider_atmosphere",
+                                 min_val=0, max_val=100, default=25,
+                                 tooltip=tr("Distant relief fades towards the horizon colour of the sky."))
+        self._add_labeled_slider(realism_layout, tr("Exposure:"), "slider_exposure",
+                                 min_val=40, max_val=250, default=100,
+                                 tooltip=tr("Overall brightness of the realistic rendering (100 = neutral)."))
+        layout.addWidget(self.group_realism)
 
         # ── GroupBox 1: Advanced Illumination Algorithms ──────────────────
         self.group_illumination = QgsCollapsibleGroupBox(tr("Illumination modes"))
@@ -1119,7 +1185,16 @@ class Explorer3DPanel(BasePanel):
         self.spin_max_z.valueChanged.connect(self._slot_update_color_bounds)
         self.rad_scale_auto.toggled.connect(self._slot_color_scale_mode_changed)
 
+        self.chk_natural_auto.toggled.connect(self._slot_natural_colors_changed)
+        self.spin_tree_line.valueChanged.connect(self._slot_natural_colors_changed)
+        self.spin_snow_line.valueChanged.connect(self._slot_natural_colors_changed)
+
         # ── Page 3 — Lights ──────────────────────────────────────────────
+        self.combo_render_style.currentIndexChanged.connect(self._slot_realism_changed)
+        self.chk_cast_shadows.toggled.connect(self._slot_realism_changed)
+        for slider in (self.slider_shadow_softness, self.slider_ao,
+                       self.slider_atmosphere, self.slider_exposure):
+            slider.valueChanged.connect(self._slot_realism_changed)
         self.chk_multidirectional.stateChanged.connect(self._slot_toggle_multidirectional)
         self.combo_shading_mode.currentIndexChanged.connect(self._slot_shading_mode_changed) # Connect the shading mode selector
         self.btn_light_color.colorChanged.connect(
@@ -1264,6 +1339,11 @@ class Explorer3DPanel(BasePanel):
         # 4. Cache and update elevation boundary widgets for classified rendering
         self.active_dem_min_z = dem_data.z_min
         self.active_dem_max_z = dem_data.z_max
+        relief = dem_data.z_max - dem_data.z_min
+        for spin, fraction in ((self.spin_tree_line, 0.55), (self.spin_snow_line, 0.85)):
+            spin.blockSignals(True)
+            spin.setValue(round(dem_data.z_min + fraction * relief))
+            spin.blockSignals(False)
 
         self.spin_min_z.blockSignals(True)
         self.spin_max_z.blockSignals(True)
@@ -1757,8 +1837,9 @@ class Explorer3DPanel(BasePanel):
         """Swap active configuration page and show/hide bounds settings dynamically."""
         self.stacked_symbology_settings.setCurrentIndex(index)
         
-        # Hide bounds UI group entirely in Solid Mode, show it for Continuous and Classified
-        if index == 2:  # Solid Uniform Fill
+        # Hide bounds UI group in Solid and Natural modes (no colour scale),
+        # show it for Continuous and Classified
+        if index in (2, 3):
             self.bounds_configuration_panel.setVisible(False)
         else:
             self.bounds_configuration_panel.setVisible(True)
@@ -1775,6 +1856,24 @@ class Explorer3DPanel(BasePanel):
         elif index == 2:  # Solid Color
             hex_color = self.btn_solid_color.property("color_hex") or "#4a90d9"
             self._js({"action": "set_solid_color", "payload": {"color": hex_color}})
+        elif index == 3:  # Natural land cover
+            self._slot_natural_colors_changed()
+
+    def _natural_lines_payload(self) -> dict:
+        """Tree/snow lines in metres, or None for the automatic lines."""
+        if self.chk_natural_auto.isChecked():
+            return {"tree_line_m": None, "snow_line_m": None}
+        return {"tree_line_m": self.spin_tree_line.value(),
+                "snow_line_m": self.spin_snow_line.value()}
+
+    def _slot_natural_colors_changed(self) -> None:
+        """Send the land-cover lines to the shader (natural colour mode only)."""
+        manual = not self.chk_natural_auto.isChecked()
+        self.spin_tree_line.setEnabled(manual)
+        self.spin_snow_line.setEnabled(manual)
+        if not self.is_3d_active or self.combo_symbology_render_mode.currentIndex() != 3:
+            return
+        self._js({"action": "set_natural_colors", "payload": self._natural_lines_payload()})
 
     def _rebuild_classified_brackets_ui(self) -> None:
         """Regenerate dynamic rows dividing the Z span into equal intervals, sampling the active colormap."""
@@ -1960,6 +2059,27 @@ class Explorer3DPanel(BasePanel):
             return
         self._js({"action": "update_base_thickness", "payload": {"thickness": value / 100.0}})
 
+    def _realism_payload(self) -> dict:
+        """Current realistic-rendering settings, as sent to the viewer."""
+        return {
+            "style": self.combo_render_style.currentData(),
+            "shadows": self.chk_cast_shadows.isChecked(),
+            "shadow_softness": self.slider_shadow_softness.value() / 100.0,
+            "ao": self.slider_ao.value() / 100.0,
+            "atmosphere": self.slider_atmosphere.value() / 100.0,
+            "exposure": self.slider_exposure.value() / 100.0,
+        }
+
+    def _slot_realism_changed(self, *args) -> None:
+        """Send the realistic-rendering settings to the GLSL shaders."""
+        realistic = self.combo_render_style.currentData() == "realistic"
+        for widget in (self.chk_cast_shadows, self.slider_shadow_softness, self.slider_ao,
+                       self.slider_atmosphere, self.slider_exposure):
+            widget.setEnabled(realistic)
+        if not self.is_3d_active:
+            return
+        self._js({"action": "update_realism", "payload": self._realism_payload()})
+
     def _slot_update_aesthetic_shading(self) -> None:
         """Read topography rendering enhancements and send parameters to the GLSL shader."""
         if not self.is_3d_active:
@@ -2124,7 +2244,10 @@ class Explorer3DPanel(BasePanel):
                 "sky_bottom": self._colors["sky_bottom"],
                 "colormap": current_cmap,
                 "reverse_cmap": self.chk_reverse_cmap.isChecked(),
-                "color_mode": "colormap" if self.combo_symbology_render_mode.currentIndex() == 0 else ("classified" if self.combo_symbology_render_mode.currentIndex() == 1 else "solid"),
+                "color_mode": ("colormap", "classified", "solid", "natural")[
+                    self.combo_symbology_render_mode.currentIndex()],
+                "natural_lines": self._natural_lines_payload(),
+                "realism": self._realism_payload(),
                 "solid_color": self.btn_solid_color.property("color_hex") or "#4a90d9",
                 "class_colors": self._class_colors,
                 "class_bounds": self._class_bounds,

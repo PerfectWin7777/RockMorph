@@ -223,7 +223,7 @@ Found during the work (not in the audit):
 Not done yet (still as in the audit): M4 for the **older** tools (they still
 read layers from a `QThread`), M7 (raster read entirely), M8 (watershed
 subdivision), M9 (main-river snapping in CRS units), M10 (knickpoints not
-drawn on the map), M11 (3D explorer), M13 (HydroFlow Strahler in O(E²)).
+drawn on the map), M13 (HydroFlow Strahler in O(E²)).
 
 ---
 
@@ -309,6 +309,57 @@ Observations that matter for interpretation:
   robust ones (Perron & Royden, 2013).
 
 ---
+
+## 6b. 3D explorer — realistic rendering
+
+**D-3D1 — Two rendering styles.** *Realistic* (default) and *Classic
+hillshade* (the former look, kept for figures that must match earlier
+exports), selectable on the Lights page.
+
+**D-3D2 — Correct per-pixel normals.** The old shader derived normals from
+the height texture with a fixed factor (30 × Z-scale) whatever the cell
+size and relief, so the hillshade did not match the displayed geometry.
+Normals now use the true texel spacing and the current vertical
+exaggeration, in both styles.
+
+**D-3D3 — Cast shadows and sky-view factor, baked on the GPU.** A
+full-screen pass writes, for every texel of the height texture, the sun
+visibility (ray marched towards the sun through the height field, soft
+penumbra) and the sky-view factor (16 azimuths, horizon searched up to ~60
+texels; Zakšek et al., 2011). It runs only when the sun, the exaggeration or
+the softness change; drawing a frame costs one texture fetch.
+
+**D-3D4 — Light and colour pipeline.** Linear-space lighting (sun + sky
+light weighted by the sky-view factor + weak ground bounce), ACES filmic
+tone mapping and sRGB output; with the default sun (1.5, 45°) and ambient
+(0.3) open ground receives ~25 % of its light from the sky. Distance haze
+towards the horizon colour of the sky (adjustable, 0 = off). Exposure
+slider.
+
+**D-3D5 — Natural land cover (4th colour mode).** Illustrative colouring
+from elevation, TRUE slope (without exaggeration) and aspect: forest below
+the tree line, alpine grass above, rock on slopes steeper than ~30–40°, snow
+above the snow line on slopes that can hold it, slightly lower on north
+faces. Lines default to 55 % and 85 % of the relief and can be set in
+metres. It is a visual aid, not a land-cover map.
+
+**D-3D6 — Data sent to the viewer.** The mesh stays at ≤ 400 cells per
+side (interactivity) but a separate height texture of ≤ 1024 cells per side
+carries the relief detail for normals, shadows and occlusion. Both grids are
+reduced by NaN-aware block means instead of keeping one pixel out of N
+(aliasing, audit M11). Raster and vectors share one origin (centre of the
+raster extent, metres); the audit's suspected vertical offset of draped
+vectors in geographic CRS was not reproduced, but geographic vectors are
+now centred like the raster.
+
+**D-3D7 — Bugs fixed on the way.** On WebGL 1 (older GPUs, where QtWebEngine
+falls back), one-channel float textures do not exist and the height texture
+read as zero: the relief shading was flat. RGBA float is used there. Every
+command was logged with its full JSON payload (several MB for a DEM); only
+the action name is logged now.
+
+Tested in Chromium (WebGL 2 and forced WebGL 1) on the Sierra Nevada DEM
+(1000 × 867 texture, 334 × 289 mesh), and the panel in headless QGIS.
 
 ## 7. Points to decide
 

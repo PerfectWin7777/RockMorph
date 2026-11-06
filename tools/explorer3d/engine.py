@@ -9,6 +9,8 @@ Authors: RockMorph contributors
 """
 
 import math
+import warnings
+
 import numpy as np  # type: ignore
 from typing import List, Tuple, Optional
 
@@ -93,79 +95,76 @@ class Explorer3DEngine(BaseEngine):
         return {}
     
 
-    def prepare_dem(self, dem_layer: QgsRasterLayer, max_resolution: int = 400) -> ThreeDRaster:
+    def prepare_dem(self, dem_layer: QgsRasterLayer, max_resolution: int = 400,
+                    texture_resolution: int = 1024) -> ThreeDRaster:
         """
-        Reads, processes, and subsamples a DEM to ensure optimal WebGL performance.
-        Converts geographic coordinates (degrees) to metric space (meters) to prevent scaling issues.
+        Prepare a DEM for the WebGL viewer.
+
+        Two grids are produced from the same raster:
+
+        * the MESH grid (at most ``max_resolution`` cells per side), which
+          sets the number of triangles and keeps the scene interactive;
+        * the HEIGHT TEXTURE (at most ``texture_resolution`` per side), read
+          by the fragment shader for per-pixel normals, cast shadows and
+          ambient occlusion. Relief detail therefore no longer depends on the
+          mesh density.
+
+        Both grids are reduced by BLOCK MEANS (NaN-aware) rather than by
+        keeping one pixel out of N: plain striding aliases fine relief into
+        false ridges and moiré (audit M11).
+
+        Coordinates are cell centres, in metres, centred on the centre of the
+        full raster extent: the same origin as ``prepare_vector_layer``, so
+        draped vectors line up. Geographic rasters are converted with the
+        metres-per-degree of the central latitude.
         """
         reader = RasterReader(dem_layer)
-        raw_array = reader.array.copy()  # Shape: (rows, cols)
-        rows, cols = raw_array.shape
-
-        # Determine the downsampling strides
-        stride_y = max(1, int(math.ceil(rows / max_resolution)))
-        stride_x = max(1, int(math.ceil(cols / max_resolution)))
-
-        # Downsample the matrix
-        subsampled = raw_array[::stride_y, ::stride_x]
-        sub_rows, sub_cols = subsampled.shape
-
-        # Retrieve geographic dimensions in original units (could be degrees or meters)
+        raw = np.asarray(reader.array, dtype=np.float64)
+        rows, cols = raw.shape
         gt = reader.geo_transform
-        x_min = gt[0]
-        y_max = gt[3]
+        x_min, y_max = gt[0], gt[3]
+        px, py = reader.pixel_size_x, reader.pixel_size_y
 
-        pixel_size_x = reader.pixel_size_x * stride_x
-        pixel_size_y = reader.pixel_size_y * stride_y
+        mesh, step_x, step_y = _block_mean(raw, max_resolution)
+        texture, _, _ = _block_mean(raw, texture_resolution)
 
-        # Generate base coordinates relative to top-left
-        raw_x_coords = [x_min + i * pixel_size_x for i in range(sub_cols)]
-        raw_y_coords = [y_max - j * pixel_size_y for j in range(sub_rows)]
-
-        # --- GEOGRAPHIC TO METRIC CONVERSION ROADMAP ---
-        # If the CRS is geographic, we approximate degrees to meters at the center latitude [1.13.2]
+        # Metres per CRS unit along x and y.
         if reader.is_geographic:
-            center_lat = (raw_y_coords[0] + raw_y_coords[-1]) / 2.0 if len(raw_y_coords) > 1 else raw_y_coords[0]
-            meters_per_degree_lat = 111320.0
-            meters_per_degree_lon = 111320.0 * math.cos(math.radians(center_lat))
-            
-            # Generate coordinates in meters starting from 0 [1.13.2]
-            x_coords = [i * pixel_size_x * meters_per_degree_lon for i in range(sub_cols)]
-            y_coords = [j * pixel_size_y * meters_per_degree_lat for j in range(sub_rows)]
+            centre_lat = y_max - rows * py / 2.0
+            unit_x = 111320.0 * math.cos(math.radians(centre_lat))
+            unit_y = 111320.0
         else:
-            # If already projected, center coordinates around 0 to avoid large coordinate jitters
-            x_center = (raw_x_coords[0] + raw_x_coords[-1]) / 2.0
-            y_center = (raw_y_coords[0] + raw_y_coords[-1]) / 2.0
-            x_coords = [x - x_center for x in raw_x_coords]
-            y_coords = [y - y_center for y in raw_y_coords]
+            unit_x = unit_y = 1.0
 
-        # Ensure vertical inversion aligns correctly with standard bottom-left WebGL systems
-        # z_values = np.flipud(subsampled).tolist()
-        z_values = subsampled.tolist()
-        # y_coords = y_coords[::-1]
+        # Block centres, relative to the centre of the full extent.
+        n_rows, n_cols = mesh.shape
+        x_centre = cols * px / 2.0
+        y_centre = rows * py / 2.0
+        x_coords = [((i + 0.5) * step_x * px - x_centre) * unit_x for i in range(n_cols)]
+        y_coords = [(y_centre - (j + 0.5) * step_y * py) * unit_y for j in range(n_rows)]
 
-        # Compute valid elevation stats, filtering out NaNs
-        valid_values = subsampled[~np.isnan(subsampled)]
-        if valid_values.size > 0:
-            z_min = float(np.min(valid_values))
-            z_max = float(np.max(valid_values))
-        else:
-            z_min, z_max = 0.0, 0.0
+        valid = mesh[np.isfinite(mesh)]
+        z_min = float(valid.min()) if valid.size else 0.0
+        z_max = float(valid.max()) if valid.size else 0.0
 
         return ThreeDRaster(
             element_id=f"dem_{dem_layer.id()}",
             element_type="raster",
-            width=sub_cols,
-            height=sub_rows,
+            width=n_cols,
+            height=n_rows,
             x_coords=x_coords,
             y_coords=y_coords,
-            z_values=z_values,
+            z_values=_json_grid(mesh, 2),
             z_min=z_min,
             z_max=z_max,
             nodata_value=reader.nodata_value,
-            label=dem_layer.name()  # Propagate the clean QGIS layer name
+            label=dem_layer.name(),
+            texture_width=int(texture.shape[1]),
+            texture_height=int(texture.shape[0]),
+            # Decimetre precision is far below DEM accuracy and halves the
+            # size of the JSON sent to the viewer.
+            texture_values=_json_grid(texture, 1),
         )
-    
 
     def prepare_vector_layer(
         self,
@@ -192,14 +191,13 @@ class Explorer3DEngine(BaseEngine):
         
         is_geographic = reader.is_geographic
         
+        # Same origin and units as prepare_dem: metres from the centre of
+        # the raster extent (geographic rasters use the central latitude).
+        x_center = (x_min + x_max) / 2.0
+        y_center = (y_min + y_max) / 2.0
         if is_geographic:
-            raw_y_coords = [y_max - j * pixel_size_y for j in range(rows)]
-            center_lat = (raw_y_coords[0] + raw_y_coords[-1]) / 2.0 if len(raw_y_coords) > 1 else raw_y_coords[0]
             meters_per_degree_lat = 111320.0
-            meters_per_degree_lon = 111320.0 * math.cos(math.radians(center_lat))
-        else:
-            x_center = (x_min + x_max) / 2.0
-            y_center = (y_min + y_max) / 2.0
+            meters_per_degree_lon = 111320.0 * math.cos(math.radians(y_center))
 
         # Retrieve distinct field indices for color and size variables
         color_attr_idx = vector_layer.fields().indexOf(color_attribute) if color_attribute else -1
@@ -271,8 +269,8 @@ class Explorer3DEngine(BaseEngine):
                         z_val = 0.0
 
                     if is_geographic:
-                        x_local = (pt.x() - x_min) * meters_per_degree_lon
-                        y_local = (pt.y() - y_min) * meters_per_degree_lat
+                        x_local = (pt.x() - x_center) * meters_per_degree_lon
+                        y_local = (pt.y() - y_center) * meters_per_degree_lat
                     else:
                         x_local = pt.x() - x_center
                         y_local = pt.y() - y_center
@@ -303,3 +301,29 @@ class Explorer3DEngine(BaseEngine):
                 ))
 
         return features
+
+
+def _block_mean(array: np.ndarray, max_size: int):
+    """
+    Reduce ``array`` so that no side exceeds ``max_size``, averaging square
+    blocks of cells and ignoring NaN (a block that is entirely NaN stays
+    NaN). Returns (reduced array, block width, block height) in cells.
+    """
+    rows, cols = array.shape
+    step = max(1, int(math.ceil(max(rows, cols) / float(max_size))))
+    if step == 1:
+        return array.copy(), 1, 1
+    pad_r = (-rows) % step
+    pad_c = (-cols) % step
+    padded = np.pad(array, ((0, pad_r), (0, pad_c)), constant_values=np.nan)
+    blocks = padded.reshape(padded.shape[0] // step, step, padded.shape[1] // step, step)
+    with np.errstate(invalid="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)  # all-NaN blocks
+        reduced = np.nanmean(blocks, axis=(1, 3))
+    return reduced, step, step
+
+
+def _json_grid(array: np.ndarray, decimals: int) -> list:
+    """Nested lists with NaN as None (strict JSON), rounded to ``decimals``."""
+    rounded = np.round(array, decimals)
+    return [[None if not np.isfinite(v) else float(v) for v in row] for row in rounded]
