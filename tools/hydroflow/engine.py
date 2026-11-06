@@ -9,6 +9,8 @@ Authors: RockMorph contributors / Tony winter
 
 import os
 import math
+from collections import deque
+
 import numpy as np  # type: ignore
 from typing import Dict, Any, List, Tuple
 
@@ -245,13 +247,16 @@ class HydroFlowEngine(BaseEngine):
         da.setEllipsoid('WGS84')
 
         # ── Step A: Build Nodes & Edges registries ──
-        # Nodes mapped: coordinate tuple (rounded to 3 decimals) -> unique integer ID
+        # Nodes: segment ends rounded to ~1 mm, i.e. 3 decimals in metres but
+        # 8 in degrees (3 decimals of a degree is ~100 m and merged distinct
+        # confluences in geographic CRS, audit M13).
+        decimals = 8 if stream_layer.crs().isGeographic() else 3
         nodes_map: Dict[Tuple[float, float], int] = {}
         node_counter = 0
 
         def get_node_id(pt: QgsPointXY) -> int:
             nonlocal node_counter
-            key = (round(pt.x(), 3), round(pt.y(), 3))
+            key = (round(pt.x(), decimals), round(pt.y(), decimals))
             if key not in nodes_map:
                 nodes_map[key] = node_counter
                 node_counter += 1
@@ -275,10 +280,10 @@ class HydroFlowEngine(BaseEngine):
             z_start = reader.sample_at(pt_start.x(), pt_start.y())
             z_end = reader.sample_at(pt_end.x(), pt_end.y())
             
-            if np.isnan(z_start): z_start = -9999.0
-            if np.isnan(z_end): z_end = -9999.0
-
-            if z_start < z_end:
+            # Keep the digitised direction when an end has no elevation
+            # (comparing with a -9999 placeholder could flip a segment).
+            known = not (np.isnan(z_start) or np.isnan(z_end))
+            if known and z_start < z_end:
                 # Reverse points to ensure downstream orientation
                 vertices = vertices[::-1]
                 pt_start, pt_end = pt_end, pt_start
@@ -287,8 +292,11 @@ class HydroFlowEngine(BaseEngine):
             u_id = get_node_id(pt_start) # Upstream node
             v_id = get_node_id(pt_end)   # Downstream node
 
-            length_m = da.measureLine(pt_start, pt_end)
-            slope_mean = abs(z_start - z_end) / length_m if length_m > 0 else 0.0
+            # Length ALONG the segment (the straight start-end chord
+            # underestimated sinuous reaches and overestimated their slope).
+            length_m = da.measureLength(geom)
+            drop = abs(z_start - z_end) if known else 0.0
+            slope_mean = drop / length_m if length_m > 0 else 0.0
 
             edges.append({
                 "feat_id": feat.id(),
@@ -312,62 +320,60 @@ class HydroFlowEngine(BaseEngine):
             outgoing[edge["u"]].append(edge_idx)
 
         # ── Step C: Compute Strahler Order & Shreve Magnitude ──
-        # Process edges iteratively from headwaters downstream
-        computed_edges = set()
-        
-        while len(computed_edges) < len(edges):
-            progress_made = False
-            for edge_idx, edge in enumerate(edges):
-                if edge_idx in computed_edges:
-                    continue
+        # Kahn's topological order over the edges: an edge is processed once
+        # all edges flowing into its upstream node are done. Each edge is
+        # visited once (O(E)); the former loop rescanned every edge at each
+        # pass (O(E²), audit M13).
+        waiting = [len(incoming[edge["u"]]) for edge in edges]
+        ready = deque(i for i, count in enumerate(waiting) if count == 0)
+        while ready:
+            edge_idx = ready.popleft()
+            edge = edges[edge_idx]
+            upstream_edges = incoming[edge["u"]]
+            if not upstream_edges:
+                edge["strahler"] = 1
+                edge["shreve"] = 1
+            else:
+                upstream_strahlers = [edges[up]["strahler"] for up in upstream_edges]
+                max_s = max(upstream_strahlers)
+                # Two or more tributaries of the highest order raise it by one.
+                edge["strahler"] = max_s + 1 if upstream_strahlers.count(max_s) >= 2 else max_s
+                edge["shreve"] = sum(edges[up]["shreve"] for up in upstream_edges)
+            for down_idx in outgoing[edge["v"]]:
+                waiting[down_idx] -= 1
+                if waiting[down_idx] == 0:
+                    ready.append(down_idx)
 
-                u_node = edge["u"]
-                upstream_edges = incoming[u_node]
-
-                # Headwater check: no upstream rivers flowing into node 'u'
-                if not upstream_edges:
-                    edge["strahler"] = 1
-                    edge["shreve"] = 1
-                    computed_edges.add(edge_idx)
-                    progress_made = True
-                else:
-                    # Check if all upstream contributors are already computed
-                    if all(up in computed_edges for up in upstream_edges):
-                        upstream_strahlers = [edges[up]["strahler"] for up in upstream_edges]
-                        upstream_shreves = [edges[up]["shreve"] for up in upstream_edges]
-
-                        # Strahler order logic [1.13.2]
-                        max_s = max(upstream_strahlers)
-                        if upstream_strahlers.count(max_s) >= 2:
-                            edge["strahler"] = max_s + 1
-                        else:
-                            edge["strahler"] = max_s
-
-                        # Shreve magnitude logic (additive) [1.13.2]
-                        edge["shreve"] = sum(upstream_shreves)
-
-                        computed_edges.add(edge_idx)
-                        progress_made = True
-
-            # Safety guard to prevent infinite loops on circular datasets
-            if not progress_made:
-                for edge_idx, edge in enumerate(edges):
-                    if edge_idx not in computed_edges:
-                        edge["strahler"] = 1
-                        edge["shreve"] = 1
-                        computed_edges.add(edge_idx)
-                break
+        # Edges never reached belong to cycles (digitising or orientation
+        # errors): they get order 1 so the layer stays complete.
+        for edge in edges:
+            if edge["strahler"] is None:
+                edge["strahler"] = 1
+                edge["shreve"] = 1
 
         # ── Step D: Compute Horton Order (Branch extension) ──
-        # Horton ordering assigns the trunk stream's Strahler order back to its main source
+        # Horton ordering gives the trunk stream's order to its whole length
+        # up to its main source: from every outlet, walk upstream along the
+        # highest-order (then longest) branch. Iterative, so very long trunks
+        # cannot exceed Python's recursion limit.
         for edge in edges:
             edge["horton"] = edge["strahler"]
 
-        # Traversal from outlets (nodes with no downstream output) upstream
         outlets = [n_id for n_id, out_list in outgoing.items() if not out_list]
         for outlet_node in outlets:
             for root_edge_idx in incoming[outlet_node]:
-                self._trace_horton_upstream(root_edge_idx, edges, incoming)
+                current = root_edge_idx
+                visited = {current}
+                while True:
+                    candidates = incoming[edges[current]["u"]]
+                    if not candidates:
+                        break
+                    best = max(candidates, key=lambda idx: (edges[idx]["strahler"], edges[idx]["length_m"]))
+                    if best in visited:
+                        break
+                    edges[best]["horton"] = edges[current]["horton"]
+                    visited.add(best)
+                    current = best
 
         # ── Step E: Assemble output QgsVectorLayer ──
         output_fields = QgsFields()
@@ -419,27 +425,3 @@ class HydroFlowEngine(BaseEngine):
 
 
         return ordered_layer
-
-    def _trace_horton_upstream(self, current_idx: int, edges: list, incoming: dict):
-        """
-        Helper to recursively propagate downstream Horton order up through the trunk stream [1.13.2].
-        """
-        current_edge = edges[current_idx]
-        current_horton = current_edge["horton"]
-        u_node = current_edge["u"]
-        upstream_candidates = incoming[u_node]
-
-        if not upstream_candidates:
-            return
-
-        # Find the main upstream trunk candidate (one with the largest Strahler order)
-        best_up_idx = max(
-            upstream_candidates,
-            key=lambda idx: (edges[idx]["strahler"], edges[idx]["length_m"])
-        )
-
-        # Extend Horton order to the main upstream branch
-        edges[best_up_idx]["horton"] = current_horton
-
-        # Recurse further upstream
-        self._trace_horton_upstream(best_up_idx, edges, incoming)
