@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mountain Front Sinuosity (Smf) - RockMorph Documentation</title>
+    <!-- Relative links for offline QGIS execution and online GitHub Pages -->
+    <link rel="stylesheet" href="css/style.css">
+
+    <!-- Local MathJax engine for offline rendering -->
+    <script id="MathJax-script" async src="../web/js/tex-mml-chtml.js"></script>
+</head>
+
+<body>
+
+    <div class="app-container">
+
+        <!-- ── COLUMN 1: LEFT SIDEBAR NAVIGATION ── -->
+        <aside class="sidebar">
+            <h3 style="margin-bottom: 20px; color: var(--accent-color);">⛰️ RockMorph Docs</h3>
+
+            <p
+                style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">
+                General</p>
+            <ul style="list-style: none; margin-bottom: 24px;">
+                <li style="margin-bottom: 6px;"><a href="index.html">Introduction</a></li>
+            </ul>
+
+            <p
+                style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">
+                Fluvial Geomorphology</p>
+            <ul style="list-style: none; margin-bottom: 24px;">
+                <li style="margin-bottom: 6px;"><a href="ksn_profile.html">ksn Profile</a></li>
+                <li style="margin-bottom: 6px;"><a href="smf.html">Mountain Front (Smf)</a></li>
+                <li style="margin-bottom: 6px;"><a href="ncp.html">Normalized Profile (NCP)</a></li>
+            </ul>
+        </aside>
+
+        <!-- ── COLUMN 2: MAIN ACADEMIC BODY ── -->
+        <main class="content-body">
+
+            <h1>Mountain Front Sinuosity (\(S_{mf}\))</h1>
+            <p style="font-family: var(--font-mono); font-size: 0.85em; color: var(--text-muted); margin-bottom: 24px;">
+                Module: rockmorph.tools.smf.SMFEngine
+            </p>
+
+            <section>
+                <h2>Description</h2>
+                <p>
+                    Mountain Front Sinuosity (\(S_{mf}\)) is a quantitative morphometric index used in tectonic
+                    geomorphology to evaluate the balance between active tectonic uplift and erosional slope degradation
+                    along mountain range fronts (Bull & McFadden, 1977; Keller & Pinter, 2002).
+                </p>
+                <p>
+                    Tectonically active fronts associated with normal or thrust faulting are regularly refreshed by
+                    displacement, yielding straight, low-sinuosity scarps. Conversely, when tectonic uplift slows or
+                    ceases, surface runoff, stream incision, and mass wasting processes progressively dissect the scarp,
+                    pushing the front landward and generating a sinuous, irregular front.
+                </p>
+
+                <!-- PLACEHOLDER FOR SCHEMATIC ASSET -->
+                <div
+                    style="border: 1px dashed var(--border-color); padding: 12px; background-color: var(--bg-sidebar); border-radius: 6px; margin: 20px 0; text-align: center;">
+                    <span style="font-size: 0.9em; color: var(--text-muted);">📷 [Asset Placeholder:
+                        smf_concept_diagram.png]</span>
+                </div>
+            </section>
+
+            <section>
+                <h2>Mathematical Formulation</h2>
+                <p>
+                    The index is defined as the ratio of the sinuous length of the mountain front to its straight-line
+                    baseline:
+                </p>
+
+                <div class="math-block">
+                    \[S_{mf} = \frac{L_f}{L_r}\]
+                </div>
+
+                <p>Where:</p>
+                <ul style="margin-left: 24px; margin-bottom: 16px;">
+                    <li><strong>\(L_f\)</strong>: The sinuous length of the mountain-plain transition boundary (measured
+                        geodesically on the WGS84 ellipsoid).</li>
+                    <li><strong>\(L_r\)</strong>: The straight-line length of the baseline (representing the underlying
+                        fault strike or structural trend).</li>
+                </ul>
+
+                <h3>Baseline Estimation Options (\(L_r\))</h3>
+                <p>
+                    Standard geomorphological workflows rely on a simple endpoint-to-endpoint distance. However, for
+                    highly sinuous or curved fronts, this approach may underestimate the true baseline length. RockMorph
+                    supports two modes:
+                </p>
+                <ol style="margin-left: 24px; margin-bottom: 16px;">
+                    <li><strong>Direct Endpoints:</strong> Strictly measures the geodesic distance between the first and
+                        last vertices of the front.</li>
+                    <li><strong>PCA Axis (Structural Trend):</strong> Computes the Principal Component Analysis
+                        (covariance matrix) of all vertices' coordinates. The first principal component (PC1) represents
+                        the dominant structural strike, and \(L_r\) is determined by projecting the extreme vertices
+                        along this axis.</li>
+                </ol>
+
+                <h3>Tectonic Activity Classification</h3>
+                <p>
+                    Based on empirical works (Rockwell et al., 1985; Silva et al., 2003), range fronts are classified
+                    into three levels of relative tectonic activity:
+                </p>
+                <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.95em;">
+                    <thead>
+                        <tr
+                            style="border-bottom: 2px solid var(--border-color); text-align: left; background-color: var(--bg-sidebar);">
+                            <th style="padding: 10px;">Index Range</th>
+                            <th style="padding: 10px;">Tectonic Class</th>
+                            <th style="padding: 10px;">Geomorphic Interpretation</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 10px;">\(S_{mf} < 1.4\)</td>
+                            <td style="padding: 10px; font-weight: bold; color: #e74c3c;">Class 1 (Active)</td>
+                            <td style="padding: 10px;">Highly active structures. High uplift rates, minimal erosional
+                                embayment.</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 10px;">\(1.4 \le S_{mf} < 1.8\)</td>
+                            <td style="padding: 10px; font-weight: bold; color: #e67e22;">Class 2 (Moderate)</td>
+                            <td style="padding: 10px;">Moderately active. Transition phase with concurrent uplift and
+                                incision.</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 10px;">\(S_{mf} \ge 1.8\)</td>
+                            <td style="padding: 10px; font-weight: bold; color: #2ec86b;">Class 3 (Inactive)</td>
+                            <td style="padding: 10px;">Inactive, stable, or highly eroded fronts. Erosional processes
+                                dominate.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section>
+                <h2>Methodology & MFSD Algorithm</h2>
+                <p>
+                    RockMorph allows manual tracing of range fronts, but also features the <strong>Mountain-Flank
+                        Skeleton Detector (MFSD)</strong>. This automated detector ensures reproducible, objective
+                    results across large regional DEM coverages, preventing human digitization bias.
+                </p>
+
+                <h3>Algorithmic Pipeline:</h3>
+                <ol style="margin-left: 24px; margin-bottom: 16px;">
+                    <li style="margin-bottom: 8px;">
+                        <strong>Nodata Repair:</strong> Internal gaps and edges are filled using nearest-valid Euclidean
+                        distance transform mapping. This guarantees that the scarp detection algorithm cannot track the
+                        artifact borders of the parent mosaic.
+                    </li>
+                    <li style="margin-bottom: 8px;">
+                        <strong>Relief and Slope Extraction:</strong> Slope percentage and regional relief (maximum
+                        elevation minus minimum elevation in a moving spatial window, e.g. 1500m) are calculated. A
+                        pixel is initially classified as a mountain flank if both values exceed the custom thresholds:
+                        \[\text{Flank Pixel} \iff (\text{Slope} \ge \text{Threshold}_{\text{slope}}) \land
+                        (\text{Relief} \ge \text{Threshold}_{\text{relief}})\]
+                    </li>
+                    <li style="margin-bottom: 8px;">
+                        <strong>Erosion Buffer:</strong> To completely eliminate raster-border tracking, a safety buffer
+                        (erosion step) is applied near outer nodata pixels.
+                    </li>
+                    <li style="margin-bottom: 8px;">
+                        <strong>Morphological Cleaning:</strong> Mathematical morphology operators (closing using
+                        disk-shaped structuring elements sized in real ground meters, and opening) close valley gaps and
+                        eliminate isolated pixel noise.
+                    </li>
+                    <li style="margin-bottom: 8px;">
+                        <strong>Skeletal Tracing:</strong> The clean binary massif mask is reduced to 1-pixel-thick
+                        centerlines using skeletonization. Connected component graphs are constructed. The algorithm
+                        identifies closed loops (representing isolated massifs) and traces their perimeters, while open
+                        chains (linear fronts) are traced using a double-BFS (Breadth-First Search) graph diameter to
+                        extract the longest simple path.
+                    </li>
+                    <li style="margin-bottom: 8px;">
+                        <strong>Fragment Collinear Merging:</strong> Nearby segment endpoints are checked for proximity
+                        and collinearity. If their gap distance is within \( \text{Max Gap} \) and their angle is less
+                        than \( \text{Max Angle} \), they are merged into unified geological range fronts.
+                    </li>
+                </ol>
+            </section>
+
+            <section>
+                <h2>Tectonic Classification & Output Symbology</h2>
+                <p>
+                    When computation completes, RockMorph automatically styles the output vector range fronts using a professional
+                    categorized renderer on the QGIS Map Canvas. The fronts are colored and styled strictly based on their
+                    calculated \(S_{mf}\) value to reflect relative tectonic activity:
+                </p>
+            
+                <table class="doc-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 20%;">Tectonic Class</th>
+                            <th style="width: 15%;">Default Color</th>
+                            <th style="width: 25%;">Quantitative Threshold</th>
+                            <th style="width: 40%;">Geomorphic Field Interpretation</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="param-name" style="color: #e74c3c;">Class 1 (Active)</td>
+                            <td><strong>Red</strong><br>(#e74c3c)</td>
+                            <td>\(S_{mf} < 1.4\)</td>
+                            <td class="param-desc">
+                                Highly active range fronts. Associated with high slip rates, rapid tectonic uplift, and undeveloped
+                                alluvial fans. The front remains straight, pristine, and aligned with the active fault line.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="param-name" style="color: #e67e22;">Class 2 (Moderate)</td>
+                            <td><strong>Orange</strong><br>(#e67e22)</td>
+                            <td>\(1.4 \le S_{mf} < 1.8\)</td>
+                            <td class="param-desc">
+                                Moderately active. Represents a transitional phase where tectonic uplift is balanced or slightly
+                                outpaced by stream erosion, resulting in initial structural embayments.
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="param-name" style="color: #2ec86b;">Class 3 (Inactive)</td>
+                            <td><strong>Green</strong><br>(#2ec86b)</td>
+                            <td>\(S_{mf} \ge 1.8\)</td>
+                            <td class="param-desc">
+                                Inactive or stable ranges. Tectonic activity has ceased. Surface processes (erosion, mass wasting)
+                                dominate, creating deep structural valleys and highly sinuous front geometries.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+            
+            <section>
+                <h2>Parameters Reference & Field Guide</h2>
+                <p>
+                    Choosing the correct thresholds is critical to obtaining geomorphologically meaningful range fronts. Below is an
+                    advanced guide on how to tune each parameter depending on your regional tectonic context and DEM resolution.
+                </p>
+            
+                <table class="doc-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 18%;">Parameter</th>
+                            <th style="width: 15%;">Type [Default]</th>
+                            <th style="width: 33%;">Geomorphological Implication</th>
+                            <th style="width: 34%;">Tuning & Regional Context</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- DEM LAYER -->
+                        <tr>
+                            <td class="param-name">dem_layer</td>
+                            <td class="param-type">QgsRasterLayer<br>[Mandatory]</td>
+                            <td class="param-desc">
+                                The primary Digital Elevation Model. Controls the spatial resolution of slope and relief derivative
+                                matrices.
+                            </td>
+                            <td class="param-desc">
+                                <strong>Resolution advice:</strong> 10m to 30m resolution (e.g., Cop-30, SRTM) is optimal for
+                                regional fronts. Avoid sub-metric drone DEMs unless aggressively downsampled, as micro-topography
+                                (soil creep, vegetation) acts as high-frequency noise.
+                            </td>
+                        </tr>
+            
+                        <!-- SCARP LAYER -->
+                        <tr>
+                            <td class="param-name">scarp_layer</td>
+                            <td class="param-type">QgsVectorLayer<br>[None]</td>
+                            <td class="param-desc">
+                                Optional line vector layer representing pre-mapped ranges. If provided, the automated detection
+                                engine is bypassed.
+                            </td>
+                            <td class="param-desc">
+                                Perfect for comparing automated results with structural range fronts mapped by hand in the field or
+                                digitized from classic structural geology papers.
+                            </td>
+                        </tr>
+            
+                        <!-- UNIT FIELD -->
+                        <tr>
+                            <td class="param-name">unit_field</td>
+                            <td class="param-type">String<br>[None]</td>
+                            <td class="param-desc">
+                                Optional attribute column in the scarp layer specifying geomorphological or structural range units.
+                            </td>
+                            <td class="param-desc">
+                                Used to group outputs by tectonic structures in tables and exports. If provided, the QGIS layer
+                                legend will allow you to quickly filter and analyze specific fault segments individually.
+                            </td>
+                        </tr>
+            
+                        <!-- BASELINE METHOD -->
+                        <tr>
+                            <td class="param-name">baseline_method</td>
+                            <td class="param-type">String<br>["endpoints"]</td>
+                            <td class="param-desc">
+                                Determines the straight-line baseline (\(L_r\)) calculation method used as the denominator for
+                                \(S_{mf}\).
+                            </td>
+                            <td class="param-desc">
+                                Use <strong>"endpoints"</strong> for simple, straight normal-fault scarps. Switch to
+                                <strong>"pca"</strong> for complex, highly curved, folded thrust systems where range-front
+                                orientations change along strike; PCA calculates the dominant structural trend more objectively.
+                            </td>
+                        </tr>
+            
+                        <!-- MIN SLOPE PCT -->
+                        <tr>
+                            <td class="param-name">min_slope_pct</td>
+                            <td class="param-type">Float<br>[15.0 %]</td>
+                            <td class="param-desc">
+                                Sets the lower slope gradient limit to classify range-front cells. Filters out flat sedimentary
+                                plains from massifs.
+                            </td>
+                            <td class="param-desc">
+                                <strong>High value (> 25%):</strong> Restricts tracing to steep, young, highly active scarps. Breaks
+                                continuity in older, degraded ranges.<br>
+                                <strong>Low value (< 10%):</strong> Captures degraded foothills or gentle slopes, but increases
+                                        noise from alluvial fans or old landslide deposits.
+                            </td>
+                        </tr>
+            
+                        <!-- MIN RELIEF M -->
+                        <tr>
+                            <td class="param-name">min_relief_m</td>
+                            <td class="param-type">Float<br>[100.0 m]</td>
+                            <td class="param-desc">
+                                Establishes the minimum regional height difference (maximum - minimum elevation) required to
+                                validate a massif structure.
+                            </td>
+                            <td class="param-desc">
+                                <strong>High-relief regions (Alps, Himalayas):</strong> Increase to 250m–500m to isolate major
+                                mountain ranges and ignore moderate internal ridges.<br>
+                                <strong>Low-relief rifts (Intracontinental):</strong> Decrease to 50m to capture subtle tectonic
+                                fault scarps without triggering false-positives on flat terrains.
+                            </td>
+                        </tr>
+            
+                        <!-- RELIEF WINDOW M -->
+                        <tr>
+                            <td class="param-name">relief_window_m</td>
+                            <td class="param-type">Float<br>[1500.0 m]</td>
+                            <td class="param-desc">
+                                Specifies the diameter of the moving window used to analyze elevation differences.
+                            </td>
+                            <td class="param-desc">
+                                This must match the expected width of your range's foot slope transition. Too large a window (e.g.,
+                                > 3000m) smooths out and generalizes the local step. Too small a window (e.g., < 500m) fails to
+                                    capture macro-structural relief and gets stuck in local gullies. </td>
+                        </tr>
+            
+                        <!-- MAX GAP M -->
+                        <tr>
+                            <td class="param-name">max_gap_m</td>
+                            <td class="param-type">Float<br>[1500.0 m]</td>
+                            <td class="param-desc">
+                                The maximum spatial gap (in ground meters) the algorithm is allowed to bridge to merge adjacent
+                                scarp fragments.
+                            </td>
+                            <td class="param-desc">
+                                Highly dissected range fronts are frequently cut by wide transverse river valleys (gorges). Increase
+                                this value to reconnect segments across valleys. However, setting this too high may falsely bridge
+                                independent range structures across sedimentary basins.
+                            </td>
+                        </tr>
+            
+                        <!-- MAX MERGE ANGLE DEG -->
+                        <tr>
+                            <td class="param-name">max_merge_angle_deg</td>
+                            <td class="param-type">Float<br>[45.0 °]</td>
+                            <td class="param-desc">
+                                The maximum angular strike deviation allowed between two neighboring scarp fragments to merge them.
+                            </td>
+                            <td class="param-desc">
+                                <strong>Strike-slip or planar faults:</strong> Set to low values (15°–25°) to restrict merging to
+                                straight, continuous scarps.<br>
+                                <strong>Fold-and-thrust belts:</strong> Increase to 45°–60° to allow the algorithm to trace highly
+                                sinuous, curved, or scalloped fronts.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <section>
+                <h2>Academic References</h2>
+                <ul class="references-list">
+                    <li>Bull, W. B., & McFadden, L. D. (1977). Tectonic geomorphology north and south of the Garlock
+                        fault, California. <i>Geomorphology in Arid Regions</i>, 115-138.</li>
+                    <li>Keller, E. A., & Pinter, N. (2002). <i>Active Tectonics: Earthquakes, Uplift, and Landscape</i>
+                        (2nd ed.). Prentice Hall, New Jersey.</li>
+                    <li>Rockwell, T. K., Keller, E. A., & Dembroff, G. R. (1985). Tectonic geomorphology of the Ventura
+                        Basin, California. <i>Tectonic Geomorphology</i>, 229-259.</li>
+                    <li>Silva, P. G., Goy, J. L., Zazo, C., & Bardají, T. (2003). Fault activity and geomorphic
+                        thresholds along the active mountain fronts of the Betic Cordillera, SE Spain.
+                        <i>Geomorphology</i>, 50(1-3), 25-53.</li>
+                </ul>
+            </section>
+
+        </main>
+
+        <!-- ── COLUMN 3: RIGHT SCROLLSPY ── -->
+        <aside class="on-this-page">
+            <h4 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 16px;">On
+                this page</h4>
+            <nav class="on-this-page-menu">
+                <!-- Dynamic headings will be auto-generated here in real-time -->
+            </nav>
+        </aside>
+
+    </div>
+
+    <!-- Behavior Controller -->
+    <script src="js/doc_behavior.js"></script>
+</body>
+
+</html>

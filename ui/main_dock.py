@@ -15,12 +15,16 @@ Authors: RockMorph contributors / Tony
 """
 
 import importlib
-
+import os
 from qgis.PyQt.QtWidgets import (  # type: ignore
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLabel, QLineEdit, QCompleter, QAction, QMenu, QPushButton
+    QLabel, QLineEdit, QCompleter, QAction, QMenu,
+    QPushButton, QToolButton, QFrame
 )
-from qgis.PyQt.QtCore import Qt, QCoreApplication, QStringListModel  # type: ignore
+from qgis.PyQt.QtGui import (  # type: ignore
+    QDesktopServices
+)
+from qgis.PyQt.QtCore import Qt, QCoreApplication, QStringListModel, QUrl   # type: ignore
 
 from ..base.registry import TOOL_REGISTRY, get_all_tools
 
@@ -63,31 +67,31 @@ class RockMorphDock(QDockWidget):
 
         # ── HEADER BAR : Title/Switcher + Dynamic Search ──────────────────
         header = QWidget()
-        header.setFixedHeight(44)
-        header.setStyleSheet("background-color: #2b2b2b;")
+        # header.setFixedHeight(44)
+        # header.setStyleSheet("background-color: #2b2b2b;")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(10, 0, 10, 0)
+        # header_layout.setContentsMargins(10, 0, 10, 0)
 
         # 🔄 DYNAMIC SWITCHER BUTTON (Replaces static QLabel)
         self.title_btn = QPushButton("⛰  RockMorph ▾")
-        self.title_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #ffffff;
-                border: none;
-                font-weight: bold;
-                font-size: 13px;
-                padding: 4px 8px;
-                text-align: left;
-            }
-            QPushButton:hover {
-                background-color: #3d3d3d;
-                border-radius: 4px;
-            }
-            QPushButton::menu-indicator {
-                image: none; /* Hide default arrow to handle layout with tr() custom arrow */
-            }
-        """)
+        # self.title_btn.setStyleSheet("""
+        #     QPushButton {
+        #         background-color: transparent;
+        #         color: #ffffff;
+        #         border: none;
+        #         font-weight: bold;
+        #         font-size: 13px;
+        #         padding: 4px 8px;
+        #         text-align: left;
+        #     }
+        #     QPushButton:hover {
+        #         background-color: #3d3d3d;
+        #         border-radius: 4px;
+        #     }
+        #     QPushButton::menu-indicator {
+        #         image: none; /* Hide default arrow to handle layout with tr() custom arrow */
+        #     }
+        # """)
 
         # Switcher menu styling (dark theme matching QGIS theme palette)
         self.switcher_menu = QMenu(self)
@@ -115,22 +119,22 @@ class RockMorphDock(QDockWidget):
         # Quick Search Bar (QLineEdit)
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText(tr("🔍 Quick search..."))
-        self.search_bar.setFixedWidth(180)
-        self.search_bar.setStyleSheet("""
-            QLineEdit {
-                background-color: #3a3a3a;
-                color: #fff;
-                border: 1px solid #555;
-                border-radius: 4px;
-                padding: 2px 8px;
-                font-size: 11px;
-            }
-            QLineEdit:focus {
-                border-color: #3a7fc1;
-            }
-        """)
+        self.search_bar.setMaximumWidth(180)
+        # self.search_bar.setStyleSheet("""
+        #     QLineEdit {
+        #         background-color: #3a3a3a;
+        #         color: #fff;
+        #         border: 1px solid #555;
+        #         border-radius: 4px;
+        #         padding: 2px 8px;
+        #         font-size: 11px;
+        #     }
+        #     QLineEdit:focus {
+        #         border-color: #3a7fc1;
+        #     }
+        # """)
         
-        # Setup QCompleter for instant tool autocomplete
+        # Autocomplete setup
         tool_names = [info["name"] for info in self._flat_tools.values()]
         self.completer = QCompleter(tool_names, self.search_bar)
         self.completer.setCaseSensitivity(Qt.CaseInsensitive)
@@ -138,8 +142,36 @@ class RockMorphDock(QDockWidget):
         self.completer.activated[str].connect(self._on_search_selected)
         self.search_bar.setCompleter(self.completer)
 
+        # Bouton d'aide minimaliste et discret à gauche de la barre de recherche
+        self.help_btn = QToolButton()
+        self.help_btn.setText("?")
+        self.help_btn.setToolTip(tr("Open Help Documentation"))
+        self.help_btn.setFixedSize(22, 22) # Format compact et discret
+        # self.help_btn.setStyleSheet("""
+        #     QToolButton {
+        #         background-color: #3a3a3a;
+        #         color: #ffffff;
+        #         border: 1px solid #555555;
+        #         border-radius: 4px;
+        #         font-weight: bold;
+        #         font-size: 11px;
+        #     }
+        #     QToolButton:hover {
+        #         background-color: #4a4a4a;
+        #         border-color: #3a7fc1;
+        #     }
+        # """)
+        self.help_btn.clicked.connect(self._on_help_clicked)
+
+        # Intégration dans le layout d'en-tête
+        header_layout.addWidget(self.help_btn)
         header_layout.addWidget(self.search_bar)
         root.addWidget(header)
+        # root.setSpacing(20)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        root.addWidget(sep)
 
         # ── TOOL CONTAINER (Active Tool UI is loaded here) ───────────────
         self.panel_container = QWidget()
@@ -241,3 +273,32 @@ class RockMorphDock(QDockWidget):
     def unload(self):
         """Cleans up the dynamically registered top menus on plugin unload."""
         self.iface.pluginMenu().removeAction(self.qgis_menu.menuAction())
+
+
+
+    def _on_help_clicked(self):
+        """Triggers the offline help system for the currently active tool."""
+        if self._active_tool_id:
+            self._open_help(self._active_tool_id)
+        else:
+            # Fallback to the main documentation index
+            self._open_help("index")
+
+    def _open_help(self, page_name: str) -> None:
+        """Opens the targeted documentation page from the root docs/ directory."""
+        
+        # Resolve the plugin's root directory from ui/main_dock.py
+        plugin_root = os.path.dirname(os.path.dirname(__file__))
+        doc_path = os.path.join(plugin_root, "docs", f"{page_name}.html")
+        
+        # Fallback to index.html if the specific tool doc is missing
+        if not os.path.exists(doc_path):
+            doc_path = os.path.join(plugin_root, "docs", "index.html")
+            
+        if os.path.exists(doc_path):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(doc_path))
+        else:
+            self.iface.messageBar().pushWarning(
+                "RockMorph", 
+                tr(f"Help documentation file not found: docs/{page_name}.html")
+            )
