@@ -137,6 +137,8 @@ Geomorphology & fluvial process modeling
 """
 
 import math
+import os
+
 import numpy as np  # type: ignore
 from numpy.lib.stride_tricks import sliding_window_view  # type: ignore
 from qgis.core import (  # type: ignore
@@ -2089,9 +2091,13 @@ class FluvialEngine(BaseEngine):
 
         dem_path = dem_layer.source()
 
-        # Cache hit
-        if dem_path in self._fac_cache:
-            return self._fac_cache[dem_path], True, None
+        # Cache hit. The cache holds the PATH of the accumulation raster, and
+        # a new layer is opened for each run: a layer object created in a
+        # previous worker thread is unusable once that thread has ended (the
+        # second run returned NaN pixel sizes for every basin).
+        cached = self._fac_cache.get(dem_path)
+        if cached and os.path.exists(cached):
+            return QgsRasterLayer(cached, "fac_auto", "gdal"), True, None
 
         # Compute via GRASS r.watershed
         if progress_cb:
@@ -2118,11 +2124,9 @@ class FluvialEngine(BaseEngine):
             ):
                 raise RuntimeError("r.watershed returned invalid layer")
 
-            # Wrap path in QgsRasterLayer if processing returned a string
-            if isinstance(fac, str):
-                fac = QgsRasterLayer(fac, "fac_auto", "gdal")
-
-            self._fac_cache[dem_path] = fac
+            fac_path = fac if isinstance(fac, str) else fac.source()
+            fac = QgsRasterLayer(fac_path, "fac_auto", "gdal")
+            self._fac_cache[dem_path] = fac_path
             return fac, True, tr(
                 "Flow accumulation computed automatically via GRASS r.watershed. "
                 "For best results, provide a pre-conditioned FAC raster."

@@ -15,6 +15,9 @@ import numpy as np  # type: ignore
 from typing import List, Tuple, Optional
 
 from ...base.base_engine import BaseEngine
+# Workers receive private copies of the layers: name scene objects after
+# the project layer so the panel can find and remove them.
+from ...base.thread_safe_layers import original_layer_id
 from ...core.raster import RasterReader
 from .models import ThreeDRaster, ThreeDVector
 
@@ -148,7 +151,7 @@ class Explorer3DEngine(BaseEngine):
         z_max = float(valid.max()) if valid.size else 0.0
 
         return ThreeDRaster(
-            element_id=f"dem_{dem_layer.id()}",
+            element_id=f"dem_{original_layer_id(dem_layer)}",
             element_type="raster",
             width=n_cols,
             height=n_rows,
@@ -290,7 +293,7 @@ class Explorer3DEngine(BaseEngine):
                     continue
 
                 features.append(ThreeDVector(
-                    element_id=f"vector_{vector_layer.id()}_{feature.id()}",
+                    element_id=f"vector_{original_layer_id(vector_layer)}_{feature.id()}",
                     element_type="vector",
                     geom_type="line",
                     vertices=cleaned_vertices,

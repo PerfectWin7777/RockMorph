@@ -1,12 +1,13 @@
 # base/base_panel.py
 
 from abc import ABCMeta, abstractmethod
+import inspect
 import os
 
 from qgis.PyQt.QtGui import QDesktopServices  # type: ignore
 from .webengine import QWebChannel, QWebEngineSettings, QWebEngineView
 from qgis.PyQt.QtWidgets import (QWidget,QFrame,# type: ignore
-    QVBoxLayout,QScrollArea,QProgressBar,QLabel
+    QVBoxLayout,QHBoxLayout,QScrollArea,QProgressBar,QLabel,QToolButton
     ) 
 from qgis.PyQt.QtCore import (  # type: ignore
     Qt, QUrl, QObject, QThread, pyqtSignal, pyqtSlot, QCoreApplication
@@ -14,6 +15,8 @@ from qgis.PyQt.QtCore import (  # type: ignore
 from qgis.PyQt import sip # type: ignore
 
 from ..core.exporter import RockMorphExporter
+from .thread_safe_layers import open_value, snapshot_value
+from qgis.core import QgsEllipsoidUtils, QgsProject  # type: ignore
 
 # Resolve metaclass conflict between QWidget (sip) and ABC
 class QWidgetABCMeta(sip.wrappertype, ABCMeta):
@@ -69,34 +72,92 @@ class _BaseBridge(QObject):
 # Background worker — keeps UI responsive during long compute
 # ---------------------------------------------------------------------------
 
+def _accepts_keyword(function, name: str) -> bool:
+    """True when ``function`` takes ``name`` or arbitrary keyword arguments."""
+    try:
+        parameters = inspect.signature(function).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.kind == p.VAR_KEYWORD or p.name == name for p in parameters)
+
+
+class CancelledByUser(BaseException):
+    """
+    Raised inside a computation when the user pressed Cancel.
+
+    Derived from BaseException on purpose: engines wrap each basin in
+    ``except Exception`` to skip bad inputs, and a cancellation must not be
+    mistaken for one bad basin and swallowed.
+    """
+
+
 class ComputeWorker(QThread):
     """
-    Example
     Runs Engine.compute() in a background thread.
-    Emits finished(result_dict) or error(message) and progress(value, message) signals.
+    Emits finished(result_dict) or error(message) and progress(value, message).
+
+    Thread safety (audit M4): every QGIS layer found in ``params`` (also in
+    lists) is replaced by a private copy opened IN the worker thread
+    (base/thread_safe_layers.py), so the computation never reads the layers
+    the main thread is drawing or editing.
+
+    Cancellation: ``cancel()`` sets a flag; the next call the engine makes to
+    its ``progress_callback`` raises ``CancelledByUser`` and the worker emits
+    ``error`` with a "cancelled" message. Engines report progress at least
+    once per basin / feature / processing step, so no engine had to change.
+    ``is_cancelled`` is also passed in ``params`` for engines that want to
+    check it themselves.
     """
     finished = pyqtSignal(dict)
     error    = pyqtSignal(str)
     progress = pyqtSignal(int, str)
 
-    def __init__(self, engine, params:dict):
+    def __init__(self, engine, params: dict):
         super().__init__()
         self._engine = engine
-         # We copy params to avoid modifying the original dict in the UI thread
-        self._params = params.copy()
+        # Snapshots are taken now, on the main thread.
+        self._params = {key: snapshot_value(value) for key, value in params.items()}
+        self._cancelled = False
+        # QGIS caches ellipsoid parameters in the thread that first asks for
+        # them; a cache entry made in a worker thread becomes invalid when
+        # that thread ends, and the NEXT run's QgsDistanceArea measurements
+        # returned NaN (second fluvial run of a session failed on every
+        # basin). Filling the cache here, on the main thread, avoids it.
+        QgsEllipsoidUtils.ellipsoidParameters("WGS84")
+        project_ellipsoid = QgsProject.instance().ellipsoid()
+        if project_ellipsoid and project_ellipsoid.upper() != "NONE":
+            QgsEllipsoidUtils.ellipsoidParameters(project_ellipsoid)
+
+    def cancel(self) -> None:
+        """Ask the computation to stop at its next progress report."""
+        self._cancelled = True
+
+    def is_cancelled(self) -> bool:
+        return self._cancelled
 
     def run(self):
         try:
-           # Inject the progress signal as a callback function.
-            # The Engine doesn't need to know about Qt or Signals, 
-            # it just calls a function: callback(int, str).
-            self._params["progress_callback"] = self.progress.emit
-            
-            # Execute the heavy computation
-            result = self._engine.compute(**self._params)
+            params = {key: open_value(value) for key, value in self._params.items()}
+
+            def report(value, message=""):
+                if self._cancelled:
+                    raise CancelledByUser()
+                self.progress.emit(int(value), str(message or ""))
+
+            # The engine doesn't need to know about Qt: it calls
+            # progress_callback(int, str) and may poll is_cancelled().
+            params["progress_callback"] = report
+            if _accepts_keyword(self._engine.compute, "is_cancelled"):
+                params["is_cancelled"] = self.is_cancelled
+
+            result = self._engine.compute(**params)
+            if self._cancelled:
+                raise CancelledByUser()
             self.finished.emit(result)
+        except CancelledByUser:
+            self.error.emit(tr("Computation cancelled."))
         except Exception as e:
-              # Catch any crash to prevent QGIS from closing abruptly
+            # Catch any crash to prevent QGIS from closing abruptly
             import traceback
             traceback.print_exc()
             self.error.emit(str(e))
@@ -184,7 +245,16 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         """)
 
         prog_layout.addWidget(self._progress_label)
-        prog_layout.addWidget(self._progress_bar)
+        bar_row = QHBoxLayout()
+        bar_row.setContentsMargins(0, 0, 0, 0)
+        bar_row.addWidget(self._progress_bar, 1)
+        # Stops the running computation at its next progress report.
+        self._cancel_btn = QToolButton()
+        self._cancel_btn.setText(tr("Cancel"))
+        self._cancel_btn.setToolTip(tr("Stop the computation."))
+        self._cancel_btn.clicked.connect(self._cancel_running_workers)
+        bar_row.addWidget(self._cancel_btn)
+        prog_layout.addLayout(bar_row)
 
 
 
@@ -198,6 +268,14 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
      # ------------------------------------------------------------------
     # Feedback Control Methods (The "Pro" Way)
     # ------------------------------------------------------------------
+
+    def _cancel_running_workers(self) -> None:
+        """Cancel every ComputeWorker of this panel that is still running."""
+        for name in ("_worker", "_vector_worker"):
+            worker = getattr(self, name, None)
+            if isinstance(worker, ComputeWorker) and worker.isRunning():
+                worker.cancel()
+        self._progress_label.setText(tr("Cancelling…"))
 
     def set_loading_state(self, loading: bool, message: str = "", total: int = 0):
         """
