@@ -1,0 +1,205 @@
+/* docs/css/style.css */
+
+/* ── 1. DESIGN TOKENS & SYSTEM THEME ── */
+:root {
+    --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    
+    /* Light Theme (Default QGIS/System) */
+    --bg-primary: #ffffff;
+    --bg-sidebar: #f8f9fa;
+    --border-color: #e9ecef;
+    --text-main: #212529;
+    --text-muted: #6c757d;
+    --accent-color: #2d6a9f;
+    --accent-hover: #1f4f7a;
+    --code-bg: #f1f3f5;
+    --math-bg: #f8f9fa;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-primary: #1e1e1e;
+        --bg-sidebar: #252526;
+        --border-color: #333333;
+        --text-main: #d4d4d4;
+        --text-muted: #858585;
+        --accent-color: #3a7fc1;
+        --accent-hover: #5193d5;
+        --code-bg: #2d2d2d;
+        --math-bg: #1a1a1a;
+    }
+}
+
+/* ── 2. GLOBAL RESET ── */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: var(--font-family);
+    color: var(--text-main);
+    background-color: var(--bg-primary);
+    line-height: 1.6;
+    font-size: 15px;
+}
+
+/* ── 3. THREE-COLUMN GRID ARCHITECTURE ── */
+.app-container {
+    display: grid;
+    grid-template-columns: 260px 1fr 240px;
+    min-height: 100vh;
+}
+
+@media (max-width: 992px) {
+    .app-container {
+        grid-template-columns: 240px 1fr; /* Collapse On-This-Page column */
+    }
+    .on-this-page {
+        display: none;
+    }
+}
+
+@media (max-width: 768px) {
+    .app-container {
+        grid-template-columns: 1fr; /* Fully responsive mobile stack */
+    }
+    .sidebar {
+        display: none; /* Can be toggled via JS menu */
+    }
+}
+
+/* ── 4. STYLING SECTIONS ── */
+.sidebar {
+    background-color: var(--bg-sidebar);
+    border-right: 1px solid var(--border-color);
+    padding: 24px;
+    overflow-y: auto;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+}
+
+.content-body {
+    padding: 40px 56px;
+    max-width: 860px;
+    margin: 0 auto;
+    overflow-y: auto;
+}
+
+.on-this-page {
+    border-left: 1px solid var(--border-color);
+    padding: 24px 16px;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+}
+
+/* ── 5. TYPOGRAPHY & ACADEMIC ELEMENTS ── */
+h1, h2, h3 {
+    color: var(--text-main);
+    font-weight: 600;
+    margin-bottom: 16px;
+}
+
+h1 { font-size: 2.2em; border-bottom: 2px solid var(--border-color); padding-bottom: 8px; margin-top: 0; }
+h2 { font-size: 1.5em; margin-top: 32px; border-bottom: 1px solid var(--border-color); padding-bottom: 4px; }
+h3 { font-size: 1.2em; margin-top: 24px; }
+
+p { margin-bottom: 16px; text-align: justify; }
+
+a { color: var(--accent-color); text-decoration: none; }
+a:hover { text-decoration: underline; color: var(--accent-hover); }
+
+/* Code & LaTeX Blocks */
+code {
+    font-family: var(--font-mono);
+    background-color: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+pre {
+    background-color: var(--code-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 16px;
+    overflow-x: auto;
+    margin-bottom: 20px;
+}
+
+.math-block {
+    background-color: var(--math-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 16px;
+    text-align: center;
+    margin: 20px 0;
+    font-size: 1.1em;
+}
+
+/* Academic Citations */
+.references-list {
+    list-style-type: none;
+    margin-top: 16px;
+}
+
+.references-list li {
+    margin-bottom: 12px;
+    padding-left: 24px;
+    text-indent: -24px;
+    font-size: 0.95em;
+    color: var(--text-muted);
+}
+
+
+
+/* ── 6. PARAMETER & REFERENCE TABLES (DRY) ── */
+.doc-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 24px 0;
+    font-size: 0.9em;
+    line-height: 1.5;
+}
+
+.doc-table thead tr {
+    border-bottom: 2px solid var(--border-color);
+    text-align: left;
+    background-color: var(--bg-sidebar);
+}
+
+.doc-table th {
+    padding: 12px;
+    font-weight: 600;
+}
+
+.doc-table tbody tr {
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: top;
+}
+
+.doc-table td {
+    padding: 12px;
+}
+
+/* Paramètres de l'API */
+.param-name {
+    font-family: var(--font-mono);
+    font-weight: bold;
+    color: var(--accent-color);
+}
+
+.param-type {
+    font-style: italic;
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.param-desc {
+    text-align: justify;
+}

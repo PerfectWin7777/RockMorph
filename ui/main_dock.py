@@ -114,7 +114,7 @@ class RockMorphDock(QDockWidget):
         # Quick Search Bar (QLineEdit)
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText(tr("🔍 Quick search..."))
-        self.search_bar.setMinimumWidth(180)
+        self.search_bar.setMaximumWidth(180)
         # self.search_bar.setStyleSheet("""
         #     QLineEdit {
         #         background-color: #3a3a3a;

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RockMorph Documentation</title>
+    <!-- Relative pathing ensures offline local compatibility and GitHub Pages hosting -->
+    <link rel="stylesheet" href="css/style.css">
+
+    <!-- Local MathJax engine for offline rendering -->
+    <script id="MathJax-script" async src="../web/js/tex-mml-chtml.js"></script>
+</head>
+
+<body>
+
+    <div class="app-container">
+
+        <!-- ── COLUMN 1: LEFT SIDEBAR NAVIGATION ── -->
+        <aside class="sidebar">
+            <h3 style="margin-bottom: 20px; color: var(--accent-color);">⛰️ RockMorph Docs</h3>
+
+            <p
+                style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">
+                General</p>
+            <ul style="list-style: none; margin-bottom: 24px;">
+                <li style="margin-bottom: 6px;"><a href="index.html">Introduction</a></li>
+            </ul>
+
+            <p
+                style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">
+                Fluvial Geomorphology</p>
+            <ul style="list-style: none; margin-bottom: 24px;">
+                <li style="margin-bottom: 6px;"><a href="ksn_profile.html">ksn Profile</a></li>
+                <li style="margin-bottom: 6px;"><a href="smf.html">Mountain Front (Smf)</a></li>
+                <li style="margin-bottom: 6px;"><a href="ncp.html">Normalized Profile (NCP)</a></li>
+            </ul>
+        </aside>
+
+        <!-- ── COLUMN 2: MAIN ACADEMIC BODY ── -->
+        <main class="content-body">
+            <!-- 
+               This is the central layout container. Place headers here:
+               <h1>, <h2>, <pre><code>, equations, and references.
+               The JavaScript engine automatically parses <h2> and <h3> targets.
+            -->
+            <h1>Title Placeholder</h1>
+            <p>Select a tool page to display the academic documentation, mathematical notes, parameters, and references.
+            </p>
+        </main>
+
+        <!-- ── COLUMN 3: RIGHT SCROLLSPY ── -->
+        <aside class="on-this-page">
+            <h4 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 16px;">On
+                this page</h4>
+            <nav class="on-this-page-menu">
+                <!-- Javascript will inject list targets here in real-time -->
+            </nav>
+        </aside>
+
+    </div>
+
+    <!-- Behavior Controller -->
+    <script src="js/doc_behavior.js"></script>
+</body>
+
+</html>
