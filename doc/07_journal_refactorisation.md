@@ -220,10 +220,31 @@ Found during the work (not in the audit):
   (identical except five bytes lost in the corruption).
 * GSV-Studio's `BasinArea` was labelled km² but returned m².
 
-Not done yet (still as in the audit): M4 for the **older** tools (they still
-read layers from a `QThread`), M7 (raster read entirely), M8 (watershed
-subdivision), M9 (main-river snapping in CRS units), M10 (knickpoints not
-drawn on the map), M13 (HydroFlow Strahler in O(E²)).
+Second pass (all remaining major issues):
+
+| Id | Problem | Fix |
+|---|---|---|
+| M4 | older tools read project layers from a QThread; no cancel | `ComputeWorker` reopens every layer in the worker thread (`base/thread_safe_layers.py`: same source, CRS, filter, selection; memory layers copied on the main thread); **Cancel** button in every progress bar, effective at the next progress report (tested: stops at 62 % after 0.3 s) |
+| M7 | whole raster re-read and decoded by every reader; Int8/Int64/UInt64 crashed; some sources not openable | shared LRU cache of decoded bands (file, band, size, mtime; read-only arrays), GDAL converts every type to Float32, `GPKG:` / `|layername` sources handled; second read of a 2248 × 1848 DEM: 74 ms → 0.2 ms |
+| M8 | user outlet ignored for confluence search and appended last; north-edge latitude for pixel area; O(n²) loop guard; single-ring vectoriser; wrong timing in the docstring | subdivision restricted to the area draining to the outlet (test: 11 sub-basins, 75 km², instead of 65 over the raster), outlet sorted with the others, centre latitude, set-based guard, multi-part masks sent to GDAL Polygonize, measured timing documented |
+| M9 | snapping tolerance in CRS units (2 m = 2° in geographic CRS); O(n²) graph; recursive weights; NoData flipped segments | tolerance converted to CRS units, end-point grid (O(n)), iterative weights, digitised direction kept when an end has no elevation; same 15 rivers with the network in EPSG:4326 as in UTM |
+| M10 | knickpoints never drawn | drawn from the stored river geometry, in the stream CRS, with metres → CRS units |
+| M13 | Strahler in O(E²), recursive Horton, 3-decimal nodes (~100 m in degrees) | Kahn topological order (199 reaches in 0.09 s), iterative Horton, ~1 mm node tolerance in both CRS kinds; verified on a synthetic network (orders 1→2→3, Shreve 4) |
+
+Found and fixed on the way:
+
+* GRASS `r.watershed` drainage rasters (written by HydroFlow) contain
+  negative codes on the region edges; Watershed rejected them as an
+  "unrecognised D8 encoding" (the audit's M5 "to verify" point): accepted.
+* HydroFlow wrote the straight start–end chord as `length_m` (and derived
+  `slope_mean` from it): now the length along the reach.
+* The fluvial tool cached the flow-accumulation LAYER created in a worker
+  thread; from the second run of a session every basin failed. It caches
+  the file path now.
+* QGIS caches ellipsoid parameters in the first thread that asks for them;
+  an entry made in a finished worker thread made the next run's distance
+  measurements NaN. The worker fills that cache on the main thread first.
+
 
 ---
 
