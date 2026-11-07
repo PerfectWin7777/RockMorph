@@ -437,12 +437,17 @@ low": it is now placed between the sampled stations returned by the engine
 point). The band drawn on the map is the outline of the transversals
 actually sampled.
 
-**Swath in 3D (assessment).** Possible with Plotly: the swath sampler
-already evaluates a stations × transverse-samples grid but reduces it to
-statistics and drops the positions. Keeping the grid (e.g. 400 × 100
-values) allows a 3D "swath block" (surface in distance × offset ×
-elevation, or in true coordinates) with the min/mean/max envelopes as
-lines along the centreline. Not implemented yet.
+**Swath 3D block (done).** The sampler keeps every transversal sample
+(formerly reduced to statistics) and sends a decimated grid (≤ 300
+stations × 120 samples, ~0.6 MB) with the lateral offsets (− = right,
++ = left of the line direction). The "3D block" tab of the Swath shows it as
+a Plotly surface (distance × offset × elevation) with the min / mean / max
+envelopes on the near wall, a vertical exaggeration field, and a long band
+drawn at least 40 % as wide as long (the stretch is written on the chart).
+Hovering the surface puts the exact sampled point on the map, offset
+included (checked: ±1000 m land 1 km east/west of the line with a
+geographic DEM and a reversed profile). The grid follows a "high to low"
+reversal (rows reversed, left/right swapped). Export: PNG for the 3D block.
 
 ## 7. Points to decide
 

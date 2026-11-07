@@ -140,6 +140,17 @@ class SwathEngine(BaseEngine):
 
             # --- NEW: Reorientation logic ---
             if force_high_to_low:
+                # The 3D grid and the band sides follow the reversal: rows
+                # in reverse order and, since the direction of travel is
+                # reversed, left and right swap (offsets change sign).
+                valid_mean = [v for v in data["mean"] if v is not None]
+                if len(valid_mean) > 1 and valid_mean[0] < valid_mean[-1]:
+                    total = data["total_length_m"]
+                    if data.get("grid_z"):
+                        data["grid_z"] = [list(reversed(row)) for row in reversed(data["grid_z"])]
+                        data["grid_distance"] = [round(total - d, 2) for d in reversed(data["grid_distance"])]
+                    data["band_left"], data["band_right"] = (list(reversed(data["band_right"])),
+                                                             list(reversed(data["band_left"])))
                 # We package profiles for the utility
                 profiles_to_flip = {
                     "mean": data["mean"], "min": data["min"], "max": data["max"],

@@ -418,6 +418,36 @@ class SwathPanel(BasePanel):
         self.map_marker.setToGeometry(QgsGeometry.fromPointXY(point), crs)
         self.map_marker.show()
 
+    def _on_swath_point(self, distance: float, offset: float) -> None:
+        """
+        3D block → map: the sampled point at ``distance`` along the line and
+        ``offset`` across it (metres, + = left of the line direction), i.e.
+        between the right and left ends of the transversal at that station.
+        """
+        if not self.tracking_check.isChecked() or not self._last_data:
+            return
+        data = self._last_data
+        left, right, ds = data.get("band_left"), data.get("band_right"), data.get("distances")
+        if not left or not ds:
+            return
+        i = bisect.bisect_left(ds, distance)
+        i = min(max(i, 1), len(ds) - 1)
+        span = ds[i] - ds[i - 1]
+        t = 0.0 if span <= 0 else min(max((distance - ds[i - 1]) / span, 0.0), 1.0)
+
+        def lerp(a, b, f):
+            return (a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1]))
+
+        # Transversal at this distance, from its right end to its left end.
+        r = lerp(right[i - 1], right[i], t)
+        l = lerp(left[i - 1], left[i], t)
+        width = data.get("width_m") or 1.0
+        f = min(max((offset + width) / (2.0 * width), 0.0), 1.0)
+        x, y = lerp(r, l, f)
+        crs = QgsCoordinateReferenceSystem.fromWkt(data["station_crs"])
+        self.map_marker.setToGeometry(QgsGeometry.fromPointXY(QgsPointXY(x, y)), crs)
+        self.map_marker.show()
+
     def _on_plot_leave(self):
         """Hides the map marker when mouse leaves the plot area."""
         if self.map_marker:
@@ -608,8 +638,14 @@ class SwathPanel(BasePanel):
         self._pending_export_path = path
         self._pending_export_dpi  = dpi
 
-        div_id = 'plot-main'  # div ID for plotly export
-        self.webview.page().runJavaScript(f"exportViaSvg('{div_id}')")
+        def export(view):
+            # The WebGL 3D block can only be exported as a raster image.
+            if view == "3d" and self._pending_export_path.lower().endswith((".svg", ".pdf")):
+                self._pending_export_path = self._pending_export_path.rsplit(".", 1)[0] + ".png"
+                self.show_info(tr("The 3D block is exported as PNG: {0}").format(self._pending_export_path))
+            self.webview.page().runJavaScript("exportSwathActive()")
+
+        self.webview.page().runJavaScript("activeView()", export)
     
     
     def _csv_headers(self) -> list:

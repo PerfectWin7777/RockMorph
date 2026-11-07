@@ -64,6 +64,12 @@ class _BaseBridge(QObject):
         if hasattr(self._panel, "_on_profile_hover"):
             self._panel._on_profile_hover(profile_index, distance)
 
+    @pyqtSlot(float, float)
+    def on_swath_point(self, distance, offset):
+        """Hover on the 3D swath block: (distance along the line, lateral offset), metres."""
+        if hasattr(self._panel, "_on_swath_point"):
+            self._panel._on_swath_point(distance, offset)
+
     @pyqtSlot(int)
     def receive_click_id(self, fid: int):
         # Pass clicked feature ID to panel's click handler, if it exists
