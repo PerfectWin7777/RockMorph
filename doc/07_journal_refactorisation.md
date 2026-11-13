@@ -24,7 +24,11 @@ code on this branch (QGIS 3.44.7, Python 3.12, NumPy 2.x).
 | Synthesis & Statistics › **Statistics & Machine Learning** | `tools/synthesis/statistics_panel.py`, `core/indices/ml.py` | PCA, k-means, hierarchical, DBSCAN, t-SNE/UMAP, Isolation Forest, LOF |
 | (shared) | `widgets/results_window.py`, `web/morphometry.html`, `web/js/morphometry.js`, `widgets/index_widgets.py` | Results window (table, charts, profiles, diagnostics), catalogue widgets |
 
-Unit tests: `tests/indices/` (21 tests, `python -m pytest tests/indices`).
+Unit tests: `tests/` (40 tests, `python -m pytest tests`).
+
+The GSV-Studio `dev` port of November 2026 (terrain parameters, HAND, MFD/D∞,
+stream burning, best θ, χ–z segment lines, three-point dip, 3D draped maps
+and probe, AHP sensitivity, main-river profiles) is described in §6d.
 
 ---
 
@@ -448,6 +452,73 @@ Hovering the surface puts the exact sampled point on the map, offset
 included (checked: ±1000 m land 1 km east/west of the line with a
 geographic DEM and a reversed profile). The grid follows a "high to low"
 reversal (rows reversed, left/right swapped). Export: PNG for the 3D block.
+
+## 6d. Port of the GSV-Studio `dev` branch (Nov. 2026)
+
+GSV-Studio's `dev` branch (91 commits, 29 Oct – 12 Nov 2026) was reviewed
+for geomorphology. Everything that fits a QGIS plugin was ported; the parts
+QGIS already covers (gridding/kriging, georeferencing, print layouts, LiDAR,
+offline tiles, project/undo/preferences shell, Word report, batch API) were
+deliberately left out.
+
+| Area | Added | Where | Reference |
+|---|---|---|---|
+| Surface | Curvatures: profile, plan, mean, Gaussian, kmin, kmax (1/m, convex > 0) | Terrain Derivatives → "Curvature, Insolation & Landforms"; `core/terrain_metrics.py` | Evans (1979); Florinsky (2016) |
+| Surface | Yearly relative insolation (1 = flat ground) | same | Kumar et al. (1997) |
+| Surface | Swiss hillshade | same | Jenny (2001) |
+| Surface | Multi-scale DEV | same | Lindsay et al. (2015) |
+| Surface | Valley bottoms (simplified MRVBF) | same | Gallant & Dowling (2003) |
+| Surface | 8 landform classes, styled with legend | same | Iwahashi & Pike (2007) |
+| Surface | Geomorphons (10 classes), styled with legend | same | Jasiewicz & Stepinski (2013) |
+| Drainage | Stream burning of a mapped network | HydroFlow → "Burn rivers"; `core/indices/routing.py` | Hutchinson (1989); Saunders (1999) |
+| Drainage | HAND raster | HydroFlow output | Rennó et al. (2008) |
+| Drainage | MFD and D∞ accumulation (m²) | HydroFlow outputs | Freeman (1991); Tarboton (1997) |
+| Drainage | Reach k_sn = S·A^θ and area on the ordered network, graduated style | HydroFlow streams | Kirby & Whipple (2012) |
+| Rivers | Best concavity θ (max χ–z R²) with "Apply" and an "at the search limit" flag | Fluvial Toolbox | Perron & Royden (2013) |
+| Rivers | χ–z least-squares line per segment (Mχ, R², n), dotted on the χ-plot | Fluvial Toolbox | Perron & Royden (2013) |
+| Geology | Three-point dip (≥ 3 points, RMS), predicted outcrop trace | new tool "Three-Point Dip & Outcrop"; `core/structural.py` | Ragan (2009) |
+| 3D | Any layer draped on the relief with its QGIS symbology | 3D Explorer → "Draped map & probe" | — |
+| 3D | Hover probe (CRS position, Z, slope) linked to a marker on the QGIS map | same | — |
+| Synthesis | AHP weight sensitivity (±10 %, ±20 %, basins changing class) | AHP chart "sensitivity" + summary | Chen, Yu & Khan (2010) |
+| Profiles | Main river of selected basins added as profile lines | Topographic Profiles → "Main river" | — |
+
+### Differences from GSV-Studio (both behaviours documented)
+
+* **Segment k_sn with A₀ ≠ 1.** RockMorph's χ-slope segment k_sn ignored the
+  reference area; it is now Mχ·A₀^θ (identical for the default A₀ = 1 m²).
+* **Best θ search range.** 0.10–0.90 like GSV-Studio's `CONCAVITY_RANGE`, but
+  by 0.01 instead of 0.025. On the six Sierra Nevada test basins the optimum
+  is at a bound for five of them (strong knickpoints): the panel then says
+  "at the search limit, not constrained" instead of presenting the value
+  as an estimate. GSV-Studio shows the bound value without warning.
+* **HAND streams.** Cells above the HydroFlow initiation threshold, plus the
+  burned rivers when a network is given. HAND is measured on the original
+  (unburned, unfilled) elevations so burning does not inflate it.
+* **MFD/D∞, HAND and reach areas** come from one NumPy Priority-Flood + ε
+  conditioning of the (burned) DEM, so they are consistent with each other;
+  the GRASS outputs of HydroFlow keep their own fill (Wang & Liu).
+* **3D draped map.** GSV-Studio rasterised polygons with their fill colour;
+  here QGIS renders the layer itself, so any renderer (categorised geology,
+  rule-based, raster, orthophoto) and outlines are kept.
+* **Three-point dip.** GSV-Studio measures in its 3D scene; RockMorph picks
+  the points on the 2D map (or from a point layer with a Z field) and adds
+  the outcrop trace as a line layer that can be draped in the 3D Explorer.
+
+### Tests
+
+* Unit tests (no QGIS): `tests/test_terrain_metrics.py` (analytic dome,
+  bowl, cone, slopes), `tests/indices/test_routing.py` (water conservation
+  of MFD/D∞, plane draining one row per row, HAND of a V valley, θ = 0.6
+  recovered on a steady-state profile), `tests/test_structural.py` (known
+  orientations, noisy points, degenerate points, outcrop of a horizontal
+  bed) and the AHP sensitivity — 40 passed.
+* Headless QGIS on the Copernicus DEM (UTM and WGS84): all new rasters
+  written and styled (the 3600² WGS84 DEM takes 40 s for all seven
+  parameters); HydroFlow with HydroRIVERS burned (HAND 0–520 m, reach k_sn
+  0.4–74); three-point dip in both CRSs (outcrop traces through the
+  points); main-river profiles of two basins; 3D drape checked in
+  Chromium/WebGL (basin limits follow the ridges) and the probe Z within
+  2 m of the DEM; all 18 tools load.
 
 ## 7. Points to decide
 

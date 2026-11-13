@@ -2,10 +2,10 @@
 name=RockMorph
 qgisMinimumVersion=3.36
 description=Advanced Geomorphology Toolkit for QGIS with interactive 2D/3D analysis
-version=0.2.0
+version=0.3.0
 author=Tony Winter
 email=wintertony7777@gmail.com
-about=RockMorph is a geomorphology toolkit for QGIS. It computes, classifies and charts 60 published morphometric and active-tectonics indices for your own basins (basin shape, relief and hypsometry, Horton-Strahler network, channel profile SL, ksn and chi, asymmetry factor, transverse symmetry, valley floor ratio, TWI/SPI/STI), combines them into the relative active tectonics index Iat (El Hamdouni et al., 2008), AHP and composite indices, and explores them with PCA, clustering and outlier detection. It also provides fluvial profile analysis (chi-plots, knickpoints, ksn), mountain-front sinuosity, swath profiles, rose diagrams, hypsometric curves, terrain derivatives, flow routing, watershed subdivision and a 3D explorer. Charts use Qt WebEngine and Plotly; optional methods use scikit-learn.
+about=RockMorph is a geomorphology toolkit for QGIS. It computes, classifies and charts 60 published morphometric and active-tectonics indices for your own basins (basin shape, relief and hypsometry, Horton-Strahler network, channel profile SL, ksn and chi, asymmetry factor, transverse symmetry, valley floor ratio, TWI/SPI/STI), combines them into the relative active tectonics index Iat (El Hamdouni et al., 2008), AHP and composite indices, and explores them with PCA, clustering and outlier detection. It also provides fluvial profile analysis (chi-plots, knickpoints, ksn), mountain-front sinuosity, topographic and swath profiles, rose diagrams, a three-point dip tool with predicted outcrop traces, hypsometric curves, terrain derivatives (curvatures, insolation, geomorphons, landforms, valley bottoms), flow routing (HAND, MFD/D-infinity, stream burning, network ksn), watershed subdivision and a 3D explorer with draped maps. Charts use Qt WebEngine and Plotly; optional methods use scikit-learn.
 tracker=https://github.com/PerfectWin7777/RockMorph/issues
 repository=https://github.com/PerfectWin7777/RockMorph.git
 homepage=https://github.com/PerfectWin7777/RockMorph
@@ -14,7 +14,14 @@ category=Raster
 icon=icon.png
 experimental=True
 deprecated=False
-changelog=0.2.0
+changelog=0.3.0
+    - Terrain Derivatives: curvatures, yearly insolation, Swiss hillshade, multi-scale DEV, valley bottoms (MRVBF), Iwahashi-Pike landforms, geomorphons
+    - HydroFlow: stream burning, HAND, MFD and D-infinity accumulation, reach ksn of the whole network
+    - Fluvial: best concavity (max chi-z R2), chi-z line per segment
+    - New Three-Point Dip & Outcrop tool
+    - 3D Explorer: any layer draped with its QGIS style, hover probe linked to the map
+    - AHP weight sensitivity; Topographic Profiles along the main river
+    0.2.0
     - New Morphometric Indices tool (60 indices, published classifications, results viewer)
     - New Iat, AHP, Composite index and Statistics & ML tools
     - Fluvial: chi aligned with the profile, BIC knickpoints, reach-based SL, export positions
