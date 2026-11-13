@@ -40,6 +40,12 @@ TOOL_REGISTRY = {
                 "module_path": ".tools.digitizer.panel",
                 "class_name": "DigitizerPanel",
                 "desc": tr("Specialized topological tools for digitizing geological features.")
+            },
+            "dip": {
+                "name": tr("Three-Point Dip & Outcrop"),
+                "module_path": ".tools.dip.panel",
+                "class_name": "DipPanel",
+                "desc": tr("Dip and dip direction of a bed or fault from 3+ points, and its predicted outcrop trace.")
             }
         }
     },
