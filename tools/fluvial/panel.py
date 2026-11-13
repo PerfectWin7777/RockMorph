@@ -312,6 +312,25 @@ class FluvialPanel(BasePanel):
         theta_layout.addWidget(self._theta_label)
         param_layout.addRow(tr("θ ref (m/n):"), theta_row)
 
+        # Best concavity of the active basin (max R² of the χ–z line)
+        best_row = QWidget()
+        best_layout = QHBoxLayout(best_row)
+        best_layout.setContentsMargins(0, 0, 0, 0)
+        best_layout.setSpacing(6)
+        self.best_theta_label = QLabel("—")
+        self.best_theta_label.setToolTip(tr(
+            "<b>Best concavity (Perron & Royden, 2013):</b><br>"
+            "θ between 0.05 and 0.95 for which the χ–z profile of the active basin "
+            "is the most linear (highest R²). Knickpoints lower the R² for every θ, "
+            "so trust it most on profiles without strong breaks."))
+        self.apply_best_theta_btn = QPushButton(tr("Apply"))
+        self.apply_best_theta_btn.setEnabled(False)
+        self.apply_best_theta_btn.setToolTip(tr("Set θ ref to the best concavity of the active basin."))
+        self.apply_best_theta_btn.clicked.connect(self._apply_best_theta)
+        best_layout.addWidget(self.best_theta_label, stretch=1)
+        best_layout.addWidget(self.apply_best_theta_btn)
+        param_layout.addRow(tr("Best θ (χ–z):"), best_row)
+
         self.a0_spin = QDoubleSpinBox()
         self.a0_spin.setRange(0.1, 1e6)
         self.a0_spin.setValue(1.0)
@@ -663,7 +682,7 @@ class FluvialPanel(BasePanel):
             for kp in knickpoints:
                 kp["chi"] = round(float(chi[kp["idx"]]), 4)
             r["ksn_segments"] = self._engine._compute_ksn_segments(
-                chi, elev, slope, area, theta_ref, knickpoints, ksn_method
+                chi, elev, slope, area, theta_ref, knickpoints, ksn_method, a0
             )
 
         self._refresh_tree()
@@ -818,6 +837,29 @@ class FluvialPanel(BasePanel):
         )
         # Draw knickpoints on map canvas
         self._draw_knickpoints(self._results[self._active_index])
+        self._update_best_theta()
+
+    def _update_best_theta(self):
+        """Shows the best concavity of the active basin next to the θ slider."""
+        result = self._results[self._active_index] if self._results else {}
+        theta = result.get("theta_best")
+        if theta is None:
+            self.best_theta_label.setText("—")
+            self.apply_best_theta_btn.setEnabled(False)
+            return
+        text = f"{theta:.2f}  (R² {result.get('theta_best_r2', 0):.3f})"
+        if result.get("theta_best_at_bound"):
+            text += tr("  — at the search limit, not constrained")
+        self.best_theta_label.setText(text)
+        self.apply_best_theta_btn.setEnabled(abs(theta - self.theta_slider.value() / 100.0) > 1e-6)
+
+    def _apply_best_theta(self):
+        """Moves the θ slider to the active basin's best concavity (live recompute)."""
+        if not self._results:
+            return
+        theta = self._results[self._active_index].get("theta_best")
+        if theta is not None:
+            self.theta_slider.setValue(int(round(theta * 100)))
 
     def _update_nav_buttons(self):
         total = len(self._results)

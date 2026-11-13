@@ -187,6 +187,75 @@ def chi_coordinate(distance: np.ndarray, area: np.ndarray, theta: float,
     return chi_from_outlet[::-1]
 
 
+
+def linear_fit(x: np.ndarray, y: np.ndarray) -> Optional[Dict[str, float]]:
+    """
+    Least-squares line ``y = slope · x + intercept`` with its R².
+
+    NaNs are ignored. Returns None with fewer than three finite pairs or when
+    ``x`` has no spread. R² is 1 − RSS/TSS (1 for a perfect line; 1 too when
+    ``y`` is constant and the line fits it exactly).
+    """
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    ok = np.isfinite(x) & np.isfinite(y)
+    if ok.sum() < 3 or np.ptp(x[ok]) <= 1e-12:
+        return None
+    slope, intercept = np.polyfit(x[ok], y[ok], 1)
+    residual = y[ok] - (slope * x[ok] + intercept)
+    total = float(np.sum((y[ok] - y[ok].mean()) ** 2))
+    rss = float(np.sum(residual ** 2))
+    r2 = 1.0 - rss / total if total > 0 else (1.0 if rss < 1e-12 else 0.0)
+    return {"slope": float(slope), "intercept": float(intercept), "r2": float(r2), "n": int(ok.sum())}
+
+
+def best_concavity(distance: np.ndarray, area: np.ndarray, elevation: np.ndarray,
+                   reference_area: float = 1.0, thetas: Optional[np.ndarray] = None) -> Dict[str, object]:
+    """
+    Concavity θ that makes the χ–z profile the most linear.
+
+    For a channel in steady state, ``z = z_outlet + ksn · χ`` is a straight
+    line only with the right reference concavity, so the θ that maximises
+    the R² of the χ–z regression is the best estimate for that channel
+    (Perron & Royden, 2013, sec. 4; same criterion as GSV-Studio's
+    Rivers studio). Knickpoints lower the R² for every θ, so the estimate is
+    most meaningful on profiles without strong transient breaks.
+
+    Parameters
+    ----------
+    distance, area, elevation : aligned arrays ordered source → outlet.
+    reference_area             : A0 of the χ integral (m²).
+    thetas                     : candidate θ (default 0.10 … 0.90 by 0.01,
+                                 the range of GSV-Studio's CONCAVITY_RANGE).
+
+    Returns
+    -------
+    {"theta": best θ or None, "r2": its R², "scan": [[θ, R²], ...],
+     "at_bound": True when the best θ is the first or last candidate — the
+     R² keeps rising beyond the range, so θ is not constrained by this
+     profile (typical of transient profiles with strong knickpoints).}
+    """
+    if thetas is None:
+        thetas = np.round(np.arange(0.10, 0.901, 0.01), 2)
+    distance = np.asarray(distance, dtype=np.float64)
+    area = np.asarray(area, dtype=np.float64)
+    elevation = np.asarray(elevation, dtype=np.float64)
+    ok = np.isfinite(distance) & np.isfinite(area) & (area > 0) & np.isfinite(elevation)
+    scan: List[List[float]] = []
+    best_theta, best_r2 = None, -np.inf
+    if ok.sum() >= 3:
+        d, a, z = distance[ok], area[ok], elevation[ok]
+        for theta in thetas:
+            fit = linear_fit(chi_coordinate(d, a, float(theta), reference_area), z)
+            if fit is None:
+                continue
+            scan.append([float(theta), round(fit["r2"], 5)])
+            if fit["r2"] > best_r2:
+                best_theta, best_r2 = float(theta), fit["r2"]
+    at_bound = best_theta is not None and best_theta in (float(thetas[0]), float(thetas[-1]))
+    return {"theta": best_theta, "r2": float(best_r2) if best_theta is not None else None,
+            "scan": scan, "at_bound": bool(at_bound)}
+
 # ---------------------------------------------------------------------------
 # Valley cross-profile analysis (Vf)
 # ---------------------------------------------------------------------------

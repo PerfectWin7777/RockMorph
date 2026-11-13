@@ -153,7 +153,9 @@ from ...core.hydro import (
     sample_river_hydraulics,
     sample_river_native_pixels
 )
-from ...core.indices.profiles import chi_coordinate, segment_breakpoints, sl_reaches
+from ...core.indices.profiles import (
+    best_concavity, chi_coordinate, linear_fit, segment_breakpoints, sl_reaches,
+)
 from ...core.processing_ids import grass_id
 from ...core.utils import smooth_data
 
@@ -686,8 +688,11 @@ class FluvialEngine(BaseEngine):
 
         # ── k_sn per segment (between knickpoints) ───────────────────
         ksn_segments = self._compute_ksn_segments(
-            chi, elev, slope, area, theta_ref, knickpoints, ksn_method
+            chi, elev, slope, area, theta_ref, knickpoints, ksn_method, a0
         )
+
+        # ── Best concavity: θ that makes the χ–z profile straightest ──
+        best = best_concavity(dist, area, elev, a0)
 
         # ── Equilibrium profile (Hack 1973 / Mvondo Owono 2010) ──────
         equil = self._compute_equilibrium_hack(dist, elev)
@@ -746,6 +751,11 @@ class FluvialEngine(BaseEngine):
             "ksn_window":    int(window_size),
             "theta_ref":     theta_ref,
             "a0":            a0,
+            # Best concavity (Perron & Royden 2013): θ maximising the χ–z R².
+            "theta_best":    best["theta"],
+            "theta_best_r2": round(best["r2"], 4) if best["r2"] is not None else None,
+            "theta_scan":    best["scan"],
+            "theta_best_at_bound": best["at_bound"],
         }
 
     # ------------------------------------------------------------------
@@ -1387,7 +1397,8 @@ class FluvialEngine(BaseEngine):
         area_m2:     np.ndarray, 
         theta_ref:   float,
         knickpoints: list,
-        ksn_method:      str = "chi_slope"
+        ksn_method:      str = "chi_slope",
+        a0:          float = 1.0,
     ) -> list:
         r"""
         Computes k_sn value for each river SEGMENT (section between knickpoints).
@@ -1604,7 +1615,9 @@ class FluvialEngine(BaseEngine):
         Returns:
             list
                 Segment metrics, each a dict with keys:
-                chi_start, chi_end, elev_start, elev_end, ksn, theta_local.
+                chi_start, chi_end, elev_start, elev_end, ksn, theta_local,
+                and the χ–z least-squares line m_chi (Mχ), intercept, r2,
+                n_points (None when the segment cannot be fitted).
         """
         n = len(chi)
     
@@ -1632,13 +1645,10 @@ class FluvialEngine(BaseEngine):
                 # Least-squares slope of Z on χ over the whole segment
                 # (Perron & Royden, 2013); the former end-point ratio
                 # depended on two single pixels.
-                seg_chi = chi[i0:i1 + 1]
-                seg_z = elev[i0:i1 + 1]
-                ok = np.isfinite(seg_chi) & np.isfinite(seg_z)
-                if np.sum(ok) >= 3 and np.ptp(seg_chi[ok]) > 1e-6:
-                    ksn_seg = abs(float(np.polyfit(seg_chi[ok], seg_z[ok], 1)[0]))
-                else:
-                    ksn_seg = 0.0
+                # ksn = Mχ · A0^θ (Perron & Royden, 2013): the χ integral
+                # already divides the area by A0.
+                fit = linear_fit(chi[i0:i1 + 1], elev[i0:i1 + 1])
+                ksn_seg = abs(fit["slope"]) * a0 ** theta_ref if fit else 0.0
                 # approximation of local concavity by the slope/regression of the segment in chi-elev space (just for info/statistics, not used to correct ksn)
                 s_seg = slope[i0:i1]
                 a_seg = area_m2[i0:i1]
@@ -1686,7 +1696,14 @@ class FluvialEngine(BaseEngine):
                 except (np.linalg.LinAlgError, ValueError):
                     continue
 
+            # χ–z line of the segment (GSV-Studio "droites χ–z par
+            # segment"): drawn on the χ-plot whatever the k_sn method.
+            chi_fit = linear_fit(chi[i0:i1 + 1], elev[i0:i1 + 1])
             segments.append({
+                "m_chi":       round(chi_fit["slope"], 4) if chi_fit else None,
+                "intercept":   round(chi_fit["intercept"], 3) if chi_fit else None,
+                "r2":          round(chi_fit["r2"], 4) if chi_fit else None,
+                "n_points":    chi_fit["n"] if chi_fit else int(i1 - i0 + 1),
                  "idx_start":   i0, 
                  "idx_end":     i1,
                 "chi_start":   round(float(chi_start), 4),

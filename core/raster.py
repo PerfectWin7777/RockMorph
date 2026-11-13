@@ -271,3 +271,66 @@ class RasterReader:
             f"pixel_size={self.pixel_size_x:.4f}, "
             f"geographic={self.is_geographic})"
         )
+
+# ---------------------------------------------------------------------------
+# Writing arrays and rasterising vectors on a reader's grid
+# ---------------------------------------------------------------------------
+
+def write_geotiff(array: np.ndarray, path: str, geo_transform: tuple, projection_wkt: str,
+                  nodata: float = -9999.0) -> str:
+    """
+    Writes a 2-D float array to a single-band Float32 GeoTIFF.
+
+    NaN becomes ``nodata``. An existing file is replaced. Returns ``path``.
+    """
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    rows, cols = array.shape
+    dataset = gdal.GetDriverByName("GTiff").Create(
+        path, cols, rows, 1, gdal.GDT_Float32, options=["COMPRESS=LZW", "TILED=YES"])
+    if dataset is None:
+        raise RuntimeError(tr("GDAL could not create {}: the file may be open in QGIS "
+                              "or the folder read-only.").format(path))
+    dataset.SetGeoTransform(geo_transform)
+    if projection_wkt:
+        dataset.SetProjection(projection_wkt)
+    band = dataset.GetRasterBand(1)
+    band.WriteArray(np.where(np.isfinite(array), array, nodata).astype(np.float32))
+    band.SetNoDataValue(nodata)
+    band.FlushCache()
+    dataset = None
+    return path
+
+
+def rasterize_geometries(wkb_geometries, shape: tuple, geo_transform: tuple,
+                         projection_wkt: str, all_touched: bool = True) -> np.ndarray:
+    """
+    Boolean mask of the cells touched by geometries (WKB bytes, already in
+    the grid's CRS) on a grid of ``shape`` and ``geo_transform``.
+
+    ``all_touched`` keeps lines continuous (every cell a line crosses), which
+    stream burning needs.
+    """
+    from osgeo import ogr, osr  # type: ignore
+    rows, cols = shape
+    target = gdal.GetDriverByName("MEM").Create("", cols, rows, 1, gdal.GDT_Byte)
+    target.SetGeoTransform(geo_transform)
+    srs = None
+    if projection_wkt:
+        target.SetProjection(projection_wkt)
+        srs = osr.SpatialReference()
+        srs.ImportFromWkt(projection_wkt)
+    source = ogr.GetDriverByName("Memory").CreateDataSource("rasterize")
+    layer = source.CreateLayer("features", srs=srs)
+    for wkb in wkb_geometries:
+        feature = ogr.Feature(layer.GetLayerDefn())
+        feature.SetGeometry(ogr.CreateGeometryFromWkb(bytes(wkb)))
+        layer.CreateFeature(feature)
+    options = ["ALL_TOUCHED=TRUE"] if all_touched else []
+    gdal.RasterizeLayer(target, [1], layer, burn_values=[1], options=options)
+    mask = target.GetRasterBand(1).ReadAsArray().astype(bool)
+    target = None
+    return mask
