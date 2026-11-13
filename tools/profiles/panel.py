@@ -198,6 +198,29 @@ class ProfilesPanel(BasePanel):
         self.drawn_label = QLabel(tr("No line drawn."))
         self.drawn_label.setStyleSheet("color: #52514e;")
         form.addRow(self.drawn_label)
+
+        # Profile along the main river of a basin (GSV-Studio "profil le
+        # long de la rivière principale"): the trunk stream of each selected
+        # basin is extracted like in the Fluvial Toolbox and added as a
+        # drawn line, from the source to the outlet.
+        self.river_basin_combo = QgsMapLayerComboBox()
+        self.river_basin_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        self.river_basin_combo.setAllowEmptyLayer(True)
+        self.river_basin_combo.setLayer(None)
+        self.river_basin_combo.setToolTip(tr("Basins whose main river is profiled (selected features, "
+                                             "or all when none is selected)."))
+        form.addRow(tr("Main river — basins:"), self.river_basin_combo)
+        self.river_stream_combo = QgsMapLayerComboBox()
+        self.river_stream_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
+        self.river_stream_combo.setAllowEmptyLayer(True)
+        self.river_stream_combo.setLayer(None)
+        self.river_stream_combo.setToolTip(tr("Stream network (e.g. HydroFlow output or HydroRIVERS)."))
+        form.addRow(tr("Main river — streams:"), self.river_stream_combo)
+        self.main_river_btn = QPushButton(tr("⤵ Add main river(s) as lines"))
+        self.main_river_btn.setToolTip(tr(
+            "Extracts the trunk stream of each basin (longest path of the network, as in the "
+            "Fluvial Toolbox) and adds it as a drawn line, from the source to the outlet."))
+        form.addRow(self.main_river_btn)
         root.addWidget(data_group)
 
         # 2 · Profiles
@@ -291,6 +314,7 @@ class ProfilesPanel(BasePanel):
         self.selected_only.toggled.connect(self._refresh)
         self.draw_btn.toggled.connect(self._toggle_draw_tool)
         self.clear_drawn_btn.clicked.connect(self._clear_drawn)
+        self.main_river_btn.clicked.connect(self._add_main_rivers)
         self.ve_spin.valueChanged.connect(self._push_display_options)
         self.stack_check.toggled.connect(self._push_display_options)
         self.layer_btn.clicked.connect(self._add_lines_layer)
@@ -380,6 +404,37 @@ class ProfilesPanel(BasePanel):
         self._drawn_bands.append(band)
         self.drawn_label.setText(tr("{0} line(s) drawn — right click finishes a line.").format(len(self._drawn)))
         self._refresh()
+
+    def _add_main_rivers(self, max_basins: int = 30) -> None:
+        """Adds the main river of the selected (or all) basins as drawn lines."""
+        basins = self.river_basin_combo.currentLayer()
+        streams = self.river_stream_combo.currentLayer()
+        dem = self.dem_combo.currentLayer()
+        if basins is None or streams is None or dem is None:
+            self.show_error(tr("Choose the DEM, a basin layer and a stream layer."))
+            return
+        features = list(basins.getSelectedFeatures()) or list(basins.getFeatures())
+        if len(features) > max_basins:
+            self.show_error(tr("Select at most {0} basins.").format(max_basins))
+            return
+        subset = QgsVectorLayer(f"Polygon?crs={basins.crs().authid()}", "basins", "memory")
+        subset.setCrs(basins.crs())
+        subset.dataProvider().addAttributes(basins.fields().toList())
+        subset.updateFields()
+        subset.dataProvider().addFeatures(features)
+        from ...core.hydro import MainRiverExtractor
+        try:
+            extraction = MainRiverExtractor(basin_layer=subset, stream_layer=streams, dem_layer=dem).extract_all()
+        except Exception as error:   # invalid layers, empty network…
+            self.show_error(tr("Main river extraction failed: {0}").format(error))
+            return
+        rivers = extraction.get("results", [])
+        for river in rivers:
+            self._on_line_drawn(QgsGeometry(river["geom"]), streams.crs())
+        message = tr("{0} main river(s) added as lines.").format(len(rivers))
+        if extraction.get("warnings"):
+            message += " " + " ".join(extraction["warnings"][:2])
+        self.show_info(message)
 
     def _clear_drawn(self) -> None:
         for band in self._drawn_bands:

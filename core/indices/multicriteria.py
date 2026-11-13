@@ -213,6 +213,61 @@ def weighted_sum(scores: Mapping[str, np.ndarray], weights: Mapping[str, float])
     return np.where(total_w > 0, result, np.nan)
 
 
+def perturbed_weights(weights: Mapping[str, float], criterion: str, change: float) -> Dict[str, float]:
+    """
+    Weights with ``criterion`` multiplied by (1 + change) and the others
+    rescaled so that the total stays 1 (their ratios are kept).
+    """
+    base = {k: float(v) for k, v in weights.items()}
+    target = min(max(base[criterion] * (1.0 + change), 0.0), 1.0)
+    rest = 1.0 - base[criterion]
+    out = {}
+    for key, value in base.items():
+        if key == criterion:
+            out[key] = target
+        else:
+            out[key] = value * (1.0 - target) / rest if rest > 1e-12 else (1.0 - target) / (len(base) - 1)
+    return out
+
+
+def weight_sensitivity(scores: Mapping[str, np.ndarray], weights: Mapping[str, float],
+                       class_method: str = "Quantiles", n_classes: int = 4,
+                       changes: Sequence[float] = (-0.2, -0.1, 0.1, 0.2)) -> List[Dict[str, object]]:
+    """
+    One-at-a-time sensitivity of a weighted index to its weights.
+
+    For each criterion and each relative change of its weight (±10 % and
+    ±20 % by default, the others renormalised), the index is recomputed and
+    compared with the reference: number of basins that change class (with
+    the same class method, breaks recomputed), and largest absolute change
+    of the index value. A ranking that flips with ±10 % on one weight is
+    fragile and should not be published without discussion (Chen, Yu &
+    Khan, 2010, Environmental Modelling & Software 25(12), 1582–1591;
+    GSV-Studio "sensibilité de l'AHP").
+
+    Returns one dict per (criterion, change): {"criterion", "change",
+    "changed_class", "share_changed", "max_delta"}.
+    """
+    reference = weighted_sum(scores, weights)
+    ref_class, _ = rank_classes(reference, class_method, n_classes)
+    valid = np.isfinite(reference)
+    count = int(valid.sum())
+    rows: List[Dict[str, object]] = []
+    for criterion in weights:
+        for change in changes:
+            value = weighted_sum(scores, perturbed_weights(weights, criterion, change))
+            delta = np.abs(value - reference)
+            max_delta = float(np.nanmax(delta)) if np.any(np.isfinite(delta)) else 0.0
+            changed = 0
+            if class_method != "None":
+                new_class, _ = rank_classes(value, class_method, n_classes)
+                both = valid & np.isfinite(new_class)
+                changed = int(np.sum(new_class[both] != ref_class[both]))
+            rows.append({"criterion": criterion, "change": float(change), "changed_class": changed,
+                         "share_changed": changed / count if count else 0.0, "max_delta": max_delta})
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Composite indices (GSV-Studio "index modeler")
 # ---------------------------------------------------------------------------

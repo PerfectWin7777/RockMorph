@@ -22,6 +22,10 @@ Choices made here
   it — Saaty recommends revising the judgements instead.
 * The result can be divided into four classes (quantiles by default) with
   class 1 = highest values, as for the Iat classes.
+* Sensitivity to the weights (GSV-Studio): each weight is changed by ±10 %
+  and ±20 % in turn (the others renormalised) and the number of basins
+  that change class is reported, as a chart and in the summary, so that a
+  fragile ranking is seen before it is published.
 
 Authors: RockMorph contributors / Tony
 """
@@ -40,7 +44,7 @@ from qgis.PyQt.QtWidgets import (  # type: ignore
 
 from ...core.indices.multicriteria import (
     CLASS_BREAK_METHODS, RANDOM_INDEX, SAATY_SCALE, AhpResult, ahp_weights, min_max,
-    rank_classes, reciprocal_matrix, weighted_sum,
+    rank_classes, reciprocal_matrix, weight_sensitivity, weighted_sum,
 )
 from .common import CriteriaTable, OutputColumn, SynthesisPanel, TableData, section_label
 
@@ -261,6 +265,29 @@ class AhpPanel(SynthesisPanel):
                 ahp.lambda_max, ahp.consistency_index, ahp.random_index, ahp.consistency_ratio,
                 self.method.currentText()),
         }]
+        # One-at-a-time sensitivity of the classes to each weight.
+        sensitivity = weight_sensitivity(normalised, weights,
+                                         method if method != "None" else "Quantiles", 4)
+        changes = sorted({row["change"] for row in sensitivity})
+        palette = {-0.2: "#2c7bb6", -0.1: "#abd9e9", 0.1: "#fdae61", 0.2: "#d7191c"}
+        figures.append({
+            "id": "sensitivity", "title": tr("AHP: sensitivity of the classes to the weights"),
+            "data": [{"type": "bar", "name": f"{100 * change:+.0f} %",
+                      "x": fields,
+                      "y": [row["changed_class"] for row in sensitivity if row["change"] == change],
+                      "marker": {"color": palette.get(change, "#888")},
+                      "hovertemplate": "%{x}, weight " + f"{100 * change:+.0f} %" +
+                                       ": %{y} basin(s) change class<extra></extra>"}
+                     for change in changes],
+            "layout": {"barmode": "group", "xaxis": {"type": "category"},
+                       "yaxis": {"title": tr("Basins changing class"), "rangemode": "tozero",
+                                 "tickformat": "d", "dtick": 1},
+                       "showlegend": True,
+                       "legend": {"orientation": "h", "y": 1.08, "x": 0, "title": {"text": tr("Weight change")}}},
+            "note": tr("Each weight is changed in turn (others renormalised); the classes ({0}) are "
+                       "recomputed and compared with the reference.").format(
+                method if method != "None" else "Quantiles"),
+        })
         warnings = {}
         for row in range(table.size):
             missing = [n for n in fields if not np.isfinite(table.columns[n][row])]
@@ -270,6 +297,12 @@ class AhpPanel(SynthesisPanel):
             int(np.sum(np.isfinite(value))), ahp.consistency_ratio)
         if breaks:
             summary += " " + tr("Class breaks ({0}): {1}.").format(method, ", ".join(f"{b:.3f}" for b in breaks))
+        ten = [row for row in sensitivity if abs(abs(row["change"]) - 0.1) < 1e-9]
+        if ten:
+            worst = max(ten, key=lambda row: row["changed_class"])
+            summary += " " + tr("Sensitivity: ±10 % on one weight changes the class of at most {0} basin(s) "
+                                "({1:.0f} %, criterion {2}).").format(
+                worst["changed_class"], 100 * worst["share_changed"], worst["criterion"])
         return outputs, figures, "weights", style, warnings, summary
 
 

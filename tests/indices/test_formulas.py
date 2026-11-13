@@ -250,3 +250,21 @@ def test_segment_breakpoints_is_fast_on_long_profiles():
     found = segment_breakpoints(x, y, max_breaks=3)
     assert time.time() - start < 1.0
     assert {round(x[b["index"]], 1) for b in found} >= {0.3, 0.7}
+
+
+def test_ahp_weight_sensitivity():
+    from core.indices.multicriteria import perturbed_weights, weight_sensitivity
+    weights = {"a": 0.5, "b": 0.3, "c": 0.2}
+    moved = perturbed_weights(weights, "a", 0.2)
+    assert abs(sum(moved.values()) - 1.0) < 1e-12 and abs(moved["a"] - 0.6) < 1e-12
+    assert abs(moved["b"] / moved["c"] - 1.5) < 1e-12
+    rng = np.random.default_rng(2)
+    scores = {k: rng.random(40) for k in weights}
+    rows = weight_sensitivity(scores, weights, "Quantiles", 4)
+    assert len(rows) == 12
+    assert all(0 <= r["changed_class"] <= 40 for r in rows)
+    # A criterion identical for every basin cannot change the ranking much
+    # when its weight moves: only the scale shifts.
+    flat = {"a": scores["a"], "b": np.full(40, 0.5)}
+    rows = weight_sensitivity(flat, {"a": 0.5, "b": 0.5}, "Quantiles", 4)
+    assert all(r["changed_class"] == 0 for r in rows)
