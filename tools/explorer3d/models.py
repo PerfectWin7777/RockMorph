@@ -43,6 +43,11 @@ class ThreeDRaster(ThreeDElement):
     texture_width: int = 0
     texture_height: int = 0
     texture_values: Optional[List[List[Optional[float]]]] = None
+    # Georeferencing of the model, used by the hover probe and the draped
+    # map: centre of the raster in its CRS ("cx", "cy"), metres per CRS unit
+    # ("ux", "uy"), "crs_wkt", "authid", "geographic", and "plane" =
+    # [xmin, ymin, xmax, ymax] in the CRS of the area covered by the mesh.
+    georef: Optional[Dict[str, Any]] = None
 
 
 @dataclass

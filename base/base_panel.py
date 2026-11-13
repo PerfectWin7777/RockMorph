@@ -70,6 +70,18 @@ class _BaseBridge(QObject):
         if hasattr(self._panel, "_on_swath_point"):
             self._panel._on_swath_point(distance, offset)
 
+    @pyqtSlot(float, float)
+    def on_probe_point(self, x, y):
+        """Hover on a 3D terrain: map coordinates (layer CRS) under the pointer."""
+        if hasattr(self._panel, "_on_probe_point"):
+            self._panel._on_probe_point(x, y)
+
+    @pyqtSlot()
+    def on_probe_leave(self):
+        """The pointer left the 3D terrain."""
+        if hasattr(self._panel, "_on_probe_leave"):
+            self._panel._on_probe_leave()
+
     @pyqtSlot(int)
     def receive_click_id(self, fid: int):
         # Pass clicked feature ID to panel's click handler, if it exists

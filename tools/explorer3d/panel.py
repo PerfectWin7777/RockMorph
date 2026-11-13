@@ -28,8 +28,13 @@ from qgis.PyQt.QtWidgets import (  # type: ignore
 from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QTimer  # type: ignore
 from qgis.PyQt.QtGui import QColor, QIcon, QPixmap, QPainter  # type: ignore
 from qgis.PyQt.QtWebEngineWidgets import QWebEnginePage  # type: ignore
-from qgis.core import QgsMapLayerProxyModel  # type: ignore
-from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox # type: ignore
+from qgis.PyQt.QtCore import QBuffer, QByteArray, QIODevice  # type: ignore
+from qgis.core import (  # type: ignore
+    QgsMapLayerProxyModel, QgsMapSettings, QgsMapRendererParallelJob, QgsRectangle,
+    QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsProject, QgsPointXY, QgsWkbTypes,
+    QgsMapLayer, QgsVectorLayer,
+)
+from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox, QgsRubberBand # type: ignore
 
 from ...base.webengine import QWebEngineView
 
@@ -584,8 +589,152 @@ class Explorer3DPanel(BasePanel):
         vector_style_layout.addWidget(self.stacked_width_settings)
 
         layout.addWidget(self.group_vector_style)
+        layout.addWidget(self._build_drape_group())
         # layout.addStretch()
         return page
+
+    # ── Draped map and hover probe (GSV-Studio 3D studio) ────────────────
+
+    def _build_drape_group(self) -> QWidget:
+        """Draped map (any layer, rendered with its QGIS style) and hover probe options."""
+        group = QgsCollapsibleGroupBox(tr("Draped map & probe"))
+        form = QFormLayout(group)
+        form.setContentsMargins(6, 6, 6, 6)
+
+        self.combo_drape = QgsMapLayerComboBox()
+        self.combo_drape.setFilters(QgsMapLayerProxyModel.PolygonLayer | QgsMapLayerProxyModel.RasterLayer
+                                    | QgsMapLayerProxyModel.LineLayer | QgsMapLayerProxyModel.PointLayer)
+        self.combo_drape.setAllowEmptyLayer(True)
+        self.combo_drape.setLayer(None)
+        self.combo_drape.setToolTip(tr(
+            "<b>Map draped on the relief:</b><br>A geological map, land-use polygons, an orthophoto or a "
+            "scanned map, rendered with its QGIS symbology over the terrain extent. The relief "
+            "shading, shadows and haze stay visible through it."))
+        form.addRow(tr("Layer:"), self.combo_drape)
+
+        opacity_row = QHBoxLayout()
+        self.slider_drape_opacity = QSlider(Qt.Horizontal)
+        self.slider_drape_opacity.setRange(0, 100)
+        self.slider_drape_opacity.setValue(80)
+        self.lbl_drape_opacity = QLabel("80 %")
+        opacity_row.addWidget(self.slider_drape_opacity)
+        opacity_row.addWidget(self.lbl_drape_opacity)
+        form.addRow(tr("Opacity:"), opacity_row)
+
+        buttons = QHBoxLayout()
+        self.btn_drape = QPushButton(tr("Drape on relief"))
+        self.btn_drape_clear = QPushButton(tr("Remove"))
+        buttons.addWidget(self.btn_drape)
+        buttons.addWidget(self.btn_drape_clear)
+        form.addRow(buttons)
+
+        self.chk_probe = QCheckBox(tr("Hover probe (position, elevation, slope) linked to the map"))
+        self.chk_probe.setChecked(True)
+        form.addRow(self.chk_probe)
+
+        self._drape_layer_id = None
+        self._probe_marker = None
+        self.btn_drape.clicked.connect(self._on_drape_clicked)
+        self.btn_drape_clear.clicked.connect(self._on_drape_clear)
+        self.slider_drape_opacity.valueChanged.connect(self._on_drape_opacity)
+        self.chk_probe.toggled.connect(self._on_probe_toggled)
+        return group
+
+    def _on_drape_clicked(self) -> None:
+        layer = self.combo_drape.currentLayer()
+        if layer is None:
+            self.show_error(tr("Choose a layer to drape."))
+            return
+        if not self._active_dem_data or not self._active_dem_data.get("georef"):
+            self.show_error(tr("Render a 3D terrain first."))
+            return
+        image = self._render_drape_image(layer)
+        if image is None:
+            self.show_error(tr("The layer could not be rendered over the terrain extent."))
+            return
+        self._drape_layer_id = layer.id()
+        self._js({"action": "set_drape_image",
+                  "payload": {"image": image, "opacity": self.slider_drape_opacity.value() / 100.0}})
+
+    def _on_drape_clear(self) -> None:
+        self._drape_layer_id = None
+        self._js({"action": "clear_drape"})
+
+    def _on_drape_opacity(self, value: int) -> None:
+        self.lbl_drape_opacity.setText(f"{value} %")
+        self._js({"action": "set_drape_opacity", "payload": {"opacity": value / 100.0}})
+
+    def _render_drape_image(self, layer, max_side: int = 2048) -> Optional[str]:
+        """
+        Renders ``layer`` with its QGIS style over the area covered by the
+        terrain mesh, in the DEM CRS, and returns a PNG data URL.
+
+        The image keeps the extent's aspect ratio in CRS units, so it maps
+        linearly onto the mesh UVs (north at the top). Transparent where
+        the layer draws nothing.
+        """
+        georef = self._active_dem_data["georef"]
+        xmin, ymin, xmax, ymax = georef["plane"]
+        width_units, height_units = xmax - xmin, ymax - ymin
+        if width_units <= 0 or height_units <= 0:
+            return None
+        if width_units >= height_units:
+            size = QSize(max_side, max(1, round(max_side * height_units / width_units)))
+        else:
+            size = QSize(max(1, round(max_side * width_units / height_units)), max_side)
+        settings = QgsMapSettings()
+        settings.setLayers([layer])
+        settings.setDestinationCrs(QgsCoordinateReferenceSystem.fromWkt(georef["crs_wkt"]))
+        settings.setTransformContext(QgsProject.instance().transformContext())
+        settings.setOutputSize(size)
+        settings.setExtent(QgsRectangle(xmin, ymin, xmax, ymax))
+        settings.setBackgroundColor(QColor(0, 0, 0, 0))
+        settings.setFlag(QgsMapSettings.Antialiasing, True)
+        settings.setFlag(QgsMapSettings.DrawLabeling, False)
+        job = QgsMapRendererParallelJob(settings)
+        job.start()
+        job.waitForFinished()
+        image = job.renderedImage()
+        if image.isNull():
+            return None
+        data = QByteArray()
+        buffer = QBuffer(data)
+        buffer.open(QIODevice.WriteOnly)
+        image.save(buffer, "PNG")
+        buffer.close()
+        return "data:image/png;base64," + base64.b64encode(bytes(data)).decode("ascii")
+
+    def _on_probe_toggled(self, checked: bool) -> None:
+        self._js({"action": "set_probe", "payload": {"enabled": checked}})
+        if not checked:
+            self._on_probe_leave()
+
+    def _on_probe_point(self, x: float, y: float) -> None:
+        """Shows the 3D pointer position (DEM CRS) as a marker on the QGIS map."""
+        if not self.chk_probe.isChecked() or not self._active_dem_data:
+            return
+        canvas = self.iface.mapCanvas()
+        point = QgsPointXY(x, y)
+        try:
+            source = QgsCoordinateReferenceSystem.fromWkt(self._active_dem_data["georef"]["crs_wkt"])
+            target = canvas.mapSettings().destinationCrs()
+            if source != target:
+                point = QgsCoordinateTransform(source, target, QgsProject.instance()).transform(point)
+        except Exception:
+            return
+        if self._probe_marker is None:
+            self._probe_marker = QgsRubberBand(canvas, QgsWkbTypes.PointGeometry)
+            self._probe_marker.setColor(QColor(220, 40, 40))
+            self._probe_marker.setIconSize(12)
+            self._probe_marker.setWidth(3)
+        self._probe_marker.reset(QgsWkbTypes.PointGeometry)
+        self._probe_marker.addPoint(point)
+        self._probe_marker.show()
+
+    def _on_probe_leave(self) -> None:
+        if self._probe_marker is not None:
+            self._probe_marker.reset(QgsWkbTypes.PointGeometry)
+            self._probe_marker.hide()
 
     # ── Page 2 — Symbology (Re-conceived with QgsCollapsibleGroupBox) ────
     def _build_page_symbology(self) -> QWidget:
@@ -1358,6 +1507,13 @@ class Explorer3DPanel(BasePanel):
         # 2. Cache and transmit the dataset to the WebGL rendering engine
         self._active_dem_data = dem_data.to_dict()
         self._js({"action": "set_main_raster", "payload": self._active_dem_data})
+        self._js({"action": "set_probe", "payload": {"enabled": self.chk_probe.isChecked()}})
+        if self._drape_layer_id and QgsProject.instance().mapLayer(self._drape_layer_id):
+            # The draped map follows the new terrain extent.
+            image = self._render_drape_image(QgsProject.instance().mapLayer(self._drape_layer_id))
+            if image:
+                self._js({"action": "set_drape_image",
+                          "payload": {"image": image, "opacity": self.slider_drape_opacity.value() / 100.0}})
         
         # 3. Dynamically append structural Block control options
         self._add_layer_item(tr("🧱  Block base (walls & sole)"), element_id="block_base")

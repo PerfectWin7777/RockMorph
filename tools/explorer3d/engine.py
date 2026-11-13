@@ -146,6 +146,16 @@ class Explorer3DEngine(BaseEngine):
         x_coords = [((i + 0.5) * step_x * px - x_centre) * unit_x for i in range(n_cols)]
         y_coords = [(y_centre - (j + 0.5) * step_y * py) * unit_y for j in range(n_rows)]
 
+        cx, cy = x_min + cols * px / 2.0, y_max - rows * py / 2.0
+        georef = {
+            "cx": cx, "cy": cy, "ux": unit_x, "uy": unit_y,
+            "crs_wkt": dem_layer.crs().toWkt(), "authid": dem_layer.crs().authid(),
+            "geographic": bool(reader.is_geographic),
+            # The mesh spans the first to the last block centre.
+            "plane": [cx + x_coords[0] / unit_x, cy + y_coords[-1] / unit_y,
+                      cx + x_coords[-1] / unit_x, cy + y_coords[0] / unit_y],
+        }
+
         valid = mesh[np.isfinite(mesh)]
         z_min = float(valid.min()) if valid.size else 0.0
         z_max = float(valid.max()) if valid.size else 0.0
@@ -167,6 +177,7 @@ class Explorer3DEngine(BaseEngine):
             # Decimetre precision is far below DEM accuracy and halves the
             # size of the JSON sent to the viewer.
             texture_values=_json_grid(texture, 1),
+            georef=georef,
         )
 
     def prepare_vector_layer(

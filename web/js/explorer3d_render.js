@@ -212,6 +212,9 @@ const terrainFragmentShader = `
     uniform vec3 uGrassColor;
     uniform vec3 uRockColor;
     uniform vec3 uSnowColor;
+    uniform sampler2D uDrape;          // map rendered by QGIS (geology, land use, orthophoto)
+    uniform bool uUseDrape;
+    uniform float uDrapeOpacity;
 
     varying vec3 vNormal;
     varying vec3 vWorldNormal;
@@ -300,6 +303,11 @@ const terrainFragmentShader = `
         }
 
         vec3 baseColor = uUseVertexColors ? vColor : uSolidColor;
+        // Draped map: the colours of the QGIS symbology replace the base
+        // colour where the map is opaque; the relief shading stays.
+        vec4 drape = uUseDrape ? texture2D(uDrape, vUv) : vec4(0.0);
+        float drapeMix = drape.a * uDrapeOpacity;
+        baseColor = mix(baseColor, drape.rgb, drapeMix);
 
         // ── CLASSIC STYLE (unchanged lighting model) ────────────────────
         if (uRenderStyle == 0) {
@@ -336,6 +344,9 @@ const terrainFragmentShader = `
             albedo = landCoverAlbedo(h, heightNormal(vUv, uRealHeightRange));
         } else {
             albedo = srgbToLinear(baseColor);
+        }
+        if (uLandCover && drapeMix > 0.0) {
+            albedo = mix(albedo, srgbToLinear(drape.rgb), drapeMix);
         }
 
         vec2 bake = texture2D(uShadowAO, vUv).rg;
@@ -478,6 +489,9 @@ const bakeFragmentShader = `
     }
 `;
 
+let drapeState = null;         // {texture, opacity}: map draped on the terrain
+let probeState = { enabled: true, georef: null, last: 0, inside: false };
+const probeRaycaster = new THREE.Raycaster();
 let bakeState = null;          // {target, scene, camera, material}
 let bakeDirty = false;         // re-bake requested (done once per frame at most)
 
@@ -603,6 +617,9 @@ function createCustomMaterial(useVertexColors, solidColorObj, heightTexture, wid
             uGrassColor: { value: new THREE.Color(realism.landColors.grass) },
             uRockColor: { value: new THREE.Color(realism.landColors.rock) },
             uSnowColor: { value: new THREE.Color(realism.landColors.snow) },
+            uDrape: { value: drapeState ? drapeState.texture : null },
+            uUseDrape: { value: !!drapeState },
+            uDrapeOpacity: { value: drapeState ? drapeState.opacity : 0.8 },
         },
         side: THREE.DoubleSide,
         extensions: { derivatives: true },
@@ -1001,6 +1018,10 @@ function processPythonCommand(command) {
 
             // ── Terrain ──────────────────────────────────────────────────
             case "set_main_raster":
+                // A new DEM may cover another area: the old draped map no
+                // longer fits (Python sends it again for the new extent).
+                _clearDrape();
+                probeState.georef = command.payload.georef || null;
                 _buildTerrain(command.payload);
                 break;
 
@@ -1183,6 +1204,20 @@ function processPythonCommand(command) {
                 _updateShadingMode(command.payload.mode);
                 break;
 
+            case "set_drape_image":
+                _setDrapeImage(command.payload);
+                break;
+            case "set_drape_opacity":
+                if (drapeState) { drapeState.opacity = command.payload.opacity; _applyDrapeUniforms(); }
+                break;
+            case "clear_drape":
+                _clearDrape();
+                break;
+            case "set_probe":
+                probeState.enabled = !!command.payload.enabled;
+                if (command.payload.georef) probeState.georef = command.payload.georef;
+                if (!probeState.enabled) _hideProbe();
+                break;
             case "export_viewport":
                 _exportViewport(command.payload.format, command.payload.dpi);
                 break;
@@ -3044,3 +3079,149 @@ function _initStandaloneOnBoot() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// DRAPED MAP (texture rendered by QGIS over the terrain extent)
+// ---------------------------------------------------------------------------
+//
+// Python renders the chosen layer with its own QGIS symbology (categorised
+// geology, land use, an orthophoto…) over exactly the area covered by the
+// terrain mesh and sends it as a PNG data URL. The terrain shader mixes it
+// with the base colour, so the relief shading, cast shadows and haze stay
+// visible through the map (GSV-Studio's "cartes de polygones drapées").
+
+function _terrainMaterials() {
+    const materials = [];
+    Object.values(sceneObjects).forEach(obj => {
+        if (obj && obj.type === "raster" && obj.mesh && obj.mesh.material && obj.mesh.material.uniforms) {
+            materials.push(obj.mesh.material);
+        }
+    });
+    return materials;
+}
+
+function _applyDrapeUniforms() {
+    _terrainMaterials().forEach(mat => {
+        if (!mat.uniforms.uDrape) return;
+        mat.uniforms.uDrape.value = drapeState ? drapeState.texture : null;
+        mat.uniforms.uUseDrape.value = !!drapeState;
+        mat.uniforms.uDrapeOpacity.value = drapeState ? drapeState.opacity : 0.8;
+    });
+}
+
+function _setDrapeImage(payload) {
+    const image = new Image();
+    image.onload = () => {
+        if (drapeState && drapeState.texture) drapeState.texture.dispose();
+        const texture = new THREE.Texture(image);
+        // Not a power of two: no mipmaps, clamped edges (WebGL 1 safe).
+        texture.generateMipmaps = false;
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.needsUpdate = true;
+        drapeState = { texture: texture, opacity: payload.opacity !== undefined ? payload.opacity : 0.8 };
+        _applyDrapeUniforms();
+    };
+    image.src = payload.image;
+}
+
+function _clearDrape() {
+    if (drapeState && drapeState.texture) drapeState.texture.dispose();
+    drapeState = null;
+    _applyDrapeUniforms();
+}
+
+// ---------------------------------------------------------------------------
+// HOVER PROBE (position, elevation and slope under the pointer)
+// ---------------------------------------------------------------------------
+//
+// The terrain mesh is ray-cast at most every 60 ms. Model coordinates are
+// turned back into metres (÷ scaleFactor, + offsets), then into the CRS of
+// the DEM with the georeferencing sent by Python. The slope comes from the
+// face normal, corrected for the vertical exaggeration E (a gradient g seen
+// in the model is g / E on the ground). The CRS position is also sent to
+// Python, which shows it on the QGIS map.
+
+function _probeOverlay() {
+    let el = document.getElementById("probe-overlay");
+    if (!el) {
+        el = document.createElement("div");
+        el.id = "probe-overlay";
+        el.style.cssText = "position:absolute;left:10px;bottom:38px;padding:4px 8px;border-radius:4px;" +
+            "background:rgba(0,0,0,0.62);color:#f2f2f2;font:11px/1.35 'Segoe UI',Arial,sans-serif;" +
+            "pointer-events:none;display:none;white-space:nowrap;z-index:20;";
+        document.body.appendChild(el);
+    }
+    return el;
+}
+
+function _hideProbe() {
+    const el = document.getElementById("probe-overlay");
+    if (el) el.style.display = "none";
+    if (probeState.inside && typeof bridge !== "undefined" && bridge && bridge.on_probe_leave) bridge.on_probe_leave();
+    probeState.inside = false;
+}
+
+function _formatNumber(value, decimals) {
+    return value.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+        .replace(/,/g, " ");
+}
+
+function _onProbeMove(event) {
+    if (!probeState.enabled || !renderer || !camera) return;
+    const now = performance.now();
+    if (now - probeState.last < 60) return;
+    probeState.last = now;
+
+    const terrain = Object.values(sceneObjects).find(obj => obj && obj.type === "raster" && obj.mesh && obj.visible !== false);
+    if (!terrain) { _hideProbe(); return; }
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1);
+    probeRaycaster.setFromCamera(ndc, camera);
+    const hits = probeRaycaster.intersectObject(terrain.mesh, false);
+    if (!hits.length) { _hideProbe(); return; }
+
+    const hit = hits[0];
+    const local = terrain.mesh.worldToLocal(hit.point.clone());
+    const exaggeration = baseExaggeration * currentZScale;
+    const xm = local.x / scaleFactor + spatialOffsets.x;
+    const ym = local.y / scaleFactor + spatialOffsets.y;
+    const zm = local.z / (exaggeration * scaleFactor) + spatialOffsets.z;
+    let slopeDeg = null;
+    if (hit.face && hit.face.normal) {
+        const n = hit.face.normal;
+        if (n.z > 1e-6) slopeDeg = Math.atan(Math.hypot(n.x, n.y) / n.z / exaggeration) * 180 / Math.PI;
+    }
+
+    const g = probeState.georef;
+    let position;
+    let crsX = null, crsY = null;
+    if (g) {
+        crsX = g.cx + xm / g.ux;
+        crsY = g.cy + ym / g.uy;
+        position = g.geographic
+            ? "Lon " + crsX.toFixed(5) + "°  Lat " + crsY.toFixed(5) + "°"
+            : "X " + _formatNumber(crsX, 0) + "  Y " + _formatNumber(crsY, 0) + (g.authid ? "  (" + g.authid + ")" : "");
+    } else {
+        position = "x " + _formatNumber(xm, 0) + " m  y " + _formatNumber(ym, 0) + " m";
+    }
+    const el = _probeOverlay();
+    el.innerHTML = position + "<br>Z " + _formatNumber(zm, 1) + " m" +
+        (slopeDeg !== null ? "  ·  slope " + slopeDeg.toFixed(1) + "°" : "");
+    el.style.display = "block";
+    probeState.inside = true;
+    if (crsX !== null && typeof bridge !== "undefined" && bridge && bridge.on_probe_point) bridge.on_probe_point(crsX, crsY);
+}
+
+(function _installProbe() {
+    const install = () => {
+        if (!renderer || !renderer.domElement) { setTimeout(install, 300); return; }
+        renderer.domElement.addEventListener("pointermove", _onProbeMove);
+        renderer.domElement.addEventListener("pointerleave", _hideProbe);
+    };
+    if (document.readyState === "loading") window.addEventListener("DOMContentLoaded", install);
+    else install();
+})();
