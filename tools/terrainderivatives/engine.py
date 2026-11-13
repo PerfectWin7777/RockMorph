@@ -4,6 +4,11 @@ tools/terrainderivatives/engine.py — Terrain Derivatives Computational Engine
 Orchestrates native GDAL geomorphometry and implements a high-performance,
 vectorized pure Python/NumPy Yokoyama Topographic Openness solver.
 
+Land-surface parameters added from GSV-Studio (curvatures, relative
+insolation, Swiss hillshade, multi-scale DEV, valley bottoms, Iwahashi & Pike
+landforms, geomorphons) live in core/terrain_metrics.py; this engine reads
+the DEM, converts the cell size to metres and writes the GeoTIFFs.
+
 Authors: RockMorph contributors / Tony winter
 """
 
@@ -15,11 +20,15 @@ from typing import List
 import numpy as np  # type: ignore
 from osgeo import gdal  # type: ignore
 import processing  # type: ignore
-from qgis.core import QgsRasterLayer, QgsProject, QgsCoordinateTransform  # type: ignore
+from qgis.core import (  # type: ignore
+    QgsRasterLayer, QgsProject, QgsCoordinateTransform,
+    QgsCoordinateReferenceSystem, QgsCoordinateTransformContext,
+)
 from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
 from ...base.base_engine import BaseEngine
 from ...core.raster import RasterReader
+from ...core import terrain_metrics
 
 
 def tr(message: str) -> str:
@@ -27,6 +36,12 @@ def tr(message: str) -> str:
 
 
 class TerrainDerivativesEngine(BaseEngine):
+
+    def __init__(self):
+        super().__init__()
+        # {output key: {class value: label}} filled by compute() for the
+        # categorical rasters (landforms, geomorphons); read by the panel.
+        self.class_legends = {}
 
     def validate(self, **kwargs) -> bool:
         dem = kwargs.get("dem_layer")
@@ -41,6 +56,7 @@ class TerrainDerivativesEngine(BaseEngine):
         """
         dem_layer = kwargs["dem_layer"]
         progress_cb = kwargs.get("progress_callback")
+        self.class_legends = {}
 
         output_layers = {}
         # Compute dynamic horizontal-to-vertical scale factors for geographic coordinates 
@@ -291,10 +307,142 @@ class TerrainDerivativesEngine(BaseEngine):
             lyr_name = _get_layer_name(path_ld, "Local_Dominance")
             output_layers["local_dominance"] = (path_ld, lyr_name)
         
+        # ── 12–18. Land-surface parameters of core/terrain_metrics ──
+        output_layers.update(self._compute_surface_parameters(dem_layer, kwargs, progress_cb))
+
         if progress_cb:
             progress_cb(100, tr("Done."))
 
         return output_layers
+
+    # ------------------------------------------------------------------
+    # Land-surface parameters (curvatures, insolation, Swiss shading, DEV,
+    # valley bottoms, landforms, geomorphons) — core/terrain_metrics.py
+    # ------------------------------------------------------------------
+
+    def _compute_surface_parameters(self, dem_layer: QgsRasterLayer, kwargs: dict, progress_cb) -> dict:
+        """Runs the NumPy land-surface parameters that are checked.
+
+        The DEM is read once; cell sizes are converted to metres for
+        geographic DEMs. Returns {key: (path, layer name)} like the other
+        outputs; class rasters carry their legend in ``self.class_legends``
+        so that the panel can style them.
+        """
+        wanted = [key for key in ("curvature", "insolation", "swiss", "dev", "mrvbf",
+                                  "landforms", "geomorphons") if kwargs.get(f"out_{key}")]
+        if not wanted:
+            return {}
+
+        reader = RasterReader(dem_layer)
+        z = reader.array.astype(np.float64, copy=True)
+        if reader.nodata is not None:
+            z[z == reader.nodata] = np.nan
+        dx, dy = self._cell_sizes_meters(dem_layer, reader)
+        cell = max(dx, dy)
+        outputs = {}
+
+        def report(fraction: float, label: str) -> None:
+            if progress_cb:
+                progress_cb(min(99, int(fraction)), label)
+
+        def save(key: str, array: np.ndarray, default_name: str, path_key: str) -> None:
+            path = self._resolve_path(kwargs.get(path_key, "TEMPORARY_OUTPUT"), default_name.lower())
+            self._save_numpy_to_gtiff(array, path, dem_layer)
+            outputs[key] = (path, self._layer_name(path, default_name))
+
+        if "curvature" in wanted:
+            report(60, tr("Computing curvatures..."))
+            kinds = kwargs.get("curvature_kinds") or ["profile", "plan"]
+            base = kwargs.get("path_curvature", "TEMPORARY_OUTPUT")
+            for kind, array in terrain_metrics.curvatures(z, dx, dy, kinds).items():
+                if base and base != "TEMPORARY_OUTPUT":
+                    root, ext = os.path.splitext(base)
+                    path = f"{root}_{kind}{ext or '.tif'}"
+                else:
+                    path = self._resolve_path("TEMPORARY_OUTPUT", f"curvature_{kind}")
+                self._save_numpy_to_gtiff(array, path, dem_layer)
+                outputs[f"curvature_{kind}"] = (path, self._layer_name(path, f"Curvature_{kind}"))
+
+        if "insolation" in wanted:
+            latitude = self._center_latitude(dem_layer)
+            report(65, tr("Computing relative insolation (latitude {:.1f}°)...").format(latitude))
+            save("insolation", terrain_metrics.relative_insolation(z, dx, dy, latitude),
+                 "Relative_Insolation", "path_insolation")
+
+        if "swiss" in wanted:
+            report(72, tr("Computing Swiss hillshade..."))
+            save("swiss", terrain_metrics.swiss_hillshade(
+                z, dx, dy, generalize_m=kwargs.get("swiss_generalize_m", terrain_metrics.SWISS_GENERALIZE_M),
+                z_factor=kwargs.get("swiss_z_factor", 1.0)), "Swiss_Hillshade", "path_swiss")
+
+        if "dev" in wanted:
+            report(78, tr("Computing multi-scale topographic position (DEV)..."))
+            radii = kwargs.get("dev_radii") or terrain_metrics.DEV_RADII
+            save("dev", terrain_metrics.multiscale_dev(z, radii), "Multiscale_DEV", "path_dev")
+
+        if "mrvbf" in wanted:
+            report(84, tr("Computing valley bottoms (MRVBF)..."))
+            save("mrvbf", terrain_metrics.valley_bottoms(
+                z, dx, dy, slope_threshold=kwargs.get("mrvbf_slope", terrain_metrics.MRVBF_SLOPE)),
+                "Valley_Bottoms_MRVBF", "path_mrvbf")
+
+        if "landforms" in wanted:
+            report(90, tr("Classifying landforms (Iwahashi & Pike)..."))
+            save("landforms", terrain_metrics.iwahashi_landforms(
+                z, dx, dy, window_m=kwargs.get("landform_window_m", terrain_metrics.LANDFORM_WINDOW_M)),
+                "Landforms_Iwahashi_Pike", "path_landforms")
+            self.class_legends["landforms"] = terrain_metrics.LANDFORM_CLASSES
+
+        if "geomorphons" in wanted:
+            lookup_m = kwargs.get("geomorphon_lookup_m", terrain_metrics.GEOMORPHON_LOOKUP_M)
+            lookup = max(1, int(round(lookup_m / cell)))
+            report(94, tr("Computing geomorphons (search {} cells)...").format(lookup))
+            save("geomorphons", terrain_metrics.geomorphons(
+                z, dx, dy, lookup, kwargs.get("geomorphon_flat_deg", terrain_metrics.GEOMORPHON_FLAT_DEG)),
+                "Geomorphons", "path_geomorphons")
+            self.class_legends["geomorphons"] = terrain_metrics.GEOMORPHON_CLASSES
+
+        return outputs
+
+    @staticmethod
+    def _resolve_path(path: str, stem: str) -> str:
+        """A unique temporary GeoTIFF for 'TEMPORARY_OUTPUT', the user path otherwise."""
+        if path and path != "TEMPORARY_OUTPUT":
+            return path
+        unique_id = uuid.uuid4().hex[:8]
+        return os.path.join(tempfile.gettempdir(), f"{stem}_{unique_id}.tif").replace("\\", "/")
+
+    @staticmethod
+    def _layer_name(path: str, default: str) -> str:
+        """File stem of a user path, ``default`` for temporary outputs."""
+        if path and os.path.dirname(path).replace("\\", "/") != tempfile.gettempdir().replace("\\", "/"):
+            return os.path.splitext(os.path.basename(path))[0]
+        return default
+
+    def _cell_sizes_meters(self, dem_layer: QgsRasterLayer, reader: RasterReader):
+        """(dx, dy) in metres; degrees are converted at the centre latitude."""
+        px, py = abs(reader.pixel_size_x), abs(reader.pixel_size_y)
+        if not dem_layer.crs().isGeographic():
+            return px, py
+        extent = dem_layer.extent()
+        center_lat = (extent.yMinimum() + extent.yMaximum()) / 2.0
+        return px * 111320.0 * math.cos(math.radians(center_lat)), py * 110574.0
+
+    @staticmethod
+    def _center_latitude(dem_layer: QgsRasterLayer) -> float:
+        """Latitude (°) of the DEM centre, 45° when the CRS is unknown."""
+        crs = dem_layer.crs()
+        if not crs.isValid():
+            return 45.0
+        center = dem_layer.extent().center()
+        if crs.isGeographic():
+            return float(center.y())
+        try:
+            transform = QgsCoordinateTransform(crs, QgsCoordinateReferenceSystem("EPSG:4326"),
+                                               QgsCoordinateTransformContext())
+            return float(transform.transform(center).y())
+        except Exception:
+            return 45.0
 
     
     # ------------------------------------------------------------------

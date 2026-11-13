@@ -11,11 +11,12 @@ from qgis.PyQt.QtWidgets import (  # type: ignore
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton,
      QComboBox, QRadioButton, QButtonGroup, QScrollArea,
-    QSlider
+    QSlider, QLineEdit
 )
+from qgis.PyQt.QtGui import QColor  # type: ignore
 from qgis.PyQt.QtCore import Qt, QCoreApplication # type: ignore
 from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox  # type: ignore
-from qgis.core import QgsMapLayerProxyModel, QgsProject, QgsRasterLayer   # type: ignore
+from qgis.core import QgsMapLayerProxyModel, QgsProject, QgsRasterLayer, QgsPalettedRasterRenderer  # type: ignore
 
 from .engine import TerrainDerivativesEngine
 from ...base.base_panel import BasePanel, ComputeWorker
@@ -412,6 +413,9 @@ class TerrainDerivativesPanel(BasePanel):
 
             root.addWidget(rvt_group)
 
+            # ── GroupBox 5: Land-surface parameters (core/terrain_metrics) ──
+            root.addWidget(self._build_surface_parameters_group())
+
             self.spin_neg_sectors.setToolTip(self.spin_pos_sectors.toolTip())
             self.spin_svf_sectors.setToolTip(self.spin_pos_sectors.toolTip())
             self.spin_sky_sectors.setToolTip(self.spin_pos_sectors.toolTip())
@@ -455,13 +459,200 @@ class TerrainDerivativesPanel(BasePanel):
         except :
             import traceback; traceback.print_exc()
 
+    def _build_surface_parameters_group(self) -> QgsCollapsibleGroupBox:
+        """Curvatures, insolation, Swiss shading, DEV, valley bottoms and landform classes.
+
+        All are computed in NumPy by core/terrain_metrics.py; defaults are the
+        GSV-Studio constants.
+        """
+        group = QgsCollapsibleGroupBox(tr("Curvature, Insolation & Landforms"))
+        layout = QVBoxLayout(group)
+        layout.setSpacing(10)
+
+        # Curvatures (Florinsky, 2016)
+        self.out_curvature = OutputSelectorWidget(
+            tr("Curvatures (Florinsky)"), "curvature.tif", "GeoTIFF (*.tif)", is_checked=False)
+        self.out_curvature.setToolTip(tr(
+            "<b>Surface curvatures (Evans–Young 3 × 3, Florinsky 2016), in 1/m:</b><br>"
+            "Positive = convex (crests, spurs), negative = concave (valleys, hollows).<br>"
+            "One raster per selected kind; a file name gets the suffix _profile, _plan…"))
+        curv_opts = QWidget()
+        curv_layout = QVBoxLayout(curv_opts)
+        curv_layout.setContentsMargins(0, 4, 0, 0)
+        curv_layout.setSpacing(2)
+        self.curvature_checks = {}
+        for kind, label, tip, checked in (
+                ("profile", tr("Profile (kv) – flow acceleration"), tr("Curvature along the slope line."), True),
+                ("plan", tr("Plan (kh) – flow convergence"), tr("Horizontal curvature: < 0 converging flow (hollows)."), True),
+                ("mean", tr("Mean (H)"), tr("Average of the two principal curvatures."), False),
+                ("gaussian", tr("Gaussian (K)"), tr("Product of the principal curvatures: > 0 dome or basin, < 0 saddle."), False),
+                ("minimal", tr("Minimal (kmin)"), tr("Smaller principal curvature: valley lines."), False),
+                ("maximal", tr("Maximal (kmax)"), tr("Larger principal curvature: ridge lines."), False)):
+            box = QCheckBox(label)
+            box.setToolTip(tip)
+            box.setChecked(checked)
+            curv_layout.addWidget(box)
+            self.curvature_checks[kind] = box
+        self.out_curvature.addSettingsWidget(curv_opts)
+        layout.addWidget(self.out_curvature)
+
+        # Relative insolation (Kumar et al., 1997)
+        self.out_insolation = OutputSelectorWidget(
+            tr("Relative Insolation (yearly)"), "insolation.tif", "GeoTIFF (*.tif)", is_checked=False)
+        self.out_insolation.setToolTip(tr(
+            "<b>Relative yearly insolation (Kumar et al., 1997):</b><br>"
+            "Direct sun received over the solstices and equinoxes at the DEM latitude, "
+            "divided by what flat ground receives: &gt; 1 sunny slopes, &lt; 1 shaded slopes.<br>"
+            "Explains vegetation, weathering and periglacial asymmetries between opposite slopes. "
+            "Cast shadows of distant relief are not traced."))
+        layout.addWidget(self.out_insolation)
+
+        # Swiss hillshade (Jenny, 2001)
+        self.out_swiss = OutputSelectorWidget(
+            tr("Swiss Hillshade (Imhof style)"), "swiss_hillshade.tif", "GeoTIFF (*.tif)", is_checked=False)
+        self.out_swiss.setToolTip(tr(
+            "<b>Swiss relief shading (Jenny, 2001):</b><br>"
+            "North-west light on a generalised DEM for the large forms, multidirectional "
+            "shading for the detail, plains kept light. Values 0–1."))
+        swiss_opts = QWidget()
+        swiss_layout = QFormLayout(swiss_opts)
+        swiss_layout.setContentsMargins(0, 4, 0, 0)
+        self.spin_swiss_generalize = QSpinBox()
+        self.spin_swiss_generalize.setRange(20, 5000)
+        self.spin_swiss_generalize.setValue(300)
+        self.spin_swiss_generalize.setSuffix(" m")
+        self.spin_swiss_generalize.setToolTip(tr("Radius over which the large forms are generalised."))
+        swiss_layout.addRow(tr("Generalisation:"), self.spin_swiss_generalize)
+        self.spin_swiss_z = QDoubleSpinBox()
+        self.spin_swiss_z.setRange(0.1, 20.0)
+        self.spin_swiss_z.setValue(1.0)
+        self.spin_swiss_z.setDecimals(1)
+        swiss_layout.addRow(tr("Z-Factor:"), self.spin_swiss_z)
+        self.out_swiss.addSettingsWidget(swiss_opts)
+        layout.addWidget(self.out_swiss)
+
+        # Multi-scale DEV (Lindsay et al., 2015)
+        self.out_dev = OutputSelectorWidget(
+            tr("Multi-scale Topographic Position (DEV)"), "dev_multiscale.tif", "GeoTIFF (*.tif)", is_checked=False)
+        self.out_dev.setToolTip(tr(
+            "<b>Multi-scale deviation from mean elevation (Lindsay et al., 2015):</b><br>"
+            "(z − mean) / standard deviation, kept at the scale where it is strongest.<br>"
+            "&gt; 0 crests and highs, &lt; 0 valleys and hollows, whatever their size."))
+        dev_opts = QWidget()
+        dev_layout = QFormLayout(dev_opts)
+        dev_layout.setContentsMargins(0, 4, 0, 0)
+        self.edit_dev_radii = QLineEdit("3, 9, 27")
+        self.edit_dev_radii.setToolTip(tr("Window radii in cells, separated by commas."))
+        dev_layout.addRow(tr("Radii (cells):"), self.edit_dev_radii)
+        self.out_dev.addSettingsWidget(dev_opts)
+        layout.addWidget(self.out_dev)
+
+        # Valley bottoms (simplified MRVBF)
+        self.out_mrvbf = OutputSelectorWidget(
+            tr("Valley Bottoms (MRVBF, simplified)"), "valley_bottoms.tif", "GeoTIFF (*.tif)", is_checked=False)
+        self.out_mrvbf.setToolTip(tr(
+            "<b>Multi-resolution valley bottom flatness (Gallant & Dowling, 2003), simplified:</b><br>"
+            "0 on slopes and summits; the value grows with the width of the flat, low valley floor. "
+            "Maps alluvial fills, terraces and depositional areas."))
+        mrvbf_opts = QWidget()
+        mrvbf_layout = QFormLayout(mrvbf_opts)
+        mrvbf_layout.setContentsMargins(0, 4, 0, 0)
+        self.spin_mrvbf_slope = QDoubleSpinBox()
+        self.spin_mrvbf_slope.setRange(1.0, 45.0)
+        self.spin_mrvbf_slope.setValue(16.0)
+        self.spin_mrvbf_slope.setSuffix(" °")
+        self.spin_mrvbf_slope.setToolTip(tr("Flatness threshold at the finest scale; halved at each coarser scale."))
+        mrvbf_layout.addRow(tr("Initial slope threshold:"), self.spin_mrvbf_slope)
+        self.out_mrvbf.addSettingsWidget(mrvbf_opts)
+        layout.addWidget(self.out_mrvbf)
+
+        # Iwahashi & Pike landforms
+        self.out_landforms = OutputSelectorWidget(
+            tr("Landform Classes (Iwahashi & Pike)"), "landforms.tif", "GeoTIFF (*.tif)", is_checked=False)
+        self.out_landforms.setToolTip(tr(
+            "<b>Terrain classes of Iwahashi & Pike (2007), first level:</b><br>"
+            "Slope steep or gentle, surface convex or concave, texture fine or coarse, "
+            "each compared to its mean over the DEM: 8 classes, styled with a legend."))
+        land_opts = QWidget()
+        land_layout = QFormLayout(land_opts)
+        land_layout.setContentsMargins(0, 4, 0, 0)
+        self.spin_landform_window = QSpinBox()
+        self.spin_landform_window.setRange(30, 10000)
+        self.spin_landform_window.setValue(300)
+        self.spin_landform_window.setSuffix(" m")
+        self.spin_landform_window.setToolTip(tr("Window over which convexity and texture are measured."))
+        land_layout.addRow(tr("Window:"), self.spin_landform_window)
+        self.out_landforms.addSettingsWidget(land_opts)
+        layout.addWidget(self.out_landforms)
+
+        # Geomorphons (Jasiewicz & Stepinski, 2013)
+        self.out_geomorphons = OutputSelectorWidget(
+            tr("Geomorphons (10 landform elements)"), "geomorphons.tif", "GeoTIFF (*.tif)", is_checked=False)
+        self.out_geomorphons.setToolTip(tr(
+            "<b>Geomorphons (Jasiewicz & Stepinski, 2013):</b><br>"
+            "Flat, peak, ridge, shoulder, spur, slope, hollow, footslope, valley, pit — "
+            "from the line-of-sight pattern in the 8 directions. Styled with a legend."))
+        geo_opts = QWidget()
+        geo_layout = QFormLayout(geo_opts)
+        geo_layout.setContentsMargins(0, 4, 0, 0)
+        self.spin_geomorphon_lookup = QSpinBox()
+        self.spin_geomorphon_lookup.setRange(10, 20000)
+        self.spin_geomorphon_lookup.setValue(1500)
+        self.spin_geomorphon_lookup.setSuffix(" m")
+        self.spin_geomorphon_lookup.setToolTip(tr("Search distance: larger values describe larger landforms."))
+        geo_layout.addRow(tr("Search distance:"), self.spin_geomorphon_lookup)
+        self.spin_geomorphon_flat = QDoubleSpinBox()
+        self.spin_geomorphon_flat.setRange(0.0, 10.0)
+        self.spin_geomorphon_flat.setValue(1.0)
+        self.spin_geomorphon_flat.setSuffix(" °")
+        self.spin_geomorphon_flat.setToolTip(tr("Elevation angle below which a direction counts as flat."))
+        geo_layout.addRow(tr("Flatness threshold:"), self.spin_geomorphon_flat)
+        self.out_geomorphons.addSettingsWidget(geo_opts)
+        layout.addWidget(self.out_geomorphons)
+        return group
+
+    def _surface_parameter_params(self) -> dict:
+        """Parameters of the land-surface group for the engine."""
+        radii = []
+        for token in self.edit_dev_radii.text().replace(";", ",").split(","):
+            token = token.strip()
+            if token.isdigit() and int(token) > 0:
+                radii.append(int(token))
+        params = {
+            "curvature_kinds": [kind for kind, box in self.curvature_checks.items() if box.isChecked()],
+            "swiss_generalize_m": float(self.spin_swiss_generalize.value()),
+            "swiss_z_factor": self.spin_swiss_z.value(),
+            "dev_radii": tuple(radii) or (3, 9, 27),
+            "mrvbf_slope": self.spin_mrvbf_slope.value(),
+            "landform_window_m": float(self.spin_landform_window.value()),
+            "geomorphon_lookup_m": float(self.spin_geomorphon_lookup.value()),
+            "geomorphon_flat_deg": self.spin_geomorphon_flat.value(),
+        }
+        for key in ("curvature", "insolation", "swiss", "dev", "mrvbf", "landforms", "geomorphons"):
+            selector = getattr(self, f"out_{key}")
+            params[f"out_{key}"] = selector.isChecked()
+            params[f"path_{key}"] = selector.filePath()
+        return params
+
+    @staticmethod
+    def _style_classes(layer: QgsRasterLayer, legend: dict) -> None:
+        """Paletted renderer with one colour and label per class value."""
+        colors = ["#9e9e9e", "#7b1f1f", "#d1442b", "#f08d49", "#f6c85f", "#c9d17e",
+                  "#7fb685", "#3f8f9e", "#2c5d9e", "#1d2f6f"]
+        classes = [QgsPalettedRasterRenderer.Class(value, QColor(colors[(int(value) - 1) % len(colors)]), label)
+                   for value, label in sorted(legend.items())]
+        layer.setRenderer(QgsPalettedRasterRenderer(layer.dataProvider(), 1, classes))
+        layer.triggerRepaint()
+
     # ── Helpers ──
 
     def _get_all_selectors(self) -> list[OutputSelectorWidget]:
         return [
             self.out_slope, self.out_aspect, self.out_hillshade, self.out_tpi, self.out_tri,
             self.out_openness_pos, self.out_openness_neg, self.out_svf, 
-            self.out_sky_illumination, self.out_anisotropic_svf, self.out_local_dominance
+            self.out_sky_illumination, self.out_anisotropic_svf, self.out_local_dominance,
+            self.out_curvature, self.out_insolation, self.out_swiss, self.out_dev,
+            self.out_mrvbf, self.out_landforms, self.out_geomorphons,
         ]
 
     def _on_select_all(self):
@@ -562,6 +753,7 @@ class TerrainDerivativesPanel(BasePanel):
             "local_dom_sectors": self.spin_ld_sectors.value(),
             "observer_height": self.spin_ld_obs_height.value()
         }
+        params.update(self._surface_parameter_params())
 
         self.btn_compute.setEnabled(False)
         self.set_loading_state(True, tr("Computing terrain derivatives asynchronously..."), total=100)
@@ -599,6 +791,9 @@ class TerrainDerivativesPanel(BasePanel):
         for key, (path, name) in result.items():
             layer = QgsRasterLayer(path, name, "gdal")
             if layer.isValid():
+                legend = self.engine.class_legends.get(key)
+                if legend:
+                    self._style_classes(layer, {value: tr(label) for value, label in legend.items()})
                 project.addMapLayer(layer)
 
         self.show_info(tr("Terrain analysis complete. Layers added successfully."))
