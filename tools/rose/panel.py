@@ -1,15 +1,15 @@
 
 # tools/rose/panel.py
 
-from PyQt5.QtWidgets import ( # type: ignore
+from qgis.PyQt.QtWidgets import ( # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QSpinBox, QComboBox,
     QCheckBox, QSlider, QLineEdit,
     QColorDialog, QSizePolicy,QDoubleSpinBox
 )
-from PyQt5.QtWebEngineWidgets import QWebEngineView # type: ignore
-from PyQt5.QtCore import Qt, QCoreApplication # type: ignore
-from PyQt5.QtGui import QColor # type: ignore
+from ...base.webengine import QWebEngineView
+from qgis.PyQt.QtCore import Qt, QCoreApplication # type: ignore
+from qgis.PyQt.QtGui import QColor # type: ignore
 from qgis.PyQt.QtWidgets import QFileDialog # type: ignore
 from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox  # type: ignore
 from qgis.core import QgsMapLayerProxyModel # type: ignore
@@ -56,7 +56,7 @@ class RosePanel(BasePanel):
         root.setSpacing(6)
 
         # --- Input group ---
-        input_group = QgsCollapsibleGroupBox(tr("Input & Analysis"))
+        input_group = QgsCollapsibleGroupBox(tr("Input && Analysis"))
         input_layout = QFormLayout(input_group)
 
         self.layer_combo = QgsMapLayerComboBox()
@@ -233,7 +233,7 @@ class RosePanel(BasePanel):
         json_data = json.dumps(data)
         # Use double quotes wrapper to avoid conflicts with JSON content
         js = f'updatePlot({json.dumps(json_data)})'
-        self.webview.page().runJavaScript(js)
+        self.run_js(js)
 
     # ------------------------------------------------------------------
     # Export
@@ -277,7 +277,7 @@ class RosePanel(BasePanel):
         self._pending_export_dpi  = dpi
 
         div_id = 'plot-main'  # div ID for plotly export
-        self.webview.page().runJavaScript(f"exportViaSvg('{div_id}')")
+        self.run_js(f"exportViaSvg('{div_id}')")
 
 
 

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<!--
+  web/morphometry.html
+
+  Results viewer of the Morphometric Indices tool (and of the IAT / AHP /
+  composite / statistics tools, which reuse it). Python sends one JSON
+  payload through renderResults(payload); everything else (sorting,
+  filtering, chart choice) happens here so the viewer stays responsive.
+
+  Tabs:
+    Table        – values and classes, sortable, filterable; clicking a row
+                   selects the basin on the QGIS map.
+    Charts       – bar, class distribution, scatter, correlation, box plots,
+                   radar; each chart is exported through the Python bridge.
+    Profiles     – longitudinal profile of the trunk stream and SL reaches
+                   (two stacked plots sharing the distance axis; never a
+                   dual-axis chart).
+    Diagnostics  – per-basin warnings explaining missing or doubtful values.
+
+  Authors: RockMorph contributors / Tony
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RockMorph results</title>
+<script src="js/qwebchannel.js"></script>
+<script src="js/plotly.min.js"></script>
+<style>
+  /* Colour roles (reference data-viz palette). Class colours are an ordinal
+     single-hue ramp: class 1 (highest activity / strongest) is the darkest. */
+  :root {
+    color-scheme: light;
+    --surface-0: #f4f4f2;
+    --surface-1: #fcfcfb;
+    --border: #dcdbd6;
+    --grid: #e6e5e0;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #7a7974;
+    --accent: #2a78d6;
+    --row-hover: #eef4fc;
+    --row-selected: #dbe8f9;
+    --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+    --class-1: #184f95; --class-2: #2a78d6; --class-3: #6da7ec; --class-4: #9ec5f4;
+    --class-ink-1: #ffffff; --class-ink-2: #ffffff; --class-ink-3: #0b0b0b; --class-ink-4: #0b0b0b;
+    --warning: #fab219; --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-0: #121211; --surface-1: #1a1a19; --border: #383835; --grid: #2c2c2a;
+      --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+      --accent: #3987e5; --row-hover: #222a35; --row-selected: #1c3354;
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+      --class-1: #9ec5f4; --class-2: #5598e7; --class-3: #256abf; --class-4: #184f95;
+      --class-ink-1: #0b0b0b; --class-ink-2: #0b0b0b; --class-ink-3: #ffffff; --class-ink-4: #ffffff;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-0: #121211; --surface-1: #1a1a19; --border: #383835; --grid: #2c2c2a;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --accent: #3987e5; --row-hover: #222a35; --row-selected: #1c3354;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+    --class-1: #9ec5f4; --class-2: #5598e7; --class-3: #256abf; --class-4: #184f95;
+    --class-ink-1: #0b0b0b; --class-ink-2: #0b0b0b; --class-ink-3: #ffffff; --class-ink-4: #ffffff;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--surface-0); color: var(--text-primary);
+    font: 13px/1.45 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header { padding: 10px 16px 0; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--text-secondary); font-size: 12px; }
+  nav { display: flex; gap: 2px; padding: 8px 16px 0; border-bottom: 1px solid var(--border); }
+  nav button {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    padding: 6px 12px; font: inherit; color: var(--text-secondary); cursor: pointer;
+  }
+  nav button.active { color: var(--text-primary); border-bottom-color: var(--accent); font-weight: 600; }
+  nav button .count { color: var(--text-muted); font-weight: 400; margin-left: 4px; }
+  main { flex: 1; overflow: auto; padding: 12px 16px 16px; }
+  section { display: none; }
+  section.active { display: block; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .toolbar label { color: var(--text-secondary); font-size: 12px; }
+  select, input[type="search"] {
+    font: inherit; color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px;
+  }
+  button.action {
+    font: inherit; background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 10px; cursor: pointer;
+  }
+  button.action:hover { border-color: var(--accent); }
+  .spacer { flex: 1; }
+  .hint { color: var(--text-muted); font-size: 12px; }
+
+  /* Table */
+  .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1); max-height: calc(100vh - 170px); }
+  table { border-collapse: collapse; width: max-content; min-width: 100%; }
+  th, td { padding: 4px 10px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--surface-1); z-index: 2; cursor: pointer; font-weight: 600; user-select: none; }
+  th .unit { color: var(--text-muted); font-weight: 400; }
+  th.sorted-asc::after { content: " ▲"; color: var(--accent); }
+  th.sorted-desc::after { content: " ▼"; color: var(--accent); }
+  td:first-child, th:first-child { position: sticky; left: 0; background: var(--surface-1); text-align: left; z-index: 1; }
+  th:first-child { z-index: 3; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { background: var(--row-hover); }
+  tbody tr.selected td { background: var(--row-selected); }
+  td.missing { color: var(--text-muted); }
+  td .warn { color: var(--warning); margin-left: 4px; }
+  .chip { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 9px; font-size: 11px; text-align: center; }
+  .chip.c1 { background: var(--class-1); color: var(--class-ink-1); }
+  .chip.c2 { background: var(--class-2); color: var(--class-ink-2); }
+  .chip.c3 { background: var(--class-3); color: var(--class-ink-3); }
+  .chip.c4 { background: var(--class-4); color: var(--class-ink-4); }
+
+  /* Charts */
+  .plot { background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; height: calc(100vh - 200px); min-height: 340px; }
+  .legend-note { color: var(--text-secondary); font-size: 12px; margin-top: 6px; }
+
+  /* Diagnostics */
+  .diag { background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; }
+  .diag h3 { margin: 0 0 4px; font-size: 13px; }
+  .diag ul { margin: 0; padding-left: 18px; color: var(--text-secondary); }
+  .empty { color: var(--text-muted); padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Results</h1>
+  <div class="sub" id="subtitle">Run a computation to see the results here.</div>
+</header>
+<nav id="tabs">
+  <button data-tab="table" class="active">Table</button>
+  <button data-tab="charts">Charts</button>
+  <button data-tab="profiles" id="tab-profiles">Profiles</button>
+  <button data-tab="diagnostics">Diagnostics<span class="count" id="diag-count"></span></button>
+</nav>
+<main>
+  <section id="table" class="active">
+    <div class="toolbar">
+      <input type="search" id="filter" placeholder="Filter basins…" aria-label="Filter basins">
+      <label><input type="checkbox" id="show-classes" checked> Show classes</label>
+      <span class="spacer"></span>
+      <span class="hint">Click a row to select the basin on the map · click a header to sort</span>
+    </div>
+    <div class="table-wrap"><table id="grid"><thead></thead><tbody></tbody></table></div>
+  </section>
+
+  <section id="charts">
+    <div class="toolbar">
+      <label for="chart-type">Chart</label>
+      <select id="chart-type">
+        <option value="bar">Values by basin (bar)</option>
+        <option value="classes">Class distribution</option>
+        <option value="scatter">Scatter (X vs Y)</option>
+        <option value="correlation">Correlation matrix</option>
+        <option value="box">Distribution (box plots, z-scores)</option>
+        <option value="radar">Basin profile (radar, min–max scaled)</option>
+      </select>
+      <label for="chart-x" id="lbl-x">Index</label><select id="chart-x"></select>
+      <label for="chart-y" id="lbl-y">Y</label><select id="chart-y"></select>
+      <span class="spacer"></span>
+      <button class="action" data-export="png">Save PNG</button>
+      <button class="action" data-export="svg">Save SVG</button>
+    </div>
+    <div id="chart" class="plot"></div>
+    <div class="legend-note" id="chart-note"></div>
+  </section>
+
+  <section id="profiles">
+    <div class="toolbar">
+      <label for="profile-basin">Basin</label><select id="profile-basin"></select>
+      <span class="spacer"></span>
+      <button class="action" data-export="png" data-target="profile">Save PNG</button>
+      <button class="action" data-export="svg" data-target="profile">Save SVG</button>
+    </div>
+    <div id="profile" class="plot"></div>
+    <div class="legend-note">Top: trunk-stream longitudinal profile (source → outlet, filled DEM). Bottom: stream-length gradient index of consecutive reaches (Hack, 1973).</div>
+  </section>
+
+  <section id="diagnostics"><div id="diag-list"></div></section>
+</main>
+
+<script src="js/bridge.js"></script>
+<script src="js/morphometry.js"></script>
+</body>
+</html>

@@ -19,7 +19,7 @@ from qgis.core import ( # type: ignore
     QgsCoordinateTransform,
     QgsVectorLayer,
 )
-from PyQt5.QtCore import QCoreApplication # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication # type: ignore
 from .raster import RasterReader
 
 
@@ -61,7 +61,8 @@ class SwathSampler:
         compute_q:        bool  = False,
         compute_relief:   bool  = True,
         compute_hyps:     bool  = True,
-        progress_callback: callable = None
+        progress_callback: callable = None,
+        feature_id:       int   = None,
     ):
         self.reader        = reader
         self.line_layer    = line_layer
@@ -72,6 +73,15 @@ class SwathSampler:
         self.compute_relief = compute_relief
         self.compute_hyps  = compute_hyps
         self.progress_callback = progress_callback
+        # Feature of line_layer to profile (None = first feature). The panel
+        # passes the feature chosen by the user, by default the selected one.
+        self.feature_id    = feature_id
+        self.warnings: list = []
+        self._band_left: list = []    # transversal end points, DEM CRS
+        self._band_right: list = []
+        # Every transversal sample (stations × n_transversal, NaN kept) for
+        # the 3D swath block; formerly reduced to statistics and dropped.
+        self._grid: list = []
 
 
         # Use DEM CRS for distance measurement
@@ -116,6 +126,11 @@ class SwathSampler:
         # 3. Sample DEM at each station
         results = self._sample_stations(stations)
 
+        # Station positions and the outline of the sampled band, in the DEM
+        # CRS: the panel places its hover marker and draws the band from
+        # them, so the map shows exactly where each value was measured (the
+        # former marker interpolated metres in CRS units — degrees for a
+        # geographic DEM — and ignored a reversed profile).
         return {
             "distances":      [round(d, 2) for d in distances],
             "mean":           self._clean(results["mean"]),
@@ -128,6 +143,16 @@ class SwathSampler:
             "total_length_m": round(distances[-1], 2) if distances else 0.0,
             "width_m":        self.width_m,
             "n_stations":     self.n_stations,
+            "station_x":      [round(float(p[0]), 7) for p in stations],
+            "station_y":      [round(float(p[1]), 7) for p in stations],
+            "band":           [[round(float(x), 7), round(float(y), 7)]
+                               for x, y in self._band_left + self._band_right[::-1]],
+            "station_crs":    self.reader.crs.toWkt(),
+            "band_left":      [[round(float(x), 7), round(float(y), 7)] for x, y in self._band_left],
+            "band_right":     [[round(float(x), 7), round(float(y), 7)] for x, y in self._band_right],
+            **self._grid_payload(distances),
+            "feature_id":     self.feature_id,
+            "warnings":       self.warnings,
         }
 
     # ------------------------------------------------------------------
@@ -136,8 +161,12 @@ class SwathSampler:
 
     def _extract_line(self) -> list:
         """
-        Extract (x, y) coords from the first feature of line_layer.
-        Reprojects to DEM CRS if needed.
+        (x, y) coordinates of the chosen feature (``feature_id``, else the
+        first feature), reprojected to the DEM CRS.
+
+        A multi-part line cannot be one swath: its parts were chained into a
+        single path with straight jumps between them. The LONGEST part is
+        used and a warning says so.
         """
         transform = None
         if self.line_layer.crs() != self.reader.crs:
@@ -147,20 +176,39 @@ class SwathSampler:
                 QgsProject.instance()
             )
 
-        coords = []
-        for feature in self.line_layer.getFeatures():
-            geom = feature.geometry()
-            if geom is None or geom.isEmpty():
-                continue
-            for part in geom.constParts():
-                for vertex in part.vertices():
-                    pt = QgsPointXY(vertex.x(), vertex.y())
-                    if transform:
-                        pt = transform.transform(pt)
-                    coords.append((pt.x(), pt.y()))
-            break  # first feature only
+        feature = None
+        if self.feature_id is not None:
+            feature = self.line_layer.getFeature(int(self.feature_id))
+            if not feature.isValid():
+                feature = None
+                self.warnings.append(tr("The chosen line no longer exists; the first line was used."))
+        if feature is None:
+            feature = next((f for f in self.line_layer.getFeatures()
+                            if f.geometry() is not None and not f.geometry().isEmpty()), None)
+        if feature is None:
+            return []
+        self.feature_id = feature.id()
 
-        return coords
+        parts = []
+        for part in feature.geometry().constParts():
+            points = []
+            for vertex in part.vertices():
+                pt = QgsPointXY(vertex.x(), vertex.y())
+                if transform:
+                    pt = transform.transform(pt)
+                points.append((pt.x(), pt.y()))
+            if len(points) >= 2:
+                parts.append(points)
+        if not parts:
+            return []
+        if len(parts) > 1:
+            self.warnings.append(tr("The line has {0} parts; the longest one was used.").format(len(parts)))
+
+        def part_length(points):
+            return sum(self._da.measureLine(QgsPointXY(*a), QgsPointXY(*b))
+                       for a, b in zip(points[:-1], points[1:]))
+
+        return max(parts, key=part_length)
 
     # ------------------------------------------------------------------
     # Step 2 — Discretize line into equally spaced stations
@@ -247,9 +295,14 @@ class SwathSampler:
 
             # Perpendicular direction
             perp = self._perpendicular(pt, dx, dy)
+            # _perpendicular runs from offset −width (RIGHT of the line
+            # direction) to +width (LEFT).
+            self._band_right.append(perp[0])
+            self._band_left.append(perp[-1])
 
             # Sample DEM along transversal
             values = self.reader.sample_points(perp)
+            self._grid.append(values.copy())
             values = values[~np.isnan(values)]
 
             if len(values) == 0:
@@ -356,6 +409,39 @@ class SwathSampler:
             for t in t_values
         ]
         return points
+
+    # ------------------------------------------------------------------
+    # 3D block
+    # ------------------------------------------------------------------
+
+    # Size limits of the grid sent to the 3D view (stations × transversal
+    # samples): enough for the relief to read, light enough for WebGL.
+    GRID_MAX_STATIONS = 300
+    GRID_MAX_TRANSVERSAL = 120
+
+    def _grid_payload(self, distances: list) -> dict:
+        """
+        Decimated transversal grid for the 3D swath block.
+
+        grid_z[i][j] is the elevation at station i (distance grid_distance[i]
+        from the start) and lateral offset grid_offset[j] (metres, NEGATIVE
+        to the right and POSITIVE to the left of the line direction, the
+        order in which _perpendicular generates the samples). NaN → None.
+        """
+        if not self._grid:
+            return {"grid_z": None, "grid_distance": None, "grid_offset": None}
+        grid = np.vstack(self._grid)
+        rows = np.unique(np.linspace(0, grid.shape[0] - 1,
+                                     min(grid.shape[0], self.GRID_MAX_STATIONS)).round().astype(int))
+        cols = np.unique(np.linspace(0, grid.shape[1] - 1,
+                                     min(grid.shape[1], self.GRID_MAX_TRANSVERSAL)).round().astype(int))
+        offsets = np.linspace(-self.width_m, self.width_m, self.n_transversal)
+        reduced = np.round(grid[np.ix_(rows, cols)], 1)
+        return {
+            "grid_z": [[None if not np.isfinite(v) else float(v) for v in row] for row in reduced],
+            "grid_distance": [round(float(distances[i]), 2) for i in rows],
+            "grid_offset": [round(float(offsets[j]), 2) for j in cols],
+        }
 
     # ------------------------------------------------------------------
     # Utility

@@ -29,6 +29,11 @@ from qgis.PyQt.QtCore import Qt, QCoreApplication, QStringListModel, QUrl   # ty
 from ..base.registry import TOOL_REGISTRY, get_all_tools
 
 
+# Top-level package of the plugin, whatever its folder is called; registry
+# module paths are relative to it (see base/registry.py).
+PLUGIN_PACKAGE = __name__.split(".")[0]
+
+
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
 
@@ -176,7 +181,7 @@ class RockMorphDock(QDockWidget):
 
         self.setWidget(container)
 
-        # Initial launch tool: Open Mountain Front Sinuosity by default
+        # Initial tool shown when the dock opens.
         self.switch_to_tool("terrainderivatives")
 
     def _populate_tool_menu(self, menu: QMenu):
@@ -185,10 +190,10 @@ class RockMorphDock(QDockWidget):
         Provides a DRY implementation for QGIS plugins menu and dock switcher.
         """
         for cat_id, cat_info in TOOL_REGISTRY.items():
-            cat_menu = menu.addMenu(cat_info["name"])
+            cat_menu = menu.addMenu(cat_info["name"].replace("&", "&&"))   # & is a menu mnemonic
             
             for tool_id, tool_info in cat_info["tools"].items():
-                action = QAction(tool_info["name"], self)
+                action = QAction(tool_info["name"].replace("&", "&&"), self)
                 action.setStatusTip(tool_info["desc"])
                 action.triggered.connect(
                     lambda checked, t_id=tool_id: self.switch_to_tool(t_id)
@@ -242,7 +247,7 @@ class RockMorphDock(QDockWidget):
         if tool_id not in self._panels:
             info = self._flat_tools[tool_id]
             try:
-                module = importlib.import_module(info["module_path"])
+                module = importlib.import_module(info["module_path"], package=PLUGIN_PACKAGE)
                 PanelClass = getattr(module, info["class_name"])
                 panel_instance = PanelClass(self.iface, self.panel_container)
                 self._panels[tool_id] = panel_instance

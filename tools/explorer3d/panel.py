@@ -1,5 +1,5 @@
 """
-PyQt5 panel for the RockMorph 3D Explorer.
+Qt panel for the RockMorph 3D Explorer.
 
 Architecture
 ------------
@@ -28,10 +28,15 @@ from qgis.PyQt.QtWidgets import (  # type: ignore
 from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QTimer  # type: ignore
 from qgis.PyQt.QtGui import QColor, QIcon, QPixmap, QPainter  # type: ignore
 from qgis.PyQt.QtWebEngineWidgets import QWebEnginePage  # type: ignore
-from qgis.core import QgsMapLayerProxyModel  # type: ignore
-from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox # type: ignore
+from qgis.PyQt.QtCore import QBuffer, QByteArray, QIODevice  # type: ignore
+from qgis.core import (  # type: ignore
+    QgsMapLayerProxyModel, QgsMapSettings, QgsMapRendererParallelJob, QgsRectangle,
+    QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsProject, QgsPointXY, QgsWkbTypes,
+    QgsMapLayer, QgsVectorLayer,
+)
+from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox, QgsRubberBand # type: ignore
 
-from PyQt5.QtWebEngineWidgets import QWebEngineView # type: ignore
+from ...base.webengine import QWebEngineView
 
 from ...base.base_panel import BasePanel, ComputeWorker
 from .engine import Explorer3DEngine
@@ -184,8 +189,11 @@ class Explorer3DPanel(BasePanel):
         self.webview.setParent(self.central_container)
         self.webview.hide() 
 
-        # Install an event filter to capture real-time resizing of the central area
+        # Follow the map canvas: the container's resize event arrives before
+        # its layout has resized the canvas, so the canvas is watched too
+        # (otherwise resizing a dock left the 3D view at the old width).
         self.central_container.installEventFilter(self)
+        self.canvas_2d.installEventFilter(self)
 
 
         # Redirect JS console to QGIS Python Console
@@ -584,8 +592,152 @@ class Explorer3DPanel(BasePanel):
         vector_style_layout.addWidget(self.stacked_width_settings)
 
         layout.addWidget(self.group_vector_style)
+        layout.addWidget(self._build_drape_group())
         # layout.addStretch()
         return page
+
+    # ── Draped map and hover probe (GSV-Studio 3D studio) ────────────────
+
+    def _build_drape_group(self) -> QWidget:
+        """Draped map (any layer, rendered with its QGIS style) and hover probe options."""
+        group = QgsCollapsibleGroupBox(tr("Draped map && probe"))
+        form = QFormLayout(group)
+        form.setContentsMargins(6, 6, 6, 6)
+
+        self.combo_drape = QgsMapLayerComboBox()
+        self.combo_drape.setFilters(QgsMapLayerProxyModel.PolygonLayer | QgsMapLayerProxyModel.RasterLayer
+                                    | QgsMapLayerProxyModel.LineLayer | QgsMapLayerProxyModel.PointLayer)
+        self.combo_drape.setAllowEmptyLayer(True)
+        self.combo_drape.setLayer(None)
+        self.combo_drape.setToolTip(tr(
+            "<b>Map draped on the relief:</b><br>A geological map, land-use polygons, an orthophoto or a "
+            "scanned map, rendered with its QGIS symbology over the terrain extent. The relief "
+            "shading, shadows and haze stay visible through it."))
+        form.addRow(tr("Layer:"), self.combo_drape)
+
+        opacity_row = QHBoxLayout()
+        self.slider_drape_opacity = QSlider(Qt.Horizontal)
+        self.slider_drape_opacity.setRange(0, 100)
+        self.slider_drape_opacity.setValue(80)
+        self.lbl_drape_opacity = QLabel("80 %")
+        opacity_row.addWidget(self.slider_drape_opacity)
+        opacity_row.addWidget(self.lbl_drape_opacity)
+        form.addRow(tr("Opacity:"), opacity_row)
+
+        buttons = QHBoxLayout()
+        self.btn_drape = QPushButton(tr("Drape on relief"))
+        self.btn_drape_clear = QPushButton(tr("Remove"))
+        buttons.addWidget(self.btn_drape)
+        buttons.addWidget(self.btn_drape_clear)
+        form.addRow(buttons)
+
+        self.chk_probe = QCheckBox(tr("Hover probe (position, elevation, slope) linked to the map"))
+        self.chk_probe.setChecked(True)
+        form.addRow(self.chk_probe)
+
+        self._drape_layer_id = None
+        self._probe_marker = None
+        self.btn_drape.clicked.connect(self._on_drape_clicked)
+        self.btn_drape_clear.clicked.connect(self._on_drape_clear)
+        self.slider_drape_opacity.valueChanged.connect(self._on_drape_opacity)
+        self.chk_probe.toggled.connect(self._on_probe_toggled)
+        return group
+
+    def _on_drape_clicked(self) -> None:
+        layer = self.combo_drape.currentLayer()
+        if layer is None:
+            self.show_error(tr("Choose a layer to drape."))
+            return
+        if not self._active_dem_data or not self._active_dem_data.get("georef"):
+            self.show_error(tr("Render a 3D terrain first."))
+            return
+        image = self._render_drape_image(layer)
+        if image is None:
+            self.show_error(tr("The layer could not be rendered over the terrain extent."))
+            return
+        self._drape_layer_id = layer.id()
+        self._js({"action": "set_drape_image",
+                  "payload": {"image": image, "opacity": self.slider_drape_opacity.value() / 100.0}})
+
+    def _on_drape_clear(self) -> None:
+        self._drape_layer_id = None
+        self._js({"action": "clear_drape"})
+
+    def _on_drape_opacity(self, value: int) -> None:
+        self.lbl_drape_opacity.setText(f"{value} %")
+        self._js({"action": "set_drape_opacity", "payload": {"opacity": value / 100.0}})
+
+    def _render_drape_image(self, layer, max_side: int = 2048) -> Optional[str]:
+        """
+        Renders ``layer`` with its QGIS style over the area covered by the
+        terrain mesh, in the DEM CRS, and returns a PNG data URL.
+
+        The image keeps the extent's aspect ratio in CRS units, so it maps
+        linearly onto the mesh UVs (north at the top). Transparent where
+        the layer draws nothing.
+        """
+        georef = self._active_dem_data["georef"]
+        xmin, ymin, xmax, ymax = georef["plane"]
+        width_units, height_units = xmax - xmin, ymax - ymin
+        if width_units <= 0 or height_units <= 0:
+            return None
+        if width_units >= height_units:
+            size = QSize(max_side, max(1, round(max_side * height_units / width_units)))
+        else:
+            size = QSize(max(1, round(max_side * width_units / height_units)), max_side)
+        settings = QgsMapSettings()
+        settings.setLayers([layer])
+        settings.setDestinationCrs(QgsCoordinateReferenceSystem.fromWkt(georef["crs_wkt"]))
+        settings.setTransformContext(QgsProject.instance().transformContext())
+        settings.setOutputSize(size)
+        settings.setExtent(QgsRectangle(xmin, ymin, xmax, ymax))
+        settings.setBackgroundColor(QColor(0, 0, 0, 0))
+        settings.setFlag(QgsMapSettings.Antialiasing, True)
+        settings.setFlag(QgsMapSettings.DrawLabeling, False)
+        job = QgsMapRendererParallelJob(settings)
+        job.start()
+        job.waitForFinished()
+        image = job.renderedImage()
+        if image.isNull():
+            return None
+        data = QByteArray()
+        buffer = QBuffer(data)
+        buffer.open(QIODevice.WriteOnly)
+        image.save(buffer, "PNG")
+        buffer.close()
+        return "data:image/png;base64," + base64.b64encode(bytes(data)).decode("ascii")
+
+    def _on_probe_toggled(self, checked: bool) -> None:
+        self._js({"action": "set_probe", "payload": {"enabled": checked}})
+        if not checked:
+            self._on_probe_leave()
+
+    def _on_probe_point(self, x: float, y: float) -> None:
+        """Shows the 3D pointer position (DEM CRS) as a marker on the QGIS map."""
+        if not self.chk_probe.isChecked() or not self._active_dem_data:
+            return
+        canvas = self.iface.mapCanvas()
+        point = QgsPointXY(x, y)
+        try:
+            source = QgsCoordinateReferenceSystem.fromWkt(self._active_dem_data["georef"]["crs_wkt"])
+            target = canvas.mapSettings().destinationCrs()
+            if source != target:
+                point = QgsCoordinateTransform(source, target, QgsProject.instance()).transform(point)
+        except Exception:
+            return
+        if self._probe_marker is None:
+            self._probe_marker = QgsRubberBand(canvas, QgsWkbTypes.PointGeometry)
+            self._probe_marker.setColor(QColor(220, 40, 40))
+            self._probe_marker.setIconSize(12)
+            self._probe_marker.setWidth(3)
+        self._probe_marker.reset(QgsWkbTypes.PointGeometry)
+        self._probe_marker.addPoint(point)
+        self._probe_marker.show()
+
+    def _on_probe_leave(self) -> None:
+        if self._probe_marker is not None:
+            self._probe_marker.reset(QgsWkbTypes.PointGeometry)
+            self._probe_marker.hide()
 
     # ── Page 2 — Symbology (Re-conceived with QgsCollapsibleGroupBox) ────
     def _build_page_symbology(self) -> QWidget:
@@ -608,7 +760,8 @@ class Explorer3DPanel(BasePanel):
         self.combo_symbology_render_mode.addItems([
             tr("Continuous Colormap (Scientific)"),
             tr("Classified Intervals (Discrete)"),
-            tr("Solid Uniform Fill")
+            tr("Solid Uniform Fill"),
+            tr("Natural Land Cover (Realistic)")
         ])
         layout_render = QHBoxLayout()
         layout_render.addWidget(QLabel(tr("Render Mode:")))
@@ -687,6 +840,63 @@ class Explorer3DPanel(BasePanel):
         layout_solid.addStretch()
         self.stacked_symbology_settings.addWidget(page_solid)
 
+        # --- Page 3: Natural land cover ---
+        # Colours computed in the shader from elevation, true slope and
+        # aspect: forest below the tree line, alpine grass above it, bare
+        # rock on slopes steeper than ~30–40°, snow above the snow line on
+        # slopes that can hold it (a little lower on north faces). It is an
+        # illustration, not a land-cover map: the lines are user choices.
+        page_natural = QWidget()
+        layout_natural = QFormLayout(page_natural)
+        layout_natural.setContentsMargins(0, 4, 0, 0)
+        layout_natural.setSpacing(6)
+        self.chk_natural_auto = QCheckBox(tr("Automatic lines"))
+        self.chk_natural_auto.setToolTip(tr("Tree line at 55 % and snow line at 85 % of the relief "
+                                            "of the DEM. Untick to set them in metres."))
+        self.chk_natural_auto.setChecked(True)
+        layout_natural.addRow("", self.chk_natural_auto)
+        self.spin_tree_line = QDoubleSpinBox()
+        self.spin_tree_line.setRange(-500.0, 9000.0)
+        self.spin_tree_line.setDecimals(0)
+        self.spin_tree_line.setSuffix(" m")
+        self.spin_tree_line.setToolTip(tr("Elevation above which forest gives way to alpine grassland."))
+        self.spin_tree_line.setEnabled(False)
+        layout_natural.addRow(tr("Tree line:"), self.spin_tree_line)
+        self.spin_snow_line = QDoubleSpinBox()
+        self.spin_snow_line.setRange(-500.0, 9000.0)
+        self.spin_snow_line.setDecimals(0)
+        self.spin_snow_line.setSuffix(" m")
+        self.spin_snow_line.setToolTip(tr("Elevation above which gentle slopes are snow-covered."))
+        self.spin_snow_line.setEnabled(False)
+        layout_natural.addRow(tr("Snow line:"), self.spin_snow_line)
+        self.spin_rock_slope = QDoubleSpinBox()
+        self.spin_rock_slope.setRange(10.0, 70.0)
+        self.spin_rock_slope.setDecimals(0)
+        self.spin_rock_slope.setValue(35.0)
+        self.spin_rock_slope.setSuffix(" °")
+        self.spin_rock_slope.setToolTip(tr("Slopes steeper than this show bare rock (±6° transition). "
+                                           "Snow does not hold on slopes ~5–20° steeper."))
+        layout_natural.addRow(tr("Rock from slope:"), self.spin_rock_slope)
+
+        # One colour per cover type (the shader adds a little texture noise).
+        self._land_color_buttons = {}
+        for key, label, default in (("forest", tr("Forest (below tree line):"), "#3f5034"),
+                                    ("grass", tr("Alpine grass / soil:"), "#8a8460"),
+                                    ("rock", tr("Bare rock (steep slopes):"), "#7a6f63"),
+                                    ("snow", tr("Snow (above snow line):"), "#eef1f5")):
+            button = RockMorphColorButton()
+            button.setAllowOpacity(False)
+            button.setColor(QColor(default))
+            button.setDefaultColor(QColor(default))
+            button.setShowNull(False)
+            self._land_color_buttons[key] = button
+            layout_natural.addRow(label, button)
+        note = QLabel(tr("Best with the realistic rendering style (Lights page)."))
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #666;")
+        layout_natural.addRow(note)
+        self.stacked_symbology_settings.addWidget(page_natural)
+
         # Add the stacked widget as a row inside the GroupBox
         symb_layout.addWidget(self.stacked_symbology_settings)
         layout.addWidget(self.group_symbology)
@@ -733,6 +943,38 @@ class Explorer3DPanel(BasePanel):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(8)
+
+        # ── GroupBox 0: Realistic rendering ───────────────────────────────
+        # Realistic: per-pixel normals from the high-resolution DEM texture,
+        # soft cast shadows, sky-view-factor ambient occlusion, distance haze
+        # and filmic tone mapping. Classic: the former hillshade look, kept
+        # for figures that must match earlier exports.
+        self.group_realism = QgsCollapsibleGroupBox(tr("Realistic rendering"))
+        realism_layout = QVBoxLayout(self.group_realism)
+        realism_layout.setSpacing(6)
+        self.combo_render_style = QComboBox()
+        self.combo_render_style.addItem(tr("Realistic (shadows, sky light, haze)"), "realistic")
+        self.combo_render_style.addItem(tr("Classic hillshade (previous look)"), "classic")
+        realism_layout.addWidget(self.combo_render_style)
+        self.chk_cast_shadows = QCheckBox(tr("Cast shadows of the relief"))
+        self.chk_cast_shadows.setChecked(True)
+        self.chk_cast_shadows.setToolTip(tr("Ridges shade the slopes and valleys behind them, "
+                                            "following the sun azimuth and altitude."))
+        realism_layout.addWidget(self.chk_cast_shadows)
+        self._add_labeled_slider(realism_layout, tr("Shadow softness:"), "slider_shadow_softness",
+                                 min_val=0, max_val=100, default=35,
+                                 tooltip=tr("0 = sharp shadow edges, 100 = very soft penumbra."))
+        self._add_labeled_slider(realism_layout, tr("Sky occlusion (sky-view factor):"), "slider_ao",
+                                 min_val=0, max_val=100, default=85,
+                                 tooltip=tr("Darkens valley floors and gorges that see less of the sky "
+                                            "(sky-view factor, Zakšek et al. 2011)."))
+        self._add_labeled_slider(realism_layout, tr("Atmospheric haze:"), "slider_atmosphere",
+                                 min_val=0, max_val=100, default=25,
+                                 tooltip=tr("Distant relief fades towards the horizon colour of the sky."))
+        self._add_labeled_slider(realism_layout, tr("Exposure:"), "slider_exposure",
+                                 min_val=40, max_val=250, default=100,
+                                 tooltip=tr("Overall brightness of the realistic rendering (100 = neutral)."))
+        layout.addWidget(self.group_realism)
 
         # ── GroupBox 1: Advanced Illumination Algorithms ──────────────────
         self.group_illumination = QgsCollapsibleGroupBox(tr("Illumination modes"))
@@ -1119,7 +1361,19 @@ class Explorer3DPanel(BasePanel):
         self.spin_max_z.valueChanged.connect(self._slot_update_color_bounds)
         self.rad_scale_auto.toggled.connect(self._slot_color_scale_mode_changed)
 
+        self.chk_natural_auto.toggled.connect(self._slot_natural_colors_changed)
+        self.spin_tree_line.valueChanged.connect(self._slot_natural_colors_changed)
+        self.spin_snow_line.valueChanged.connect(self._slot_natural_colors_changed)
+        self.spin_rock_slope.valueChanged.connect(self._slot_natural_colors_changed)
+        for button in self._land_color_buttons.values():
+            button.colorChanged.connect(self._slot_natural_colors_changed)
+
         # ── Page 3 — Lights ──────────────────────────────────────────────
+        self.combo_render_style.currentIndexChanged.connect(self._slot_realism_changed)
+        self.chk_cast_shadows.toggled.connect(self._slot_realism_changed)
+        for slider in (self.slider_shadow_softness, self.slider_ao,
+                       self.slider_atmosphere, self.slider_exposure):
+            slider.valueChanged.connect(self._slot_realism_changed)
         self.chk_multidirectional.stateChanged.connect(self._slot_toggle_multidirectional)
         self.combo_shading_mode.currentIndexChanged.connect(self._slot_shading_mode_changed) # Connect the shading mode selector
         self.btn_light_color.colorChanged.connect(
@@ -1167,6 +1421,9 @@ class Explorer3DPanel(BasePanel):
             self.webview.show()
             self.webview.raise_()
             self.is_3d_active = True
+            # The canvas may still be laid out (dock just opened): match it again.
+            QTimer.singleShot(0, self._sync_viewport_geometry)
+            QTimer.singleShot(300, self._sync_viewport_geometry)
         else:
             self.webview.hide()
             self.canvas_2d.show()
@@ -1185,7 +1442,7 @@ class Explorer3DPanel(BasePanel):
 
         self.btn_render_terrain.setEnabled(True)
         if self._loaded_raster_id == layer.id():
-            self.btn_render_terrain.setText(tr("✔  DEM active & loaded"))
+            self.btn_render_terrain.setText(tr("✔  DEM active && loaded"))
             self.btn_render_terrain.setStyleSheet(
                 "background-color:#7f8c8d; color:white; font-weight:bold; "
                 "padding:6px; border-radius:4px;"
@@ -1256,6 +1513,13 @@ class Explorer3DPanel(BasePanel):
         # 2. Cache and transmit the dataset to the WebGL rendering engine
         self._active_dem_data = dem_data.to_dict()
         self._js({"action": "set_main_raster", "payload": self._active_dem_data})
+        self._js({"action": "set_probe", "payload": {"enabled": self.chk_probe.isChecked()}})
+        if self._drape_layer_id and QgsProject.instance().mapLayer(self._drape_layer_id):
+            # The draped map follows the new terrain extent.
+            image = self._render_drape_image(QgsProject.instance().mapLayer(self._drape_layer_id))
+            if image:
+                self._js({"action": "set_drape_image",
+                          "payload": {"image": image, "opacity": self.slider_drape_opacity.value() / 100.0}})
         
         # 3. Dynamically append structural Block control options
         self._add_layer_item(tr("🧱  Block base (walls & sole)"), element_id="block_base")
@@ -1264,6 +1528,11 @@ class Explorer3DPanel(BasePanel):
         # 4. Cache and update elevation boundary widgets for classified rendering
         self.active_dem_min_z = dem_data.z_min
         self.active_dem_max_z = dem_data.z_max
+        relief = dem_data.z_max - dem_data.z_min
+        for spin, fraction in ((self.spin_tree_line, 0.55), (self.spin_snow_line, 0.85)):
+            spin.blockSignals(True)
+            spin.setValue(round(dem_data.z_min + fraction * relief))
+            spin.blockSignals(False)
 
         self.spin_min_z.blockSignals(True)
         self.spin_max_z.blockSignals(True)
@@ -1757,8 +2026,9 @@ class Explorer3DPanel(BasePanel):
         """Swap active configuration page and show/hide bounds settings dynamically."""
         self.stacked_symbology_settings.setCurrentIndex(index)
         
-        # Hide bounds UI group entirely in Solid Mode, show it for Continuous and Classified
-        if index == 2:  # Solid Uniform Fill
+        # Hide bounds UI group in Solid and Natural modes (no colour scale),
+        # show it for Continuous and Classified
+        if index in (2, 3):
             self.bounds_configuration_panel.setVisible(False)
         else:
             self.bounds_configuration_panel.setVisible(True)
@@ -1775,6 +2045,31 @@ class Explorer3DPanel(BasePanel):
         elif index == 2:  # Solid Color
             hex_color = self.btn_solid_color.property("color_hex") or "#4a90d9"
             self._js({"action": "set_solid_color", "payload": {"color": hex_color}})
+        elif index == 3:  # Natural land cover
+            self._slot_natural_colors_changed()
+
+    def _natural_lines_payload(self) -> dict:
+        """
+        Land-cover settings for the viewer: tree/snow lines in metres (None
+        = automatic), rock slope in degrees and the four cover colours.
+        """
+        automatic = self.chk_natural_auto.isChecked()
+        return {
+            "tree_line_m": None if automatic else self.spin_tree_line.value(),
+            "snow_line_m": None if automatic else self.spin_snow_line.value(),
+            "rock_slope_deg": self.spin_rock_slope.value(),
+            "colors": {key: button.color().name()
+                       for key, button in self._land_color_buttons.items()},
+        }
+
+    def _slot_natural_colors_changed(self) -> None:
+        """Send the land-cover lines to the shader (natural colour mode only)."""
+        manual = not self.chk_natural_auto.isChecked()
+        self.spin_tree_line.setEnabled(manual)
+        self.spin_snow_line.setEnabled(manual)
+        if not self.is_3d_active or self.combo_symbology_render_mode.currentIndex() != 3:
+            return
+        self._js({"action": "set_natural_colors", "payload": self._natural_lines_payload()})
 
     def _rebuild_classified_brackets_ui(self) -> None:
         """Regenerate dynamic rows dividing the Z span into equal intervals, sampling the active colormap."""
@@ -1960,6 +2255,27 @@ class Explorer3DPanel(BasePanel):
             return
         self._js({"action": "update_base_thickness", "payload": {"thickness": value / 100.0}})
 
+    def _realism_payload(self) -> dict:
+        """Current realistic-rendering settings, as sent to the viewer."""
+        return {
+            "style": self.combo_render_style.currentData(),
+            "shadows": self.chk_cast_shadows.isChecked(),
+            "shadow_softness": self.slider_shadow_softness.value() / 100.0,
+            "ao": self.slider_ao.value() / 100.0,
+            "atmosphere": self.slider_atmosphere.value() / 100.0,
+            "exposure": self.slider_exposure.value() / 100.0,
+        }
+
+    def _slot_realism_changed(self, *args) -> None:
+        """Send the realistic-rendering settings to the GLSL shaders."""
+        realistic = self.combo_render_style.currentData() == "realistic"
+        for widget in (self.chk_cast_shadows, self.slider_shadow_softness, self.slider_ao,
+                       self.slider_atmosphere, self.slider_exposure):
+            widget.setEnabled(realistic)
+        if not self.is_3d_active:
+            return
+        self._js({"action": "update_realism", "payload": self._realism_payload()})
+
     def _slot_update_aesthetic_shading(self) -> None:
         """Read topography rendering enhancements and send parameters to the GLSL shader."""
         if not self.is_3d_active:
@@ -2124,7 +2440,10 @@ class Explorer3DPanel(BasePanel):
                 "sky_bottom": self._colors["sky_bottom"],
                 "colormap": current_cmap,
                 "reverse_cmap": self.chk_reverse_cmap.isChecked(),
-                "color_mode": "colormap" if self.combo_symbology_render_mode.currentIndex() == 0 else ("classified" if self.combo_symbology_render_mode.currentIndex() == 1 else "solid"),
+                "color_mode": ("colormap", "classified", "solid", "natural")[
+                    self.combo_symbology_render_mode.currentIndex()],
+                "natural_lines": self._natural_lines_payload(),
+                "realism": self._realism_payload(),
                 "solid_color": self.btn_solid_color.property("color_hex") or "#4a90d9",
                 "class_colors": self._class_colors,
                 "class_bounds": self._class_bounds,
@@ -2356,11 +2675,15 @@ class Explorer3DPanel(BasePanel):
     def eventFilter(self, obj, event) -> bool:
         """Intercept central container resize events to synchronize WebGL container geometry."""
         from qgis.PyQt.QtCore import QEvent  # type: ignore
-        if obj == self.central_container and event.type() == QEvent.Resize:
-            if self.is_3d_active:
-                # Force the webview to perfectly match the size and position of the 2D canvas
-                self.webview.setGeometry(self.canvas_2d.geometry())
+        if (obj in (self.central_container, self.canvas_2d)
+                and event.type() in (QEvent.Resize, QEvent.Move) and self.is_3d_active):
+            # After the layout pass, match the size and position of the 2D canvas.
+            QTimer.singleShot(0, self._sync_viewport_geometry)
         return super().eventFilter(obj, event)
+
+    def _sync_viewport_geometry(self) -> None:
+        if self.is_3d_active and self.webview is not None:
+            self.webview.setGeometry(self.canvas_2d.geometry())
 
 
     # ── BasePanel required overrides ─────────────────────────────────────
@@ -2378,6 +2701,8 @@ class Explorer3DPanel(BasePanel):
             self.rad_view_2d.setChecked(True)
         if self.central_container:
             self.central_container.removeEventFilter(self)
+        if self.canvas_2d is not None:
+            self.canvas_2d.removeEventFilter(self)
         if self.webview:
             # Safely detach and schedule the widget for deletion
             self.webview.setParent(None)

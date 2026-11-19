@@ -58,6 +58,13 @@ class RoseEngine(BaseEngine):
         if len(azimuths) == 0:
             raise ValueError(tr("No valid segments found in layer."))
 
+        # Statistics use the measured segments only: the mirrored copies added
+        # below are a drawing device and would cancel the mean vector.
+        raw_azimuths, raw_lengths = azimuths.copy(), lengths.copy()
+        # Lines (faults, lineaments) are axial data: 10° and 190° are the same
+        # orientation. Half roses fold to 0-180°, which is axial as well.
+        axial_data = axial_sym or half_rose
+
         # Fold to 0-180° for half rose
         # 2. Axial Symmetry (The "Butterfly" effect)
         # We add 180° to every measurement to treat lines as axes, not vectors
@@ -80,7 +87,7 @@ class RoseEngine(BaseEngine):
         bin_centers = bins[:-1] + sector_width / 2.0
 
         # 4. Statistics
-        stats = self._compute_stats(azimuths, lengths, bin_centers, values)
+        stats = self._compute_stats(raw_azimuths, raw_lengths, bin_centers, values, axial_data)
 
         return {
             "azimuths":     bin_centers.tolist(),
@@ -191,10 +198,17 @@ class RoseEngine(BaseEngine):
             return weighted_sums
         
 
-    def _compute_stats(self, azimuths, lengths, bin_centers, values) -> dict:
+    def _compute_stats(self, azimuths, lengths, bin_centers, values, axial: bool = True) -> dict:
         """
         Computes circular statistics on the distribution.
         Includes dominant, secondary direction, anisotropy, entropy.
+
+        ``azimuths``/``lengths`` are the measured segments (no mirrored
+        copies). For axial data the mean orientation and R use the angle-
+        doubling method (Mardia & Jupp, 2000): average 2θ, then halve the
+        mean angle; the mean is reported in 0-180°. Averaging the raw angles
+        of axial data is wrong (5° and 175° would average to 90°), and
+        averaging the mirrored copies gives R ≈ 0 (audit C9).
         """
         values = np.array(values)
         
@@ -209,13 +223,16 @@ class RoseEngine(BaseEngine):
             masked[idx] = 0
         secondary = float(bin_centers[int(np.argmax(masked))])
 
-        # Circular mean (length-weighted)
-        rad = np.radians(azimuths)
+        # Circular mean (length-weighted); angle doubling for axial data.
+        factor = 2.0 if axial else 1.0
+        rad = np.radians(azimuths) * factor
         sin_mean = np.average(np.sin(rad), weights=lengths)
         cos_mean = np.average(np.cos(rad), weights=lengths)
-        mean_az  = float(np.degrees(np.arctan2(sin_mean, cos_mean)) % 360.0)
+        period = 180.0 if axial else 360.0
+        mean_az = float((np.degrees(np.arctan2(sin_mean, cos_mean)) / factor) % period)
 
-        # Concentration R (0 = isotropic, 1 = perfectly aligned)
+        # Concentration R (0 = isotropic, 1 = perfectly aligned), computed on
+        # the doubled angles for axial data.
         R = float(np.hypot(sin_mean, cos_mean))
 
         # Anisotropy ( max bin / total)

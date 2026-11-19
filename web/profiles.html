@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<!--
+  web/profiles.html
+
+  Viewer of the Topographic Profiles tool (embedded in the RockMorph dock).
+
+  Tabs
+    Profiles  – elevation against distance for every profile, with
+                crossings (faults, contacts…) as vertical marks and an
+                optional stacked layout for serial cross-sections.
+    3D        – the profiles drawn in their true position over the terrain
+                surface around them (Plotly WebGL), same vertical
+                exaggeration as the 2D chart.
+    Table     – statistics of every profile.
+
+  Python → JS : renderProfiles(payload), showCursor(profileIndex, distance),
+                hideCursor(), setOptions({exaggeration, stacked}).
+  JS → Python : bridge.on_profile_hover(profileIndex, distance),
+                bridge.on_plot_leave(), bridge.receive_export(dataUrl).
+
+  Authors: RockMorph contributors / Tony
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="js/qwebchannel.js"></script>
+<script src="js/plotly.min.js"></script>
+<style>
+  :root {
+    --surface-0: #f4f4f2; --surface-1: #fcfcfb; --border: #dcdbd6; --grid: #e6e5e0;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7974; --accent: #2a78d6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--surface-1); color: var(--text-primary); display: flex; flex-direction: column;
+         font: 12px/1.4 "Segoe UI", system-ui, -apple-system, Arial, sans-serif; }
+  nav { display: flex; gap: 2px; padding: 4px 8px 0; border-bottom: 1px solid var(--border); background: var(--surface-0); }
+  nav button { background: none; border: none; border-bottom: 2px solid transparent; padding: 5px 10px;
+               font: inherit; color: var(--text-secondary); cursor: pointer; }
+  nav button.active { color: var(--text-primary); border-bottom-color: var(--accent); font-weight: 600; }
+  main { flex: 1; position: relative; min-height: 0; }
+  section { position: absolute; inset: 0; display: none; }
+  section.active { display: flex; flex-direction: column; }
+  .plot { flex: 1; min-height: 0; }
+  .hint { color: var(--text-muted); padding: 3px 8px; font-size: 11px; border-top: 1px solid var(--grid); }
+  .empty { color: var(--text-muted); text-align: center; padding: 40px 12px; }
+  #table { overflow: auto; }
+  table { border-collapse: collapse; width: max-content; min-width: 100%; }
+  th, td { padding: 3px 8px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--surface-1); font-weight: 600; }
+  td:first-child, th:first-child { text-align: left; position: sticky; left: 0; background: var(--surface-1); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<nav id="tabs">
+  <button data-tab="profiles" class="active">Profiles</button>
+  <button data-tab="three">3D</button>
+  <button data-tab="table">Table</button>
+</nav>
+<main>
+  <section id="profiles" class="active">
+    <div id="plot-main" class="plot"><div class="empty">Choose a DEM and lines (or draw them on the map), then Compute.</div></div>
+    <div class="hint" id="hint-2d">Hover a profile to follow it on the map · hover the map near a profile to follow it here.</div>
+  </section>
+  <section id="three">
+    <div id="plot-3d" class="plot"></div>
+    <div class="hint">Drag to rotate, scroll to zoom. Profiles are drawn over the terrain around them; hovering a profile shows the point on the map.</div>
+  </section>
+  <section id="table"><div id="table-wrap"></div></section>
+</main>
+<script src="js/bridge.js"></script>
+<script src="js/profiles.js"></script>
+</body>
+</html>

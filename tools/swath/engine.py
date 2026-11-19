@@ -9,12 +9,12 @@ Inherits BaseEngine.
 """
 
 from qgis.core import QgsRasterLayer, QgsVectorLayer # type: ignore
-from PyQt5.QtCore import QCoreApplication # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication # type: ignore
 
 from ...base.base_engine import BaseEngine
 from ...core.raster import RasterReader
 from ...core.sampling import SwathSampler
-from ...core.utils import smooth_data, reorient_profile_high_to_low
+from ...core.utils import smooth_with_gaps, reorient_profile_high_to_low
 import math
 import numpy as np # type: ignore
 
@@ -127,7 +127,8 @@ class SwathEngine(BaseEngine):
             compute_q     = compute_q,
             compute_relief= compute_relief,
             compute_hyps  = compute_hyps,
-            progress_callback = progress_callback 
+            progress_callback = progress_callback,
+            feature_id    = kwargs.get("feature_id"),
         
         )
 
@@ -139,11 +140,25 @@ class SwathEngine(BaseEngine):
 
             # --- NEW: Reorientation logic ---
             if force_high_to_low:
+                # The 3D grid and the band sides follow the reversal: rows
+                # in reverse order and, since the direction of travel is
+                # reversed, left and right swap (offsets change sign).
+                valid_mean = [v for v in data["mean"] if v is not None]
+                if len(valid_mean) > 1 and valid_mean[0] < valid_mean[-1]:
+                    total = data["total_length_m"]
+                    if data.get("grid_z"):
+                        data["grid_z"] = [list(reversed(row)) for row in reversed(data["grid_z"])]
+                        data["grid_distance"] = [round(total - d, 2) for d in reversed(data["grid_distance"])]
+                    data["band_left"], data["band_right"] = (list(reversed(data["band_right"])),
+                                                             list(reversed(data["band_left"])))
                 # We package profiles for the utility
                 profiles_to_flip = {
                     "mean": data["mean"], "min": data["min"], "max": data["max"],
                     "q1": data.get("q1"), "q3": data.get("q3"),
-                    "relief": data.get("relief"), "hyps": data.get("hyps")
+                    "relief": data.get("relief"), "hyps": data.get("hyps"),
+                    # Station positions follow the reversed profile, so the
+                    # map marker stays on the right side of the line.
+                    "station_x": data.get("station_x"), "station_y": data.get("station_y"),
                 }
                 new_dist, new_profs = reorient_profile_high_to_low(data["distances"], profiles_to_flip)
                 
@@ -159,11 +174,9 @@ class SwathEngine(BaseEngine):
                 
                 for key in keys_to_smooth:
                     if data.get(key) is not None:
-                        # Convert to numpy array for smoothing, then back to list
-                        # plotly waits for lists/json, but numpy is faster for convolution operations
-                        arr = np.array(data[key], dtype=np.float32)
-                        smoothed_arr = smooth_data(arr, smooth_win)
-                        data[key] = smoothed_arr.tolist() 
+                        # Stations without data (None) stay gaps; each valid
+                        # stretch is smoothed separately.
+                        data[key] = smooth_with_gaps(data[key], smooth_win)
 
             # Auto tick intervals
             total_m   = data["total_length_m"]

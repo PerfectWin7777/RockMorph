@@ -137,13 +137,15 @@ Geomorphology & fluvial process modeling
 """
 
 import math
+import os
+
 import numpy as np  # type: ignore
 from numpy.lib.stride_tricks import sliding_window_view  # type: ignore
 from qgis.core import (  # type: ignore
      QgsRasterLayer, QgsWkbTypes,
     QgsRasterLayer, 
 )
-from PyQt5.QtCore import QCoreApplication  # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
 from ...base.base_engine import BaseEngine
 from ...core.hydro import (
@@ -151,6 +153,10 @@ from ...core.hydro import (
     sample_river_hydraulics,
     sample_river_native_pixels
 )
+from ...core.indices.profiles import (
+    best_concavity, chi_coordinate, linear_fit, segment_breakpoints, sl_reaches,
+)
+from ...core.processing_ids import grass_id
 from ...core.utils import smooth_data
 
 
@@ -165,6 +171,9 @@ def tr(message):
 THETA_REF_DEFAULT = 0.45   # reference concavity index (Whipple 2004)
 A0_DEFAULT        = 1.0    # reference drainage area m² (standard)
 MIN_SEGMENT_PTS   = 8      # minimum points per regression segment
+# Reach length of the SL index (m): the same default as the Morphometric
+# Indices tool (core/indices/catalog.py, SL "reach_length_m").
+SL_REACH_LENGTH_M = 200.0
 MAX_KNICKPOINTS   = 5      # maximum knickpoints to detect per river
 
 
@@ -679,23 +688,24 @@ class FluvialEngine(BaseEngine):
 
         # ── k_sn per segment (between knickpoints) ───────────────────
         ksn_segments = self._compute_ksn_segments(
-            chi, elev, slope, area, theta_ref, knickpoints, ksn_method
+            chi, elev, slope, area, theta_ref, knickpoints, ksn_method, a0
         )
+
+        # ── Best concavity: θ that makes the χ–z profile straightest ──
+        best = best_concavity(dist, area, elev, a0)
 
         # ── Equilibrium profile (Hack 1973 / Mvondo Owono 2010) ──────
         equil = self._compute_equilibrium_hack(dist, elev)
 
 
-        chi_plot    = chi[::-1]          # 0 → chi_max
-        elev_plot   = elev[::-1]         # Z_mouth → Z_source
-        ksn_plot    = ksn_profile[::-1]
-        equil_plot  = equil[::-1]
-
-        # Knickpoints — leurs indices doivent être recalculés
-        n = len(chi)
+        # Every array stays ordered source → outlet, so the i-th values of
+        # distances, elevations, SL, χ and k_sn describe the same point
+        # (charts and CSV/GPKG exports zip them row by row; audit C1/C2).
+        chi_plot    = chi
+        elev_plot   = elev
+        ksn_plot    = ksn_profile
         for kp in knickpoints:
-            kp["idx_plot"] = n - 1 - kp["idx"]
-            kp["chi"]      = float(chi_plot[kp["idx_plot"]])
+            kp["idx_plot"] = kp["idx"]
 
         return {
              "geom":          river["geom"],
@@ -736,9 +746,16 @@ class FluvialEngine(BaseEngine):
             # Equilibrium profile
             "equil_elev":    self._sanitize_list(equil),
 
-            # Parameters used — stored for reproducibility
+            # Parameters used — stored for reproducibility and reused by
+            # the θ slider of the panel (same k_sn window).
+            "ksn_window":    int(window_size),
             "theta_ref":     theta_ref,
             "a0":            a0,
+            # Best concavity (Perron & Royden 2013): θ maximising the χ–z R².
+            "theta_best":    best["theta"],
+            "theta_best_r2": round(best["r2"], 4) if best["r2"] is not None else None,
+            "theta_scan":    best["scan"],
+            "theta_best_at_bound": best["at_bound"],
         }
 
     # ------------------------------------------------------------------
@@ -859,34 +876,18 @@ class FluvialEngine(BaseEngine):
         • Clamp k to avoid division by very small numbers
         • Use np.log (natural log) as per Hack's original formula
         """
-        n = len(dist)
+        # SL of Hack (1973) is defined on REACHES: the gradient ΔH/ΔL of a
+        # reach times the distance L from the source to the reach centre.
+        # The former pixel-by-pixel value amplified DEM noise (audit C8).
+        # Each profile point receives the SL of the reach that contains it,
+        # so the array stays aligned with the other profile arrays.
+        sl = np.full(len(dist), np.nan, dtype=np.float64)
+        for reach in sl_reaches(np.asarray(dist, dtype=float), np.asarray(elev, dtype=float),
+                                SL_REACH_LENGTH_M):
+            inside = (dist >= reach["start_m"]) & (dist <= reach["end_m"])
+            sl[inside] = max(reach["sl"], 0.0)   # counter-slopes (DEM artefacts) → 0
 
-        # ── Step 1 : local slope — centred finite differences ────────────
-        sl = np.zeros(n, dtype=np.float64)
-
-        for i in range(n - 1):
-            dz = elev[i] - elev[i + 1]   # drop = positive for normal river
-            dl = dist[i + 1]   - dist[i]
-
-            if dl < 1e-6:
-                continue
-
-            slope = dz / dl
-            val   = slope * dist[i]
-            sl[i] = max(val, 0.0)   # negative = counter-slope → 0, not filtered
-
-        # Edges — one-sided
-        if dist[1] - dist[0] > 1e-6:
-            dz     = elev[0] - elev[1]
-            dl     = dist[1] - dist[0]
-            sl[0]  = (dz / dl) * dist[0]  
-
-        if dist[-1] - dist[-2] > 1e-6:
-            dz      = elev[-2] - elev[-1]
-            dl      = dist[-1] - dist[-2]
-            sl[-1]  = (dz / dl) * dist[-1]
-
-        # ── Step 2 : SLk normalisation ────────────────────────────────────
+        # ── SLk normalisation (Hack's graded-river constant) ──────────────
         H_total = abs(float(elev[0] - elev[-1]))
         if total_length_m > 1.0 and H_total > 0:
             k   = H_total / math.log(total_length_m)
@@ -906,148 +907,33 @@ class FluvialEngine(BaseEngine):
         dist:      np.ndarray,
         area_m2:   np.ndarray,
         theta_ref: float,
-        a0:        float,
+        a0:        float = 1.0,
     ) -> np.ndarray:
         r"""
-        Computes the chi (χ) integral transform of a river profile
-        (Perron & Royden 2013).
+        Chi coordinate (Perron & Royden, 2013):
 
-        MOTIVATION: Why Transform to Chi-Space?
-        =======================================
-        River profiles have inherent concavity (steep near source, gentle near mouth)
-        due to discharge scaling: Q ∝ A^0.5. This makes it hard to compare rivers
-        or detect anomalies visually.
+            χ(x) = ∫ (A₀ / A(x'))^θ_ref dx',  integrated from the outlet.
 
-        Chi transformation "unfolds" this concavity. In chi-space:
-          • Equilibrium profiles become LINEAR (Z ≈ k_sn · χ)
-          • Knickpoints appear as VERTICAL JUMPS (deviations from the line)
-          • Different basins become COMPARABLE (same units, same slope interpretation)
+        Under steady state, Z = Z_outlet + k_sn · χ, so the chi-plot (Z vs χ)
+        is a straight line of slope k_sn, and slope breaks are knickpoints.
 
-        FORMULA
-        =======
-        χ(x) = ∫[mouth→x] (A₀/A(ξ))^θ_ref dξ
-
-        where:
-          x          = position along river (m, measured from mouth)
-          A(ξ)       = drainage area at upstream position ξ (m²)
-          A₀         = reference area (usually 1 m²)
-          θ_ref      = reference concavity (0.40–0.60, typically 0.45)
-          dξ         = infinitesimal distance
-
-        PHYSICAL INTERPRETATION
-        =======================
-        χ is a "distance" measured in area units (m², technically).
-        The integrand (A₀/A)^θ_ref accounts for discharge reduction:
-          • Where A is large (mouth), term ≈ (1/A)^θ → small contribution
-          • Where A is small (source), term ≈ (1/A)^θ → large contribution
-          • Integration accumulates these weights from mouth to any point
-
-        Result:
-          • χ ≈ 0 at mouth (integration starts at 0)
-          • χ increases nonlinearly toward source
-          • χ_max at source (highest accumulated weight)
-
-        Why θ_ref?
-        ──────────
-        Universal river scaling: S ∝ A^(-θ_ref)
-        (Flint 1974; supported by global empirics)
-
-        Setting θ_ref = 0.45 means we NORMALIZE upstream/downstream slope
-        differences caused by discharge scaling. With this normalization:
-          • k_sn becomes INDEPENDENT of drainage area (truly normalized)
-          • All rivers of same "strength" have same slope in chi-space
-          • Deviations from linearity → TRANSIENT or SPECIAL features
-
-        NUMERICAL METHOD: Trapezoidal Integration
-        ==========================================
-        We use numerical integration (trapezoidal rule) to approximate the
-        integral over discrete sample points.
-
-        Algorithm:
-          1. Reverse arrays (work mouth → source, because integration
-             proceeds downstream→upstream in the formula)
-          2. Compute integrand at each point: w[i] = (A₀/A[i])^θ_ref
-          3. Integrate using np.trapz on consecutive pairs
-          4. Flip result back to source→mouth order
-
-        Trapezoidal rule:
-          ∫ w dx ≈ sum[(w[i] + w[i+1])/2 · (x[i+1] - x[i])]
-        Accuracy: O(h²) where h = average spacing; excellent for n > 50.
-
-        IMPORTANT: Distance Reference
-        ============================
-        Our profile is ordered MOUTH→SOURCE (increasing distance).
-        But chi integration is done MOUTH→SOURCE mathematically.
-        So we integrate on dist_reversed = Total_len - dist[::-1],
-        which starts at 0 at the mouth and increases toward the source.
-
-        OUTPUT
-        ======
-        chi : np.ndarray of shape (n,)
-            Chi values at each point, SORTED to match input order (mouth→source).
-            χ[0]  = χ_max (at source, highest accumulated weight)
-            χ[-1] ≈ 0 (at mouth)
-
-        Wait — that seems backwards. Let me verify:
-        After reversal and integration, we have chi_rev ordered MOUTH→SOURCE.
-        When we flip chi_rev back, we get:
-            chi = chi_rev[::-1]
-        which puts the LARGEST values first (source) and smallest last (mouth).
-
-        VISUALIZATION
-        ==============
-        Typical chi-plot: (χ x-axis) vs. (Z y-axis)
-          • Shape: approximately linear under equilibrium
-          • Slope ≈ k_sn (for this basin with given θ_ref)
-          • Knickpoints: sudden vertical jumps (slope breaks)
-
-        Interpretation:
-          • ABOVE the fitted line → actively incising (knickpoint ↓)
-          • BELOW the fitted line → aggrading or in slowdown (knickpoint ↑, less common)
-          • LINEAR → equilibrium (steady-state, no recent base-level change)
-
-        SENSITIVITY TO THETA_REF
-        =======================
-        Changing θ_ref rescales chi:
-          • Higher θ (e.g., 0.60) → smaller chi values, less curvature
-          • Lower θ (e.g., 0.40) → larger chi values, more curvature
-
-        Choose θ_ref = 0.45 for global studies (default).
-        Vary it (0.40–0.60) for sensitivity analysis (does conclusion hold?).
+        ``dist`` is the distance from the SOURCE (profile ordered source →
+        outlet) and the result is returned in the SAME order, so chi[i]
+        pairs with elev[i]: χ is 0 at the outlet and maximal at the source.
+        The former implementation returned χ in the reverse order of the
+        elevations, which inverted the chi-plot and misplaced knickpoints
+        and segment k_sn (audit C1). The integral is computed by the
+        trapezoidal rule in ``core.indices.profiles.chi_coordinate``.
 
         Args:
-            dist (np.ndarray)
-                Cumulative distance along river (m), length n, mouth→source.
-            area_m2 (np.ndarray)
-                Drainage area at each point (m²), length n, same order.
-            theta_ref (float)
-                Reference concavity exponent (usually 0.45).
-            a0 (float)
-                Reference area for normalization (usually 1.0 m²).
-
-        Returns:
-            np.ndarray
-                Chi at each point, same length as inputs, mouth→source order.
+            dist:      distance from the source (m), increasing.
+            area_m2:   drainage area (m²) at each point, same order.
+            theta_ref: reference concavity (0.45 by default).
+            a0:        reference area A₀ (m²), 1 m² by default.
         """
-        # Reverse: work mouth → source
-        dist_rev = dist[-1] - dist[::-1]   # starts at 0 at mouth
-        area_rev = area_m2[::-1]
+        return chi_coordinate(np.asarray(dist, dtype=float), np.asarray(area_m2, dtype=float),
+                              theta_ref, a0)
 
-        integrand = (a0 / area_rev) ** theta_ref
-
-        chi_rev = np.zeros(len(dist_rev))
-        for i in range(1, len(dist_rev)):
-            chi_rev[i] = chi_rev[i - 1] + np.trapz(
-                integrand[i - 1 : i + 1],
-                dist_rev[i - 1 : i + 1],
-            )
-
-        # Flip back to source→mouth order
-        return chi_rev # mouth→source, 0 at mouth, max at source
-
-
-    # ------------------------------------------------------------------
-    # k_sn via log S / log A  (Kirby & Whipple 2001)
     # ------------------------------------------------------------------
 
     def _compute_ksn_loglog_V1(
@@ -1464,370 +1350,43 @@ class FluvialEngine(BaseEngine):
         n_knick: int,
     ) -> list:
         """
-        Detects up to n_knick knickpoints using recursive segmented regression
-        in chi-space (Bai-Perron algorithm simplified).
+        Knickpoints as slope breaks of the chi-plot (Z vs χ).
 
-        CONCEPT: What is a Knickpoint?
-        ==============================
-        A knickpoint is an ABRUPT BREAK in slope of a river profile.
-        Visually: looks like a step or waterfall or rapid on the ground.
-        In chi-space: appears as a deviation from the linearity of the
-        chi vs. elevation profile.
-
-        Causes of Knickpoints:
-        ─────────────────────
-        1. BASE-LEVEL LOWERING
-           When downstream base-level drops (e.g., gorge cut through resistant rock,
-           sea-level fall, or river capture), the river cannot immediately adjust.
-           An upstream-migrating knickpoint forms, marking the "wave" of adjustment.
-           Migration speed: v ≈ (k_sn - k_sn_eq)^(1/m) where m ≈ 2–3.
-           Time scale: thousands to millions of years depending on basin area.
-
-        2. LITHOLOGIC BOUNDARIES
-           Hard rock (granite) → soft rock (shale) interface.
-           Erosion rate changes abruptly.
-           The knickpoint is STABLE and marks the boundary permanently.
-
-        3. TECTONIC STEPS
-           Fault scarps or fold hinges create sudden drops.
-           Combined with high uplift rate, these remain visible.
-
-        4. GLACIAL LEGACY
-           Glacial valley steps (hanging valleys, truncated spurs).
-           Less common in actively eroding non-glacial regions.
-
-        DETECTION ALGORITHM: Recursive Bisection (Bai-Perron Simplified)
-        ==============================================================
-        We seek n_knick breakpoints that MINIMIZE the total residual sum
-        of squares (RSS) when fitting LINE SEGMENTS in chi-space.
-
-        Core idea:
-          • Fit a line: Z = a + b·χ on entire profile
-          • RSS = sum[(Z_observed - Z_fit)^2]
-          • For each candidate breakpoint b:
-              - Fit line on [0:b] and [b:end] separately
-              - RSS_split(b) = RSS_left + RSS_right
-          • BEST breakpoint b* minimizes RSS_split(b)
-          • Recurse on two sub-segments to find next breakpoint
-
-        Why chi-space?
-        ───────────────
-        • Equilibrium profiles are LINEAR in chi-space
-        • Deviations from linearity = disequilibrium (knickpoints)
-        • Chi is MORE STABLE than distance for this purpose
-        • Insensitive to discharge variations upstream
-
-        Why recursive?
-        ────────────
-        • First knickpoint is the STRONGEST (biggest residual drop)
-        • Recursing on left/right segments finds PROGRESSIVELY WEAKER features
-        • Limits spurious detections (need minimum number of points per segment)
-
-        ALGORITHM DETAILS
-        =================
-
-        Input Validation:
-        ─────────────────
-        Only use VALID (non-NaN) points from chi and elev arrays.
-        Filter out any NaN or Inf values before analysis.
-
-        Recursion Criteria:
-        ──────────────────
-        • remaining = 0 → stop (detected enough knickpoints)
-        • segment length < 2 · MIN_SEGMENT_PTS → too short, skip
-        • no valid breakpoint found → return empty
-
-        Segment Size Constraint:
-        ──────────────────────
-        MIN_SEGMENT_PTS = 8 (global constant).
-        Each candidate breakpoint b must satisfy:
-          i_start + MIN_SEGMENT_PTS ≤ b ≤ i_end - MIN_SEGMENT_PTS
-        Ensures each segment has enough points for a meaningful fit
-        (minimum 2 points for a line; 8 for statistical robustness).
-
-        Linear Regression in Chi-Space:
-        ──────────────────────────────
-        For segment [i_start:i_end]:
-            Z_fit[i] = a + b·χ[i]
-            RSS = sum((Z_obs - Z_fit)^2)
-
-        Computed via np.polyfit(χ, Z, 1) → [slope, intercept].
-
-        OUTPUT
-        ======
-        list of dicts, each dict:
-          {
-              "idx":    int — original array index in the chi/elev arrays
-              "chi":    float — chi value at knickpoint (m, rounded to 4 decimals)
-              "dist_m": float — horizontal distance (placeholder, filled by panel)
-              "elev_m": float — elevation at knickpoint (m, rounded to 2 decimals)
-          }
-
-        Sorted by chi value (from mouth to source).
-        Maximum length: n_knick items.
-
-        INTERPRETATION FOR END-USERS
-        =============================
-        Knickpoint at (χ, Z):
-          • Vertical position Z → knickpoint elevation (absolute reference)
-          • Horizontal position χ → accumulated drainage area scaling
-            (χ_large → near source; χ_small → near mouth)
-          • Later in workflow, indices are converted back to distances_m
-            for spatial visualization on maps or 3D profiles
-
-        False Positives:
-        ────────────────
-        Noisy DEMs may produce spurious knickpoints.
-        Mitigation:
-          • Smooth elevation before analysis (optional smooth parameter)
-          • Use MIN_SEGMENT_PTS = 8 (sufficient data before accepting break)
-          • Inspect chi-plots visually; knickpoints should be visually obvious
+        Uses ``core.indices.profiles.segment_breakpoints``: global greedy
+        piecewise-linear segmentation (the split that reduces the residual
+        sum of squares the most, among all segments, at each step), with a
+        Bayesian information criterion to stop, so ``n_knick`` is a MAXIMUM
+        and a straight profile gets none. Every split is evaluated in O(n)
+        from cumulative sums. This replaces the recursive split that could
+        return 2^n − 1 breaks, kept the breaks nearest the source and cost
+        O(n²) per level (audit C7). It is not the Bai–Perron dynamic
+        programme; the name was dropped.
 
         Args:
-            chi (np.ndarray)
-                Chi coordinate at each point (m, dimensionally).
-                Usually shape (n,); may contain NaN.
-
-            elev (np.ndarray)
-                Elevation at each point (m).
-                Same shape as chi; may contain NaN.
-
-            n_knick (int)
-                Maximum knickpoints to detect (usually 2–5).
+            chi, elev: aligned arrays ordered source → outlet (NaN allowed).
+            n_knick:   maximum number of knickpoints.
 
         Returns:
-            list of dict
-                Knickpoint locations sorted by chi.
-                Empty list if no knickpoints found or profile too short.
+            list of dicts ordered source → outlet:
+            {"idx", "chi", "dist_m" (filled by the panel), "elev_m",
+             "rank" (1 = strongest break), "rss_gain"}.
         """
-        valid = ~np.isnan(chi) & ~np.isnan(elev)
-        chi_v = chi[valid]
-        elev_v = elev[valid]
-        dist_v = np.linspace(0, 1, len(chi_v))  # placeholder index
-
-        breakpoints = []
-        self._recursive_breakpoints(
-            chi_v, elev_v, 0, len(chi_v),
-            n_knick, breakpoints
-        )
-
-        # Convert indices back to original arrays
-        valid_idx = np.where(valid)[0]
-        results   = []
-        for b in sorted(set(breakpoints)):
-            orig_idx = valid_idx[b]
+        valid = np.isfinite(chi) & np.isfinite(elev)
+        valid_idx = np.flatnonzero(valid)
+        found = segment_breakpoints(chi[valid], elev[valid], int(n_knick), MIN_SEGMENT_PTS)
+        results = []
+        for item in found:
+            orig_idx = int(valid_idx[item["index"]])
             results.append({
-                "idx":    int(orig_idx),
-                "chi":    round(float(chi[orig_idx]),  4),
-                "dist_m": 0.0,   # filled by panel from distances_m[idx]
-                "elev_m": round(float(elev[orig_idx]), 2),
+                "idx":      orig_idx,
+                "chi":      round(float(chi[orig_idx]), 4),
+                "dist_m":   0.0,   # filled by the panel from distances_m[idx]
+                "elev_m":   round(float(elev[orig_idx]), 2),
+                "rank":     int(item["rank"]),
+                "rss_gain": round(float(item["gain"]), 3),
             })
+        return results
 
-        return results[:n_knick]
-
-    def _recursive_breakpoints(
-        self,
-        chi:    np.ndarray,
-        elev:   np.ndarray,
-        i_start: int,
-        i_end:   int,
-        remaining: int,
-        out:    list,
-    ):
-        """
-        Recursive helper for knickpoint detection (Bai-Perron algorithm).
-
-        ALGORITHM
-        =========
-        This function searches for the SINGLE BEST breakpoint (knickpoint)
-        in the range [i_start, i_end] of the chi-elev profile that minimizes
-        the combined RSS (residual sum of squares) when fitting TWO line
-        segments (left and right of the breakpoint).
-
-        Recursion:
-        ──────────
-        • If this breakpoint is found, add it to list
-        • Recursively search [i_start, breakpoint] for next strongest knickpoint
-        • Recursively search [breakpoint, i_end] for next strongest knickpoint
-        • Stop when remaining = 0 (found enough knickpoints)
-
-        INPUTS
-        ======
-        chi, elev (np.ndarray)
-            Profile data (chi, elev) ordered source→mouth.
-            Must be same length; may be subset of original (from slicing).
-
-        i_start, i_end (int)
-            Index range [i_start, i_end) to search.
-            Note: Python slicing convention, but we use inclusive range here.
-
-        remaining (int)
-            Number of knickpoints still to find.
-            Decrement on each successful discovery.
-            When remaining = 0, recursion stops.
-
-        out (list)
-            Output list where breakpoint indices are APPENDED.
-            Passed by reference; modified in-place.
-
-        TERMINATION CONDITIONS
-        ======================
-        1. remaining ≤ 0
-           → Found enough knickpoints; return without searching
-
-        2. segment length < 2 · MIN_SEGMENT_PTS
-           → Too short to subdivide further; return
-
-        3. No valid breakpoint found in search
-           → RSS is monotonic or no improvement; return
-
-        SEARCH PROCESS
-        ==============
-        For each candidate breakpoint b in [i_start + MIN_SEGMENT_PTS, i_end - MIN_SEGMENT_PTS]:
-
-            1. Fit line on chi[i_start:b] vs elev[i_start:b]
-            2. Fit line on chi[b:i_end] vs elev[b:i_end]
-            3. Compute RSS = RSS_left + RSS_right
-            4. Track best_b and best_rss
-
-        CONSTRAINT
-        ==========
-        MIN_SEGMENT_PTS = 8 (global):
-            Each side of the breakpoint must have ≥ 8 points.
-            Prevents overfitting and ensures statistical significance.
-
-        LOOP RANGE
-        ==========
-        b ranges from (i_start + 8) to (i_end - 8), inclusive.
-            • Ensures left segment [i_start:b] has ≥ 8 points
-            • Ensures right segment [b:i_end] has ≥ 8 points
-
-        Args:
-            chi, elev (np.ndarray): Profile data
-            i_start, i_end (int): Search range
-            remaining (int): Budget of knickpoints to find
-            out (list): Accumulator for results (modified in-place)
-
-        Returns:
-            None (modifies out list in-place)
-        """
-        if remaining <= 0:
-            return
-        seg_len = i_end - i_start
-        if seg_len < 2 * MIN_SEGMENT_PTS:
-            return
-
-        best_rss = np.inf
-        best_b   = -1
-
-        for b in range(i_start + MIN_SEGMENT_PTS, i_end - MIN_SEGMENT_PTS):
-            rss = self._segment_rss(chi, elev, i_start, b) + \
-                  self._segment_rss(chi, elev, b, i_end)
-            if rss < best_rss:
-                best_rss = rss
-                best_b   = b
-
-        if best_b == -1:
-            return
-
-        out.append(best_b)
-        self._recursive_breakpoints(chi, elev, i_start, best_b,
-                                    remaining - 1, out)
-        self._recursive_breakpoints(chi, elev, best_b,  i_end,
-                                    remaining - 1, out)
-
-    @staticmethod
-    def _segment_rss(
-        chi:     np.ndarray,
-        elev:    np.ndarray,
-        i_start: int,
-        i_end:   int,
-    ) -> float:
-        r"""
-        Computes the Residual Sum of Squares (RSS) for a linear fit
-        in chi-elevation space.
-
-        PURPOSE
-        =======
-        Quantifies goodness-of-fit when fitting a straight line through
-        a segment of the chi-elevation profile. Used by knickpoint detection
-        to find the "best" breakpoint location.
-
-        DEFINITION
-        ==========
-        RSS = Σ(observed - predicted)²
-            = Σ(elev[i] - Z_fit[i])²
-
-        where Z_fit[i] = a + b·chi[i] (linear fit).
-
-        INTERPRETATION
-        ==============
-        • RSS = 0       → Perfect fit (all points on the line)
-        • RSS >> 0      → Poor fit (scatter above/below line)
-        • RSS is ALWAYS ≥ 0 (squared residuals)
-
-        Lower RSS = better fit. So minimizing RSS finds the line
-        that "best explains" the data.
-
-        ALGORITHM
-        =========
-
-        Step 1: Extract segment
-        ──────────────────────
-        x = chi[i_start:i_end]    (chi values)
-        y = elev[i_start:i_end]   (elevation values)
-
-        Step 2: Fit linear model
-        ───────────────────────
-        polyfit(x, y, 1) returns [slope, intercept]
-        Linear model: y_fit = intercept + slope · x
-
-        Step 3: Predict and compute residuals
-        ─────────────────────────────────────
-        y_pred = polyval([slope, intercept], x)
-        residuals = y - y_pred
-        RSS = sum(residuals²)
-
-        Step 4: Degenerate cases
-        ───────────────────────
-        If all x values are constant (no variation in chi):
-            → Cannot fit a line (singular system)
-            → Return RSS = inf (penalty: not a valid breakpoint)
-
-        np.ptp(x) = peak-to-peak range = max(x) - min(x)
-        If np.ptp(x) < 1e-10 → all points at same chi → return inf
-
-        NUMERICAL STABILITY
-        ====================
-        • Uses np.polyfit and np.polyval (robust numerical routines)
-        • Float conversion: float(RSS) ensures scalar output
-        • Degenerate case handled explicitly
-
-        Args:
-            chi (np.ndarray)
-                Chi values for the segment.
-            elev (np.ndarray)
-                Elevation values for the segment.
-            i_start, i_end (int)
-                Array indices for the segment [i_start:i_end].
-
-        Returns:
-            float
-                RSS value (m² units, dimensionally).
-                Returns inf if segment is degenerate (no x variation).
-        """
-        x = chi[i_start:i_end]
-        y = elev[i_start:i_end]
-        if len(x) < 2 or np.ptp(x) < 1e-10:
-            return np.inf
-        coeffs  = np.polyfit(x, y, 1)
-        y_pred  = np.polyval(coeffs, x)
-        return float(np.sum((y - y_pred) ** 2))
-
-
-
-    # ------------------------------------------------------------------
-    # k_sn per segment (between knickpoints)
     # ------------------------------------------------------------------
     
     def _compute_ksn_segments(
@@ -1838,7 +1397,8 @@ class FluvialEngine(BaseEngine):
         area_m2:     np.ndarray, 
         theta_ref:   float,
         knickpoints: list,
-        ksn_method:      str = "chi_slope"
+        ksn_method:      str = "chi_slope",
+        a0:          float = 1.0,
     ) -> list:
         r"""
         Computes k_sn value for each river SEGMENT (section between knickpoints).
@@ -2055,7 +1615,9 @@ class FluvialEngine(BaseEngine):
         Returns:
             list
                 Segment metrics, each a dict with keys:
-                chi_start, chi_end, elev_start, elev_end, ksn, theta_local.
+                chi_start, chi_end, elev_start, elev_end, ksn, theta_local,
+                and the χ–z least-squares line m_chi (Mχ), intercept, r2,
+                n_points (None when the segment cannot be fitted).
         """
         n = len(chi)
     
@@ -2080,10 +1642,13 @@ class FluvialEngine(BaseEngine):
                 # --- METHOD A: GEOMETRIC INTEGRAL (Chi-Slope) ---
                 # Standard: ksn is the slope of the line in Chi-Elevation space.
                 # Insensitive to internal pixel-level fluctuations.
-                dz = abs(z_start - z_end)
-                dchi = abs(chi_start - chi_end)
-                
-                ksn_seg = dz / dchi if dchi > 1e-6 else 0.0
+                # Least-squares slope of Z on χ over the whole segment
+                # (Perron & Royden, 2013); the former end-point ratio
+                # depended on two single pixels.
+                # ksn = Mχ · A0^θ (Perron & Royden, 2013): the χ integral
+                # already divides the area by A0.
+                fit = linear_fit(chi[i0:i1 + 1], elev[i0:i1 + 1])
+                ksn_seg = abs(fit["slope"]) * a0 ** theta_ref if fit else 0.0
                 # approximation of local concavity by the slope/regression of the segment in chi-elev space (just for info/statistics, not used to correct ksn)
                 s_seg = slope[i0:i1]
                 a_seg = area_m2[i0:i1]
@@ -2117,9 +1682,11 @@ class FluvialEngine(BaseEngine):
                     # OLS Regression: returns [slope, intercept]
                     # polyfit returns slope = -theta_local (negative in theory), intercept = log(Ks)
                     coeffs   = np.polyfit(log_A, log_S, 1)
-                    slope = coeffs[0]
+                    # Local name: assigning to ``slope`` overwrote the slope
+                    # ARRAY and crashed the next segment (audit C4).
+                    reg_slope = coeffs[0]
                     intercept = coeffs[1]
-                    th_local = abs(slope)     # Local concavity (positive value)
+                    th_local = abs(reg_slope)     # Local concavity (positive value)
                     Ks       = 10 ** intercept # Geomorphic steepness index for the segment (intercept = log(Ks) then ks = 10^intercept)
                     log_A_max = np.max(log_A)
                     log_A_min = np.min(log_A)
@@ -2129,7 +1696,14 @@ class FluvialEngine(BaseEngine):
                 except (np.linalg.LinAlgError, ValueError):
                     continue
 
+            # χ–z line of the segment (GSV-Studio "droites χ–z par
+            # segment"): drawn on the χ-plot whatever the k_sn method.
+            chi_fit = linear_fit(chi[i0:i1 + 1], elev[i0:i1 + 1])
             segments.append({
+                "m_chi":       round(chi_fit["slope"], 4) if chi_fit else None,
+                "intercept":   round(chi_fit["intercept"], 3) if chi_fit else None,
+                "r2":          round(chi_fit["r2"], 4) if chi_fit else None,
+                "n_points":    chi_fit["n"] if chi_fit else int(i1 - i0 + 1),
                  "idx_start":   i0, 
                  "idx_end":     i1,
                 "chi_start":   round(float(chi_start), 4),
@@ -2427,10 +2001,10 @@ class FluvialEngine(BaseEngine):
 
         Command:
         ────────
-        processing.run("grass7:r.watershed", {
+        processing.run(grass_id("r.watershed"), {
             "elevation": DEM raster,
             "accumulation": "TEMPORARY_OUTPUT",  ← output raster
-            "-a": True,  ← absolute accumulation (m²), not cell count
+            "-a": True,  ← positive accumulation even where flow leaves the DEM
             ...
         })
 
@@ -2438,7 +2012,8 @@ class FluvialEngine(BaseEngine):
         ──────────
         • Industry standard hydrological tool (accurate D8 flow routing)
         • Handles large rasters efficiently (C implementation)
-        • Produces absolute accumulation (A in m²), not cell counts
+        • Output = number of upstream CELLS; RockMorph multiplies by the
+          cell area to get A in m² (core/hydro.py)
         • Properly accounts for flow divergence and confluence
 
         Why Cache?
@@ -2533,9 +2108,13 @@ class FluvialEngine(BaseEngine):
 
         dem_path = dem_layer.source()
 
-        # Cache hit
-        if dem_path in self._fac_cache:
-            return self._fac_cache[dem_path], True, None
+        # Cache hit. The cache holds the PATH of the accumulation raster, and
+        # a new layer is opened for each run: a layer object created in a
+        # previous worker thread is unusable once that thread has ended (the
+        # second run returned NaN pixel sizes for every basin).
+        cached = self._fac_cache.get(dem_path)
+        if cached and os.path.exists(cached):
+            return QgsRasterLayer(cached, "fac_auto", "gdal"), True, None
 
         # Compute via GRASS r.watershed
         if progress_cb:
@@ -2544,11 +2123,14 @@ class FluvialEngine(BaseEngine):
         try:
             import processing  # type: ignore
             result = processing.run(
-                "grass7:r.watershed",
+                grass_id("r.watershed"),
                 {
                     "elevation":    dem_layer,
                     "accumulation": "TEMPORARY_OUTPUT",
-                    "-a":           True,   # absolute accumulation in m²
+                    # -a: positive accumulation even for cells whose flow
+                    # leaves the region; values stay CELL COUNTS (converted
+                    # to m² with the cell area in core/hydro.py).
+                    "-a":           True,
                     "GRASS_REGION_PARAMETER": None,
                     "GRASS_REGION_CELLSIZE_PARAMETER": 0,
                 },
@@ -2559,11 +2141,9 @@ class FluvialEngine(BaseEngine):
             ):
                 raise RuntimeError("r.watershed returned invalid layer")
 
-            # Wrap path in QgsRasterLayer if processing returned a string
-            if isinstance(fac, str):
-                fac = QgsRasterLayer(fac, "fac_auto", "gdal")
-
-            self._fac_cache[dem_path] = fac
+            fac_path = fac if isinstance(fac, str) else fac.source()
+            fac = QgsRasterLayer(fac_path, "fac_auto", "gdal")
+            self._fac_cache[dem_path] = fac_path
             return fac, True, tr(
                 "Flow accumulation computed automatically via GRASS r.watershed. "
                 "For best results, provide a pre-conditioned FAC raster."

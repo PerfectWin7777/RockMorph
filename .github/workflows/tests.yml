@@ -1,0 +1,32 @@
+# Unit tests of the pure libraries (core/indices, core/terrain_metrics.py,
+# core/structural.py). They need NumPy and SciPy only, not QGIS.
+name: tests
+
+on:
+  push:
+    branches: [main, second]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip numpy scipy pytest
+      - name: Run tests
+        run: python -m pytest -q tests
+
+  metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check metadata.txt for the QGIS plugin repository
+        run: python .github/scripts/package_plugin.py --check

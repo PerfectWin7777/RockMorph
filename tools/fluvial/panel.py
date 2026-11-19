@@ -26,7 +26,7 @@ import math
 from sqlite3 import connect
 import numpy as np # type: ignore
 
-from PyQt5.QtWidgets import (  # type: ignore
+from qgis.PyQt.QtWidgets import (  # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QSpinBox, QDoubleSpinBox,
     QComboBox, QLabel,
@@ -37,8 +37,8 @@ from PyQt5.QtWidgets import (  # type: ignore
     QCheckBox, QSlider, QWidget, QFrame,
     QMessageBox
 )
-from PyQt5.QtCore import Qt, QCoreApplication, pyqtSignal    # type: ignore
-from PyQt5.QtGui import QColor  # type: ignore
+from qgis.PyQt.QtCore import Qt, QCoreApplication, pyqtSignal    # type: ignore
+from qgis.PyQt.QtGui import QColor  # type: ignore
 from qgis.gui import QgsMapLayerComboBox, QgsRubberBand, QgsColorButton, QgsCollapsibleGroupBox  # type: ignore
 from qgis.core import (  # type: ignore
     QgsMapLayerProxyModel, QgsWkbTypes,
@@ -47,13 +47,13 @@ from qgis.core import (  # type: ignore
     QgsPointXY, QgsField, QgsFields,
     QgsWkbTypes as WkbTypes,
 )
-from PyQt5.QtCore import QVariant  # type: ignore
+from qgis.PyQt.QtCore import QVariant  # type: ignore
 
 from ...base.base_panel import BasePanel, ComputeWorker
 from ...core.exporter import RockMorphExporter
 from ...widgets.export_group import RockMorphExportGroup
 from .style_manager import FluvialStyleWidget
-from .engine import FluvialEngine
+from .engine import MIN_SEGMENT_PTS, FluvialEngine
 
 
 def tr(message):
@@ -312,6 +312,25 @@ class FluvialPanel(BasePanel):
         theta_layout.addWidget(self._theta_label)
         param_layout.addRow(tr("θ ref (m/n):"), theta_row)
 
+        # Best concavity of the active basin (max R² of the χ–z line)
+        best_row = QWidget()
+        best_layout = QHBoxLayout(best_row)
+        best_layout.setContentsMargins(0, 0, 0, 0)
+        best_layout.setSpacing(6)
+        self.best_theta_label = QLabel("—")
+        self.best_theta_label.setToolTip(tr(
+            "<b>Best concavity (Perron & Royden, 2013):</b><br>"
+            "θ between 0.05 and 0.95 for which the χ–z profile of the active basin "
+            "is the most linear (highest R²). Knickpoints lower the R² for every θ, "
+            "so trust it most on profiles without strong breaks."))
+        self.apply_best_theta_btn = QPushButton(tr("Apply"))
+        self.apply_best_theta_btn.setEnabled(False)
+        self.apply_best_theta_btn.setToolTip(tr("Set θ ref to the best concavity of the active basin."))
+        self.apply_best_theta_btn.clicked.connect(self._apply_best_theta)
+        best_layout.addWidget(self.best_theta_label, stretch=1)
+        best_layout.addWidget(self.apply_best_theta_btn)
+        param_layout.addRow(tr("Best θ (χ–z):"), best_row)
+
         self.a0_spin = QDoubleSpinBox()
         self.a0_spin.setRange(0.1, 1e6)
         self.a0_spin.setValue(1.0)
@@ -397,7 +416,7 @@ class FluvialPanel(BasePanel):
 
         # ── View toggle ───────────────────────────────────────────────
         # ── Display & Layers Group ────────────────────────────────────
-        display_group = QgsCollapsibleGroupBox(tr("Display & Layers"))
+        display_group = QgsCollapsibleGroupBox(tr("Display && Layers"))
         display_layout = QVBoxLayout(display_group)
         display_layout.setSpacing(10)
 
@@ -633,30 +652,37 @@ class FluvialPanel(BasePanel):
         ksn_method = self.ksn_method_combo.currentData()
 
         for r in self._results:
-            dist  = np.array(r["distances_m"])
-            area  = np.array(r["area_m2"])
-            slope = np.array(r["slope_local"])
+            # Lists may hold None (JSON nulls): dtype=float turns them into NaN.
+            dist  = np.array(r["distances_m"], dtype=float)
+            area  = np.array(r["area_m2"], dtype=float)
+            slope = np.array(r["slope_local"], dtype=float)
+            elev  = np.array(r["elevations"], dtype=float)
 
-            # Recompute chi
+            # χ in the same source → outlet order as every other array.
             chi = self._engine._compute_chi(dist, area, theta_ref, a0)
-            r["chi"]     = chi.tolist()
+            r["chi"]     = self._engine._sanitize_list(chi)
             r["chi_max"] = round(float(np.nanmax(chi)), 4)
 
-            # Recompute ksn profile
+            # Same window as the full computation (stored by the engine);
+            # window_size=None made the former code raise TypeError (audit C5).
             ksn_prof, th_local = self._engine._compute_ksn_loglog_V3(
-                slope, area, theta_ref, window_size=None
+                slope, area, theta_ref, int(r.get("ksn_window", MIN_SEGMENT_PTS))
             )
-            r["ksn_profile"] = np.nan_to_num(ksn_prof, nan=0.0).tolist()
-            r["ksn_mean"]    = round(float(np.nanmean(ksn_prof)), 2)
-            r["ksn_max"]     = round(float(np.nanmax(ksn_prof)),  2)
-            r["theta_local"] = round(float(np.nanmean(th_local)), 4)
+            # Missing k_sn stays missing (it was replaced by 0, which biased
+            # the curves and the mean).
+            r["ksn_profile"] = self._engine._sanitize_list(ksn_prof)
+            finite = np.isfinite(ksn_prof)
+            r["ksn_mean"]    = round(float(np.nanmean(ksn_prof)), 2) if finite.any() else 0
+            r["ksn_max"]     = round(float(np.nanmax(ksn_prof)),  2) if finite.any() else 0
+            r["theta_local"] = round(float(np.nanmean(th_local)), 4) if np.isfinite(th_local).any() else 0
             r["theta_ref"]   = theta_ref
 
-            # Recompute ksn segments
+            # Knickpoints keep their position; their χ follows the new θ.
             knickpoints = r.get("knickpoints", [])
+            for kp in knickpoints:
+                kp["chi"] = round(float(chi[kp["idx"]]), 4)
             r["ksn_segments"] = self._engine._compute_ksn_segments(
-                chi, np.array(r["elevations"]),
-                slope, area, theta_ref, knickpoints, ksn_method
+                chi, elev, slope, area, theta_ref, knickpoints, ksn_method, a0
             )
 
         self._refresh_tree()
@@ -811,6 +837,29 @@ class FluvialPanel(BasePanel):
         )
         # Draw knickpoints on map canvas
         self._draw_knickpoints(self._results[self._active_index])
+        self._update_best_theta()
+
+    def _update_best_theta(self):
+        """Shows the best concavity of the active basin next to the θ slider."""
+        result = self._results[self._active_index] if self._results else {}
+        theta = result.get("theta_best")
+        if theta is None:
+            self.best_theta_label.setText("—")
+            self.apply_best_theta_btn.setEnabled(False)
+            return
+        text = f"{theta:.2f}  (R² {result.get('theta_best_r2', 0):.3f})"
+        if result.get("theta_best_at_bound"):
+            text += tr("  — at the search limit, not constrained")
+        self.best_theta_label.setText(text)
+        self.apply_best_theta_btn.setEnabled(abs(theta - self.theta_slider.value() / 100.0) > 1e-6)
+
+    def _apply_best_theta(self):
+        """Moves the θ slider to the active basin's best concavity (live recompute)."""
+        if not self._results:
+            return
+        theta = self._results[self._active_index].get("theta_best")
+        if theta is not None:
+            self.theta_slider.setValue(int(round(theta * 100)))
 
     def _update_nav_buttons(self):
         total = len(self._results)
@@ -958,7 +1007,7 @@ class FluvialPanel(BasePanel):
 
         self._last_data = payload
         js = f"updatePlot({json.dumps(json.dumps(payload))})"
-        self.webview.page().runJavaScript(js)
+        self.run_js(js)
 
     # ------------------------------------------------------------------
     # Knickpoint rubber bands on map canvas
@@ -977,56 +1026,39 @@ class FluvialPanel(BasePanel):
         if not knickpoints:
             return
 
-        basin_layer = self.basin_combo.currentLayer()
-        if basin_layer is None:
-            return
-
-        # Get the feature geometry to locate knickpoints on the river
-        # We use dist_m to interpolate the position on the river geometry
-        river_geom = self._get_river_geom(result["fid"])
-        if river_geom is None:
+        # The main river geometry is kept in the result, in the CRS of the
+        # stream layer and oriented source -> outlet (audit M10: the former
+        # lookup always returned None, so no marker was ever drawn).
+        river_geom = result.get("geom")
+        stream_layer = self.stream_combo.currentLayer()
+        if river_geom is None or river_geom.isEmpty() or stream_layer is None:
             return
 
         canvas     = self.iface.mapCanvas()
         canvas_crs = canvas.mapSettings().destinationCrs()
-        basin_crs  = basin_layer.crs()
-
+        # Knickpoints lie on the river: transform from the STREAM CRS (the
+        # former code used the basin CRS).
         transform = None
-        if basin_crs != canvas_crs:
-            transform = QgsCoordinateTransform(
-                basin_crs, canvas_crs, QgsProject.instance()
-            )
+        if stream_layer.crs() != canvas_crs:
+            transform = QgsCoordinateTransform(stream_layer.crs(), canvas_crs, QgsProject.instance())
+        to_crs = self._distance_to_crs_units(result)
 
         for kp in knickpoints:
-            dist_m = kp.get("dist_m", 0.0)
-            # Interpolate point along river at dist_m
-            pt = river_geom.interpolate(dist_m)
+            pt = river_geom.interpolate(to_crs(kp.get("dist_m", 0.0)))
             if pt.isEmpty():
                 continue
-
             pt_xy = pt.asPoint()
             if transform:
                 pt_xy = transform.transform(pt_xy)
 
             rb = QgsRubberBand(canvas, WkbTypes.PointGeometry)
             rb.setColor(QColor(231, 76, 60))    # red
-            rb.setIconSize(10)
+            rb.setIconSize(10 if kp.get("rank", 1) == 1 else 8)
             rb.setIcon(QgsRubberBand.ICON_CIRCLE)
             rb.addPoint(pt_xy)
             self._rubber_bands.append(rb)
 
         canvas.refresh()
-
-    def _get_river_geom(self, fid: int):
-        """
-        Retrieves the main river geometry for a basin fid
-        from the stream layer intersected with the basin.
-        Returns None if unavailable.
-        """
-        # The river geometry is not stored in results (too heavy).
-        # We fall back to None — knickpoints appear in the plot only.
-        # Future: store geom reference in results dict.
-        return None
 
     # ------------------------------------------------------------------
     # Context menu helpers
@@ -1181,7 +1213,7 @@ class FluvialPanel(BasePanel):
             return
         self._pending_export_path = path
         self._pending_export_dpi  = dpi
-        self.webview.page().runJavaScript(
+        self.run_js(
             f"exportViaSvg('{self.div_id}')"
         )
 
@@ -1208,6 +1240,23 @@ class FluvialPanel(BasePanel):
             for r in self._results
         ]
     
+
+
+    @staticmethod
+    def _distance_to_crs_units(result: dict):
+        """
+        Function converting a distance from the source (metres, as in
+        ``distances_m``) into a length along ``result["geom"]`` in the units
+        of its CRS. QgsGeometry.interpolate/curveSubstring work in CRS units,
+        so metres were read as degrees in a geographic CRS (audit C3). The
+        conversion is proportional: the fraction of the profile length is the
+        fraction of the geometry length.
+        """
+        distances = [d for d in result["distances_m"] if d is not None]
+        total_m = float(distances[-1]) if distances else 0.0
+        total_crs = result["geom"].length()
+        factor = total_crs / total_m if total_m > 0 else 1.0
+        return lambda distance_m: float(distance_m) * factor
 
     def _on_export_geopackage(self):
         if not self._results:
@@ -1255,11 +1304,13 @@ class FluvialPanel(BasePanel):
         for r in self._results:
             geom = r["geom"]
             dists = r["distances_m"]
+            to_crs = self._distance_to_crs_units(r)
             for seg in r["ksn_segments"]:
-                # On coupe la géométrie entre la distance i0 et i1
+                # Cut the river between the two segment ends (metres along
+                # the profile, converted to the units of the geometry CRS).
                 d_start = dists[seg["idx_start"]]
                 d_end   = dists[seg["idx_end"]]
-                sub_geom = QgsGeometry(geom.constGet().curveSubstring(d_start, d_end))
+                sub_geom = QgsGeometry(geom.constGet().curveSubstring(to_crs(d_start), to_crs(d_end)))
                 
                 feat = QgsFeature(f_reach)
                 feat.setGeometry(sub_geom)
@@ -1282,9 +1333,10 @@ class FluvialPanel(BasePanel):
         feats_knk = []
         for r in self._results:
             geom = r["geom"]
+            to_crs = self._distance_to_crs_units(r)
             for kp in r["knickpoints"]:
-                # Interpoler la position géographique à partir de la distance
-                pt_geom = geom.interpolate(kp["dist_m"])
+                # Position along the river from the distance to the source.
+                pt_geom = geom.interpolate(to_crs(kp["dist_m"]))
                 feat = QgsFeature(f_knk)
                 feat.setGeometry(pt_geom)
                 feat.setAttributes([r["label"], kp["elev_m"], kp["dist_m"], kp["chi"]])
@@ -1306,8 +1358,9 @@ class FluvialPanel(BasePanel):
         feats_pts = []
         for r in self._results:
             geom = r["geom"]
+            to_crs = self._distance_to_crs_units(r)
             for i in range(len(r["distances_m"])):
-                pt_geom = geom.interpolate(r["distances_m"][i])
+                pt_geom = geom.interpolate(to_crs(r["distances_m"][i]))
                 feat = QgsFeature(f_pts)
                 feat.setGeometry(pt_geom)
                 feat.setAttributes([r["label"], r["distances_m"][i], r["elevations"][i], 

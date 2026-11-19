@@ -28,7 +28,7 @@ Authors: RockMorph contributors / Tony
 import json
 import re
 
-from PyQt5.QtWidgets import (  # type: ignore
+from qgis.PyQt.QtWidgets import (  # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QSpinBox, QDoubleSpinBox,
     QComboBox, QLabel,
@@ -38,8 +38,8 @@ from PyQt5.QtWidgets import (  # type: ignore
     QMenu, QApplication, QFileDialog, QWidget,
     QCheckBox, QColorDialog, QSlider,QGridLayout
 )
-from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal  # type: ignore
-from PyQt5.QtGui import QColor  # type: ignore
+from qgis.PyQt.QtCore import Qt, QCoreApplication, QThread, pyqtSignal  # type: ignore
+from qgis.PyQt.QtGui import QColor  # type: ignore
 from qgis.gui import QgsMapLayerComboBox , QgsCollapsibleGroupBox   # type: ignore
 from qgis.core import (  # type: ignore
     QgsMapLayerProxyModel, QgsWkbTypes,
@@ -834,7 +834,7 @@ class NCPPanel(BasePanel):
 
         self._last_data = payload
         js = f"updatePlot({json.dumps(json.dumps(payload))})"
-        self.webview.page().runJavaScript(js)
+        self.run_js(js)
 
     # ------------------------------------------------------------------
     # BasePanel abstract methods
@@ -875,7 +875,7 @@ class NCPPanel(BasePanel):
             return
         self._pending_export_path = path
         self._pending_export_dpi  = dpi
-        self.webview.page().runJavaScript(
+        self.run_js(
             f"exportViaSvg('{self.div_id}')"
         )
 

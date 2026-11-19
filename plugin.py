@@ -28,8 +28,14 @@ class RockMorphPlugin:
                 if hasattr(panel, 'cleanup'):
                     print(f"Cleaning up panel: {type(panel).__name__}")
                     panel.cleanup()
+            # Remove the RockMorph entry of the Plugins menu as well: it
+            # pointed to a deleted dock after a plugin reload (audit M6).
+            self.dock.unload()
             self.iface.removeDockWidget(self.dock)
             self.dock = None
+        # Free the decoded rasters kept between runs (core/raster.py).
+        from .core.raster import clear_raster_cache
+        clear_raster_cache()
 
     def run(self):
         if self.dock is None:

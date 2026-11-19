@@ -18,11 +18,11 @@ Authors: RockMorph contributors / Tony
 
 import numpy as np  # type: ignore
 from qgis.core import QgsVectorLayer, QgsRasterLayer, QgsWkbTypes  # type: ignore
-from PyQt5.QtCore import QCoreApplication  # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
 from ...base.base_engine import BaseEngine
 from ...core.hydro import MainRiverExtractor, sample_river_profile
-from ...core.utils import smooth_data
+from ...core.utils import smooth_data, trapezoid
 
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
@@ -231,7 +231,7 @@ class NCPEngine(BaseEngine):
 
         # 5. Global Concavity Percentage (Integral)
         # Area: positive if curve below diagonal, negative if above
-        area      = float(np.trapz(deviation, x_norm))
+        area      = float(trapezoid(deviation, x_norm))
         concavity = round((area / 0.5) * 100, 2)        # % signed
 
         # Convention: positive = curve BELOW diagonal (concave, mature)

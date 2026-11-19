@@ -1,0 +1,37 @@
+# On a tag "v0.3.0": build RockMorph.zip, attach it to a GitHub release and,
+# when the OSGeo credentials are stored as repository secrets
+# (OSGEO_USERNAME, OSGEO_PASSWORD), upload it to plugins.qgis.org.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check that the tag matches metadata.txt
+        run: |
+          VERSION=$(grep '^version=' metadata.txt | cut -d= -f2)
+          test "v$VERSION" = "${GITHUB_REF_NAME}" || { echo "Tag ${GITHUB_REF_NAME} != v$VERSION"; exit 1; }
+      - name: Build RockMorph.zip
+        run: python .github/scripts/package_plugin.py --output RockMorph.zip
+      - name: GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: RockMorph.zip
+          generate_release_notes: true
+      - name: Upload to plugins.qgis.org
+        env:
+          OSGEO_USERNAME: ${{ secrets.OSGEO_USERNAME }}
+          OSGEO_PASSWORD: ${{ secrets.OSGEO_PASSWORD }}
+        if: env.OSGEO_USERNAME != ''
+        run: python .github/scripts/package_plugin.py --upload RockMorph.zip

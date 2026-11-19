@@ -17,7 +17,7 @@ Authors: RockMorph contributors / Tony
 """
 
 import json
-from PyQt5.QtWidgets import (  # type: ignore
+from qgis.PyQt.QtWidgets import (  # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QSpinBox, QComboBox,
     QCheckBox, QLabel,
@@ -27,9 +27,9 @@ from PyQt5.QtWidgets import (  # type: ignore
     QStackedWidget,QColorDialog,
     QMenu,QApplication,QFileDialog
 )
-from PyQt5.QtWebEngineWidgets import QWebEngineView  # type: ignore
-from PyQt5.QtCore import Qt, QCoreApplication, QThread, pyqtSignal  # type: ignore
-from PyQt5.QtGui import QColor  # type: ignore
+from ...base.webengine import QWebEngineView
+from qgis.PyQt.QtCore import Qt, QCoreApplication, QThread, pyqtSignal  # type: ignore
+from qgis.PyQt.QtGui import QColor  # type: ignore
 from qgis.gui import QgsMapLayerComboBox, QgsCollapsibleGroupBox  # type: ignore
 from qgis.gui import QgsMapLayerComboBox  # type: ignore
 from qgis.core import QgsMapLayerProxyModel, QgsWkbTypes  # type: ignore
@@ -804,7 +804,7 @@ class HypsometryPanel(BasePanel):
         }
         self._last_data = payload
         js = f"updatePlot({json.dumps(json.dumps(payload))})"
-        self.webview.page().runJavaScript(js)
+        self.run_js(js)
 
     def _send_curves_to_plot(self, curves: list):
         """Send an ad-hoc list of curves (from manual selection)."""
@@ -824,7 +824,7 @@ class HypsometryPanel(BasePanel):
         }
         self._last_data = payload
         js = f"updatePlot({json.dumps(json.dumps(payload))})"
-        self.webview.page().runJavaScript(js)
+        self.run_js(js)
 
     # ------------------------------------------------------------------
     # BasePanel abstract methods
@@ -872,7 +872,7 @@ class HypsometryPanel(BasePanel):
 
         # last thing before export: ask JS to export the current plot as SVG data URL, then save it
         div_id = 'plot-main'  # div ID for plotly
-        self.webview.page().runJavaScript(f"exportViaSvg('{div_id}')")
+        self.run_js(f"exportViaSvg('{div_id}')")
 
 
 

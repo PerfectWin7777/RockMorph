@@ -30,15 +30,15 @@ Authors: RockMorph contributors / Tony
 import json
 import re
 
-from PyQt5.QtWidgets import (  # type: ignore
+from qgis.PyQt.QtWidgets import (  # type: ignore
     QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QDoubleSpinBox, QComboBox, 
      QLabel, QTreeWidget, QTreeWidgetItem, 
     QAbstractItemView, QMenu, QApplication, QMessageBox,
     QRadioButton
 )
-from PyQt5.QtCore import Qt, QCoreApplication  # type: ignore
-from PyQt5.QtGui import QColor  # type: ignore
+from qgis.PyQt.QtCore import Qt, QCoreApplication  # type: ignore
+from qgis.PyQt.QtGui import QColor  # type: ignore
 
 from qgis.gui import QgsMapLayerComboBox, QgsRubberBand, QgsCollapsibleGroupBox   # type: ignore
 from qgis.core import (  # type: ignore
@@ -47,7 +47,7 @@ from qgis.core import (  # type: ignore
     QgsField, QgsFields, QgsWkbTypes,
     QgsWkbTypes as WkbTypes
 )
-from PyQt5.QtCore import QVariant  # type: ignore
+from qgis.PyQt.QtCore import QVariant  # type: ignore
 
 from ...base.base_panel import BasePanel, ComputeWorker
 from ...core.exporter import RockMorphExporter

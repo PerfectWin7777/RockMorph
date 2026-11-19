@@ -21,10 +21,11 @@ from qgis.core import (  # type: ignore
     QgsVectorLayer, QgsRasterLayer, QgsProject,
     QgsCoordinateTransform, QgsWkbTypes,
 )
-from PyQt5.QtCore import QCoreApplication  # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
 from ...base.base_engine import BaseEngine
 from ...core.raster import RasterReader
+from ...core.utils import trapezoid
 
 
 def tr(message):
@@ -184,7 +185,7 @@ class HypsometryEngine(BaseEngine):
         x, y = self._hypsometric_curve(values, n_points)
 
         # 5. Compute integral (HI)
-        hi = float(np.trapz(y, x))
+        hi = float(trapezoid(y, x))
 
         # 6. Stats
         area_km2 = self._area_km2(geom, basin_layer)

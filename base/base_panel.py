@@ -1,20 +1,23 @@
 # base/base_panel.py
 
 from abc import ABCMeta, abstractmethod
+import inspect
 import os
+import re
 
-from PyQt5.QtGui import QDesktopServices # type: ignore
-from PyQt5.QtWebChannel import QWebChannel # type: ignore
-from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings  # type: ignore
-from PyQt5.QtWidgets import (QWidget,QFrame,# type: ignore
-    QVBoxLayout,QScrollArea,QProgressBar,QLabel
+from qgis.PyQt.QtGui import QDesktopServices  # type: ignore
+from .webengine import QWebChannel, QWebEngineSettings, QWebEngineView
+from qgis.PyQt.QtWidgets import (QWidget,QFrame,# type: ignore
+    QVBoxLayout,QHBoxLayout,QScrollArea,QProgressBar,QLabel,QToolButton
     ) 
-from PyQt5.QtCore import (  # type: ignore
+from qgis.PyQt.QtCore import (  # type: ignore
     Qt, QUrl, QObject, QThread, pyqtSignal, pyqtSlot, QCoreApplication
 )
-import sip # type: ignore
+from qgis.PyQt import sip # type: ignore
 
 from ..core.exporter import RockMorphExporter
+from .thread_safe_layers import open_value, snapshot_value
+from qgis.core import QgsEllipsoidUtils, QgsProject  # type: ignore
 
 # Resolve metaclass conflict between QWidget (sip) and ABC
 class QWidgetABCMeta(sip.wrappertype, ABCMeta):
@@ -55,6 +58,30 @@ class _BaseBridge(QObject):
         if hasattr(self._panel, "_on_plot_leave"):
             self._panel._on_plot_leave()
     
+    @pyqtSlot(int, float)
+    def on_profile_hover(self, profile_index, distance):
+        """Hover on one of several profiles: (profile index, distance in m)."""
+        if hasattr(self._panel, "_on_profile_hover"):
+            self._panel._on_profile_hover(profile_index, distance)
+
+    @pyqtSlot(float, float)
+    def on_swath_point(self, distance, offset):
+        """Hover on the 3D swath block: (distance along the line, lateral offset), metres."""
+        if hasattr(self._panel, "_on_swath_point"):
+            self._panel._on_swath_point(distance, offset)
+
+    @pyqtSlot(float, float)
+    def on_probe_point(self, x, y):
+        """Hover on a 3D terrain: map coordinates (layer CRS) under the pointer."""
+        if hasattr(self._panel, "_on_probe_point"):
+            self._panel._on_probe_point(x, y)
+
+    @pyqtSlot()
+    def on_probe_leave(self):
+        """The pointer left the 3D terrain."""
+        if hasattr(self._panel, "_on_probe_leave"):
+            self._panel._on_probe_leave()
+
     @pyqtSlot(int)
     def receive_click_id(self, fid: int):
         # Pass clicked feature ID to panel's click handler, if it exists
@@ -70,34 +97,92 @@ class _BaseBridge(QObject):
 # Background worker — keeps UI responsive during long compute
 # ---------------------------------------------------------------------------
 
+def _accepts_keyword(function, name: str) -> bool:
+    """True when ``function`` takes ``name`` or arbitrary keyword arguments."""
+    try:
+        parameters = inspect.signature(function).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.kind == p.VAR_KEYWORD or p.name == name for p in parameters)
+
+
+class CancelledByUser(BaseException):
+    """
+    Raised inside a computation when the user pressed Cancel.
+
+    Derived from BaseException on purpose: engines wrap each basin in
+    ``except Exception`` to skip bad inputs, and a cancellation must not be
+    mistaken for one bad basin and swallowed.
+    """
+
+
 class ComputeWorker(QThread):
     """
-    Example
     Runs Engine.compute() in a background thread.
-    Emits finished(result_dict) or error(message) and progress(value, message) signals.
+    Emits finished(result_dict) or error(message) and progress(value, message).
+
+    Thread safety (audit M4): every QGIS layer found in ``params`` (also in
+    lists) is replaced by a private copy opened IN the worker thread
+    (base/thread_safe_layers.py), so the computation never reads the layers
+    the main thread is drawing or editing.
+
+    Cancellation: ``cancel()`` sets a flag; the next call the engine makes to
+    its ``progress_callback`` raises ``CancelledByUser`` and the worker emits
+    ``error`` with a "cancelled" message. Engines report progress at least
+    once per basin / feature / processing step, so no engine had to change.
+    ``is_cancelled`` is also passed in ``params`` for engines that want to
+    check it themselves.
     """
     finished = pyqtSignal(dict)
     error    = pyqtSignal(str)
     progress = pyqtSignal(int, str)
 
-    def __init__(self, engine, params:dict):
+    def __init__(self, engine, params: dict):
         super().__init__()
         self._engine = engine
-         # We copy params to avoid modifying the original dict in the UI thread
-        self._params = params.copy()
+        # Snapshots are taken now, on the main thread.
+        self._params = {key: snapshot_value(value) for key, value in params.items()}
+        self._cancelled = False
+        # QGIS caches ellipsoid parameters in the thread that first asks for
+        # them; a cache entry made in a worker thread becomes invalid when
+        # that thread ends, and the NEXT run's QgsDistanceArea measurements
+        # returned NaN (second fluvial run of a session failed on every
+        # basin). Filling the cache here, on the main thread, avoids it.
+        QgsEllipsoidUtils.ellipsoidParameters("WGS84")
+        project_ellipsoid = QgsProject.instance().ellipsoid()
+        if project_ellipsoid and project_ellipsoid.upper() != "NONE":
+            QgsEllipsoidUtils.ellipsoidParameters(project_ellipsoid)
+
+    def cancel(self) -> None:
+        """Ask the computation to stop at its next progress report."""
+        self._cancelled = True
+
+    def is_cancelled(self) -> bool:
+        return self._cancelled
 
     def run(self):
         try:
-           # Inject the progress signal as a callback function.
-            # The Engine doesn't need to know about Qt or Signals, 
-            # it just calls a function: callback(int, str).
-            self._params["progress_callback"] = self.progress.emit
-            
-            # Execute the heavy computation
-            result = self._engine.compute(**self._params)
+            params = {key: open_value(value) for key, value in self._params.items()}
+
+            def report(value, message=""):
+                if self._cancelled:
+                    raise CancelledByUser()
+                self.progress.emit(int(value), str(message or ""))
+
+            # The engine doesn't need to know about Qt: it calls
+            # progress_callback(int, str) and may poll is_cancelled().
+            params["progress_callback"] = report
+            if _accepts_keyword(self._engine.compute, "is_cancelled"):
+                params["is_cancelled"] = self.is_cancelled
+
+            result = self._engine.compute(**params)
+            if self._cancelled:
+                raise CancelledByUser()
             self.finished.emit(result)
+        except CancelledByUser:
+            self.error.emit(tr("Computation cancelled."))
         except Exception as e:
-              # Catch any crash to prevent QGIS from closing abruptly
+            # Catch any crash to prevent QGIS from closing abruptly
             import traceback
             traceback.print_exc()
             self.error.emit(str(e))
@@ -185,7 +270,16 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         """)
 
         prog_layout.addWidget(self._progress_label)
-        prog_layout.addWidget(self._progress_bar)
+        bar_row = QHBoxLayout()
+        bar_row.setContentsMargins(0, 0, 0, 0)
+        bar_row.addWidget(self._progress_bar, 1)
+        # Stops the running computation at its next progress report.
+        self._cancel_btn = QToolButton()
+        self._cancel_btn.setText(tr("Cancel"))
+        self._cancel_btn.setToolTip(tr("Stop the computation."))
+        self._cancel_btn.clicked.connect(self._cancel_running_workers)
+        bar_row.addWidget(self._cancel_btn)
+        prog_layout.addLayout(bar_row)
 
 
 
@@ -199,6 +293,14 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
      # ------------------------------------------------------------------
     # Feedback Control Methods (The "Pro" Way)
     # ------------------------------------------------------------------
+
+    def _cancel_running_workers(self) -> None:
+        """Cancel every ComputeWorker of this panel that is still running."""
+        for name in ("_worker", "_vector_worker"):
+            worker = getattr(self, name, None)
+            if isinstance(worker, ComputeWorker) and worker.isRunning():
+                worker.cancel()
+        self._progress_label.setText(tr("Cancelling…"))
 
     def set_loading_state(self, loading: bool, message: str = "", total: int = 0):
         """
@@ -289,6 +391,10 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         settings.setAttribute(
             QWebEngineSettings.JavascriptEnabled, True
         )
+        # Every local page and script is UTF-8 (plotly.min.js holds characters
+        # such as the minus sign U+2212): declare it instead of relying on a
+        # locale-dependent default.
+        settings.setDefaultTextEncoding("utf-8")
 
         self._bridge  = _BaseBridge(self)
         self._channel = QWebChannel()
@@ -324,12 +430,10 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         with open(html_path, "r", encoding="utf-8") as f:
             html_content = f.read()
 
-        # Patch relative JS src → absolute file:/// paths
-        for script in ("qwebchannel.js", "plotly.min.js", "bridge.js"):
-            html_content = html_content.replace(
-                f'src="js/{script}"',
-                f'src="file:///{js_dir}/{script}"'
-            )
+        # Patch every relative "js/…" script to an absolute file:/// path
+        # (setHtml does not resolve relative scripts reliably on Windows).
+        html_content = re.sub(r'src="js/([^"]+)"',
+                              lambda m: f'src="file:///{js_dir}/{m.group(1)}"', html_content)
 
         # Write patched HTML to a temp file next to the original
         # so that relative resources (images, etc.) still resolve
@@ -338,7 +442,34 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         #     f.write(html)
 
         # self.webview.load(QUrl.fromLocalFile(html_path))
+        # JavaScript sent before the page has loaded is queued (run_js):
+        # a computation finishing first used to call functions that did not
+        # exist yet, leaving the chart empty.
+        self._page_ready = False
+        self._js_queue = []
+        try:
+            self.webview.loadFinished.disconnect(self._on_page_loaded)
+        except TypeError:
+            pass
+        self.webview.loadFinished.connect(self._on_page_loaded)
         self.webview.setHtml(html_content, QUrl.fromLocalFile(html_path))
+
+    def _on_page_loaded(self, ok: bool) -> None:
+        """Marks the chart page ready and runs the JavaScript queued meanwhile."""
+        self._page_ready = True
+        queued, self._js_queue = self._js_queue, []
+        for script, callback in queued:
+            self.run_js(script, callback)
+
+    def run_js(self, script: str, callback=None) -> None:
+        """runJavaScript on the chart page, deferred until the page has loaded."""
+        if not getattr(self, "_page_ready", True):
+            self._js_queue.append((script, callback))
+            return
+        if callback is None:
+            self.webview.page().runJavaScript(script)
+        else:
+            self.webview.page().runJavaScript(script, callback)
 
 
     def _csv_headers(self) -> list:
@@ -365,7 +496,8 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
 
     def _save_export(self, svg_data_url: str) -> None:
         """Called by JS bridge after Plotly.toImage()."""
-        self._exporter.save_image( svg_data_url, self._pending_export_path)
+        # The resolution chosen in the export dialog was ignored (always 300).
+        self._exporter.save_image(svg_data_url, self._pending_export_path, self._pending_export_dpi)
 
     
     # ── Help / Documentation Trigger ─────────────────────────────────────

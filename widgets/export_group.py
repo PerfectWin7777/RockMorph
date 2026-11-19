@@ -10,9 +10,9 @@ dropdown button to maintain a narrow, responsive sidebar in QGIS.
 Authors: RockMorph contributors / Tony
 """
 
-from PyQt5.QtWidgets import QWidget, QHBoxLayout, QPushButton, QMenu, QAction # type:ignore
-from PyQt5.QtCore import pyqtSignal, QCoreApplication, Qt # type:ignore
-from PyQt5.QtGui import QIcon # type:ignore
+from qgis.PyQt.QtWidgets import QWidget, QHBoxLayout, QPushButton, QMenu, QAction # type:ignore
+from qgis.PyQt.QtCore import pyqtSignal, QCoreApplication, Qt # type:ignore
+from qgis.PyQt.QtGui import QIcon # type:ignore
 
 def tr(message: str) -> str:
     return QCoreApplication.translate("RockMorph", message)

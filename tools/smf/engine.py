@@ -40,7 +40,7 @@ from qgis.core import (  # type: ignore
     QgsCoordinateTransform, QgsGeometry, QgsWkbTypes,
     QgsSpatialIndex, QgsDistanceArea, QgsPointXY
 )
-from PyQt5.QtCore import QCoreApplication  # type: ignore
+from qgis.PyQt.QtCore import QCoreApplication  # type: ignore
 
 from ...base.base_engine import BaseEngine
 from ...core.raster import RasterReader
@@ -49,6 +49,23 @@ from ...core.raster import RasterReader
 def tr(message):
     return QCoreApplication.translate("RockMorph", message)
 
+
+
+# Mountain-front sinuosity classes of the Iat methodology (El Hamdouni et al.,
+# 2008; Bull & McFadden, 1977): class 1 (active) Smf < 1.1, class 2
+# (moderately active) 1.1 <= Smf < 1.5, class 3 (inactive) Smf >= 1.5.
+# The previous 1.4 / 1.8 thresholds had no published source (audit C10).
+SMF_CLASS_1_MAX = 1.1
+SMF_CLASS_2_MAX = 1.5
+
+
+def smf_class(smf: float) -> int:
+    """Iat class of a mountain-front sinuosity value (1 = most active)."""
+    if smf < SMF_CLASS_1_MAX:
+        return 1
+    if smf < SMF_CLASS_2_MAX:
+        return 2
+    return 3
 
 class SMFEngine(BaseEngine):
     """
@@ -163,17 +180,15 @@ class SMFEngine(BaseEngine):
 
                 # C. Compute Smf and classes
                 smf = lf_m / lr_m
-                tectonic_class = 3
-                if smf < 1.4:
-                    tectonic_class = 1
-                elif smf < 1.8:
-                    tectonic_class = 2
+                tectonic_class = smf_class(smf)
 
-                # D. Sample true elevations from raster along vertices
+                # D. Sample true elevations from raster along vertices.
+                # NoData stays missing (None -> gap in the chart): replacing
+                # it by 0 m drew false notches in the front profile (audit C10).
                 elevations = []
                 for v in vertices:
                     z = reader.sample_at(v.x(), v.y())
-                    elevations.append(z if not np.isnan(z) else 0.0)
+                    elevations.append(None if np.isnan(z) else float(z))
 
                 results.append({
                     "fid": fid,

@@ -20,11 +20,36 @@
             flex-direction: column;
         }
 
-        #plot-main {
+        #plot-main, #plot-3d {
             flex: 3;
             width: 100%;
             min-height: 260px;
         }
+
+        #plot-3d { display: none; }
+
+        /* 2D / 3D switch */
+        #view-bar {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            border-bottom: 1px solid #ddd;
+            background: #f5f5f5;
+            font-size: 12px;
+        }
+        #view-bar button {
+            border: none;
+            background: none;
+            padding: 3px 10px;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            color: #555;
+            font: inherit;
+        }
+        #view-bar button.active { color: #111; border-bottom-color: #2a78d6; font-weight: bold; }
+        #view-bar label { margin-left: auto; color: #555; }
+        #view-bar input { width: 52px; }
 
         #stats {
             padding: 6px 12px;
@@ -59,7 +84,16 @@
 
 <body>
 
+    <div id="view-bar">
+        <button id="btn-2d" class="active" onclick="setView('2d')">Profile</button>
+        <button id="btn-3d" onclick="setView('3d')">3D block</button>
+        <label id="ve-label" style="display:none">V.E.
+            <input id="ve-input" type="number" min="0.5" max="50" step="0.5" value="2"
+                   title="Vertical exaggeration of the 3D block" onchange="render3D()">
+        </label>
+    </div>
     <div id="plot-main"></div>
+    <div id="plot-3d"></div>
 
 
     <div id="stats">
@@ -113,6 +147,8 @@
    */
         function updatePlot(jsonData) {
             const data = JSON.parse(jsonData);
+            _currentData = data;
+            if (_view === '3d') render3D();
             const s = data.styles || {};
 
             // Helper to get style properties
@@ -391,6 +427,120 @@
         _eventsAttached = true;
     }
 
+
+    // ── 3D swath block ───────────────────────────────────────
+    /*
+     * The surface is the band actually sampled: x = distance along the
+     * line (km), y = lateral offset (km, + = left of the line direction,
+     * as the sampler generates it), z = elevation. The min / mean / max
+     * envelopes of the 2D profile are drawn on the near (right) wall, so the
+     * block and the classic swath profile read together. Hovering the
+     * surface sends (distance, offset) to Python, which puts the point on
+     * the map; hovering an envelope sends the distance only.
+     */
+    var _view = '2d';
+
+    function setView(view) {
+        _view = view;
+        document.getElementById('btn-2d').classList.toggle('active', view === '2d');
+        document.getElementById('btn-3d').classList.toggle('active', view === '3d');
+        document.getElementById('plot-main').style.display = view === '2d' ? '' : 'none';
+        document.getElementById('plot-3d').style.display = view === '3d' ? 'block' : 'none';
+        document.getElementById('ve-label').style.display = view === '3d' ? '' : 'none';
+        if (view === '3d') render3D();
+        window.dispatchEvent(new Event('resize'));
+    }
+
+    function activeView() { return _view; }
+
+    function render3D() {
+        var data = _currentData;
+        var gd = document.getElementById('plot-3d');
+        if (!data || !data.grid_z) {
+            gd.innerHTML = '<div style="padding:30px;color:#888;text-align:center">Run the swath to see the 3D block.</div>';
+            return;
+        }
+        var styles = data.styles || {};
+        function color(key, fallback) { return (styles[key] && styles[key].color) || fallback; }
+        var km = function (v) { return v / 1000; };
+        var xs = data.grid_distance.map(km);
+        var ys = data.grid_offset.map(km);
+        // Plotly surface: z[row = y index][column = x index] → transpose.
+        var z = ys.map(function (_, j) { return data.grid_z.map(function (row) { return row[j]; }); });
+        var zmin = Infinity, zmax = -Infinity;
+        data.grid_z.forEach(function (row) { row.forEach(function (v) {
+            if (v !== null) { zmin = Math.min(zmin, v); zmax = Math.max(zmax, v); } }); });
+        // Envelopes on the NEAR (right, −offset) wall, facing the camera: on
+        // the far wall the relief hid the min and mean curves.
+        var wall = ys[0];
+        var dist = data.distances.map(km);
+        var traces = [{
+            type: 'surface', x: xs, y: ys, z: z, showscale: false, opacity: 0.95,
+            colorscale: [[0, '#6f8a5e'], [0.35, '#a7a77a'], [0.7, '#c9b48f'], [1, '#efebe4']],
+            lighting: { ambient: 0.55, diffuse: 0.8, roughness: 0.9, specular: 0.05 },
+            lightposition: { x: -10000, y: 10000, z: 20000 },
+            hovertemplate: '%{x:.2f} km · offset %{y:.2f} km<br>%{z:.0f} m<extra></extra>',
+        }];
+        [['max', '#e74c3c'], ['mean', '#2c3e50'], ['min', '#3498db']].forEach(function (pair) {
+            var values = data[pair[0]];
+            if (!values) return;
+            traces.push({
+                type: 'scatter3d', mode: 'lines', name: pair[0], x: dist,
+                y: dist.map(function () { return wall; }), z: values,
+                line: { color: color(pair[0], pair[1]), width: 5 },
+                hovertemplate: pair[0] + ' %{z:.0f} m · %{x:.2f} km<extra></extra>',
+            });
+        });
+        var spanX = xs[xs.length - 1] - xs[0] || 1, spanY = ys[ys.length - 1] - ys[0] || 1;
+        var span = Math.max(spanX, spanY);
+        var ve = parseFloat(document.getElementById('ve-input').value) || 2;
+        var zAspect = isFinite(zmax) ? (zmax - zmin) / 1000 * ve / span : 0.2;
+        // A long, narrow band (e.g. 21 km × 6 km) becomes a thin ribbon at
+        // true scale: its width is drawn at least 40 % of its length, and
+        // the stretch is stated on the chart.
+        var yAspect = spanY / span, widen = 1;
+        if (yAspect < 0.4) { widen = 0.4 / yAspect; yAspect = 0.4; }
+        var layout = {
+            margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: true,
+            legend: { orientation: 'h', x: 0, y: 1, font: { size: 10 } },
+            scene: {
+                aspectmode: 'manual',
+                aspectratio: { x: spanX / span, y: yAspect, z: Math.max(zAspect, 0.05) },
+                xaxis: { title: 'Distance (km)' },
+                yaxis: { title: 'Offset (km)' },
+                zaxis: { title: 'Z (m)' },
+                camera: { eye: { x: -0.55, y: -1.45, z: 0.75 } },
+            },
+            annotations: [{
+                xref: 'paper', yref: 'paper', x: 1, y: 0, xanchor: 'right', yanchor: 'bottom', showarrow: false,
+                font: { size: 10, color: '#777' },
+                text: 'V.E. ×' + ve + (widen > 1 ? ' · band width shown ×' + widen.toFixed(1) : '') +
+                      ' · offset + = left of the line',
+            }],
+        };
+        Plotly.react(gd, traces, layout, { responsive: true, displaylogo: false });
+        if (!gd._rockmorphEvents) {
+            gd.on('plotly_hover', function (event) {
+                var p = event.points[0];
+                if (!window.bridge) return;
+                if (p.curveNumber === 0 && window.bridge.on_swath_point) {
+                    window.bridge.on_swath_point(p.x * 1000, p.y * 1000);
+                } else {
+                    window.bridge.on_plot_hover(p.x * 1000);
+                }
+            });
+            gd.on('plotly_unhover', function () { if (window.bridge) window.bridge.on_plot_leave(); });
+            gd._rockmorphEvents = true;
+        }
+    }
+
+    /** Export the visible view: SVG for the 2D profile, PNG for the WebGL 3D block. */
+    function exportSwathActive() {
+        if (_view !== '3d') { exportViaSvg('plot-main'); return; }
+        var gd = document.getElementById('plot-3d');
+        Plotly.toImage(gd, { format: 'png', width: gd.offsetWidth * 3, height: gd.offsetHeight * 3 })
+            .then(function (url) { onBridgeReady(function (bridge) { bridge.receive_export(url); }); });
+    }
 
     // deprecated: we now use plotly's built-in hover events instead of tracking mouse position on the canvas.
            /**

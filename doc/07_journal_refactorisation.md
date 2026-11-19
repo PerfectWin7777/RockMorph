@@ -1,0 +1,630 @@
+# 07 — Refactoring and index-integration journal
+
+This journal records every decision taken while porting the GSV-Studio
+indices, IAT, AHP, composite modeller and machine learning into RockMorph,
+and while fixing the bugs of the audit (initial audit of October 2026).
+Each decision has an identifier (D-A… architecture, D-S… science, D-U… user
+interface) so that it can be **accepted or rejected one by one**. When the
+scientific literature and GSV-Studio disagree, both are given, together with
+the choice made "for now" and how to switch.
+
+Branch: `ccr-c052972c-gpr3iz`. All values quoted below were produced by the
+code on this branch (QGIS 3.44.7, Python 3.12, NumPy 2.x).
+
+---
+
+## 1. What was added
+
+| Tool (menu) | Files | Purpose |
+|---|---|---|
+| Morphometry & Active Tectonics › **Morphometric Indices** | `tools/morphometry/`, `core/basin_context_builder.py`, `core/indices/` | 60 indices for the user's own basins, with published classifications, tables, maps and charts |
+| Synthesis & Statistics › **Relative Active Tectonics (Iat)** | `tools/synthesis/iat_panel.py` | El Hamdouni et al. (2008) Iat from classified indices |
+| Synthesis & Statistics › **AHP Weighting** | `tools/synthesis/ahp_panel.py` | Saaty pairwise matrix, weights, CR |
+| Synthesis & Statistics › **Composite Index** | `tools/synthesis/composite_panel.py` | GSV-Studio "index modeler", with directions |
+| Synthesis & Statistics › **Statistics & Machine Learning** | `tools/synthesis/statistics_panel.py`, `core/indices/ml.py` | PCA, k-means, hierarchical, DBSCAN, t-SNE/UMAP, Isolation Forest, LOF |
+| (shared) | `widgets/results_window.py`, `web/morphometry.html`, `web/js/morphometry.js`, `widgets/index_widgets.py` | Results window (table, charts, profiles, diagnostics), catalogue widgets |
+
+Unit tests: `tests/` (40 tests, `python -m pytest tests`).
+
+The GSV-Studio `dev` port of November 2026 (terrain parameters, HAND, MFD/D∞,
+stream burning, best θ, χ–z segment lines, three-point dip, 3D draped maps
+and probe, AHP sensitivity, main-river profiles) is described in §6d.
+
+---
+
+## 2. Architecture decisions
+
+**D-A1 — A pure index library (`core/indices`).** Every index is an
+`IndexSpec`: name, family, formula, unit, authors, DOI, data requirements,
+parameters, published classifications and a pure function
+`compute(context, params)`. The UI (catalogue tree, info card, parameter
+widgets, classification editor) is generated from these specs, so adding an
+index means adding one spec. The library imports only NumPy/SciPy and is
+tested without QGIS.
+
+**D-A2 — One `BasinContext` per basin.** `core/basin_context_builder.py`
+extracts once what the selected indices need (polygon metrics, DEM values,
+flow routing, trunk stream, network, AF split, T sections, Vf profiles), and
+only what they need (`requires` flags): polygon-only indices run instantly.
+
+**D-A3 — Flow routing inside RockMorph (NumPy), per basin.** Priority-Flood
+filling (Barnes et al., 2014), D8, accumulation in topological order, trunk
+stream = largest-accumulation donor up to the divide. No FAC raster and no
+GRASS are required for the indices. GSV-Studio truncated the channel at
+1000 cells (bug P1 of the GSV-Studio inventory); there is no limit
+here.
+
+**D-A4 — Thread safety.** QGIS layers are read on the main thread
+(`collect_request`), the computation runs in a `QgsTask` (QGIS progress bar,
+Cancel button), and the output layers are built back on the main thread.
+The synthesis tools work on attribute tables and run on the main thread
+(fast).
+
+**D-A5 — Work CRS.** The DEM CRS when it is projected in metres; otherwise
+the WGS 84 / UTM zone of the basins, with bilinear reprojection of the DEM
+(same rule as GSV-Studio). Tested with a geographic DEM: SL 228 m vs 222 m
+with the UTM DEM (resampling difference only).
+
+**D-A6 — No imposed study area.** Each tool asks for its own layers (DEM,
+basins, optional network; or any vector layer with numeric fields for the
+synthesis tools). Outputs are **new memory layers**: the user's data are
+never modified.
+
+**D-A7 — Run is blocked until inputs are complete.** Every tool shows a
+plain-language checklist ("Choose a DEM", "Tick at least one index",
+"SL: the edited classification is invalid", "CR > 0.10"…). The Run button
+stays disabled until the list is empty. Problems specific to one basin (DEM
+coverage < 95 %, no channel above the threshold, AF split impossible…) never
+block the run: they appear in the *Diagnostics* tab and in a `warnings`
+field.
+
+**D-A8 — Qt WebEngine stays the default renderer** (your decision).
+`base/webengine.py` is the only place that imports it; when it is missing,
+panels show a message instead of charts and everything else works. The
+future installer can offer WebEngine as a checkbox.
+
+**D-A9 — Large results window.** The dock is ~420 px wide; tables of 60
+columns and correlation matrices need room. Results open in a non-modal
+window (can go to a second screen). Clicking a table row selects and zooms
+the basin on the map.
+
+---
+
+## 3. Scientific decisions
+
+Format: *GSV-Studio* · *literature* · **choice now** · how to switch.
+
+**D-S1 — SL reach length.** GSV-Studio: 100 m (registry) but 1000 m in the
+code. Literature: reaches of fixed length or between contours (Hack, 1973);
+recent Iat studies use ~200 m on 30 m DEMs. **200 m**, editable per run
+(*Reach length ΔL*). The fluvial tool uses the same 200 m (D-S14).
+
+**D-S2 — SL classes.** GSV-Studio: 100 / 300 under the name "El Hamdouni et
+al. (2008)". El Hamdouni et al. (2008): **300 / 500** (class 1 ≥ 500).
+**300 / 500 by default**; GSV-Studio's values are selectable as
+"GSV-Studio legacy (100 / 300)" to reproduce older results; Seeber &
+Gornitz (1983) also available.
+
+**D-S3 — AF classes.** El Hamdouni et al. (2008) classify |AF − 50|
+(< 7, 7–15, ≥ 15). GSV-Studio applied the Balla Ateba (2023) thresholds to
+AF itself. **|AF − 50|** for both schemes. AF is measured by splitting the
+basin polygon along the trunk stream extended beyond its ends (stopping at
+the first exit from the basin, otherwise the line could cross itself); if
+GEOS cannot split, the right-bank share is counted on DEM cells.
+
+**D-S4 — HI.** Default: elevation–relief ratio (Pike & Wilson, 1971),
+classes 0.4 / 0.5 (El Hamdouni et al., 2008). Options: GSV-Studio median
+variant, curve integral (Strahler, 1952).
+
+**D-S5 — Vf.** GSV-Studio's cross-profile algorithm is kept (flat-floor
+slope threshold, adaptive shoulder for the divides, 10 profiles from 5 % to
+95 % of the channel, 500 m wide, median). Two additions, both documented in
+the code: (a) the valley bottom is re-centred on the lowest point within
+one cell of the D8 channel (D8 runs through cell centres); (b) the floor
+width is never below one DEM cell. Without them most mountain profiles gave
+Vf = 0 exactly (a floor narrower than the resolution cannot be measured).
+Known limit: in wide alluvial valleys a 500 m profile does not reach the
+valley sides, giving Vf ≫ 1 (e.g. 19.1 for basin 2120703460); widen
+*Profile width* there. Classes 0.5 / 1.0 (El Hamdouni et al., 2008).
+
+**D-S6 — Bs.** Bl and Bw are the sides of the minimum oriented bounding
+rectangle. GSV-Studio cited Cannon (1977); the usual citation is
+Ramírez-Herrera (1998). Classes 3 / 4 (El Hamdouni et al., 2008).
+
+**D-S7 — T (transverse symmetry).** Midline = principal axis of the basin
+cells (GSV-Studio used the polygon vertices, which over-weights densely
+digitised parts). Dd measured towards the channel side (Cox, 1994); GSV's
+"maximum half-width" is an option. GSV-Studio's T classes overlapped
+(−∞–0.1 then 0–0.2): merged into three classes (0.2 / 0.4).
+
+**D-S8 — Horton–Strahler.** Counts are **streams** (consecutive links of the
+same order), not links. RB, RL, RA: mean of successive ratios (GSV-Studio)
+by default, Horton-law regression as an option. Network: from the DEM with
+a channel-initiation area of 1 km² (GSV-Studio default), or from a vector
+layer; with a vector layer whose orders start above 1 (e.g. HydroRIVERS
+`ORD_STRA`), a warning says the network is truncated.
+
+**D-S9 — Drainage intensity Di.** GSV-Studio: Fs × Dd. Faniran (1968):
+Fs / Dd. **Fs × Dd (GSV-Studio) by default** as you asked; Faniran's
+definition is an option.
+
+**D-S10 — TRD and Lar.** GSV-Studio's TRD used TR × TD / 10⁶ while its
+registry described Hmax − Hmean; Lar mixed units (bug P5). Defaults follow
+the definitions (TRD = Hmax − Hmean; Lar = Hack's law in miles); GSV
+formulas remain selectable as "legacy".
+
+**D-S11 — TWI, SPI, STI.** Computed with Horn slope and the specific
+catchment area a = A / cell width. GSV-Studio used the DEM elevation instead
+of the slope (bug P3).
+
+**D-S12 — Erosion indices (De, Ebulk, E) and U, LengthArea, TSI.** Sources
+or units are not settled; GSV-Studio's formulas are kept, flagged ⚗
+"experimental" in the catalogue and excluded from the tests of §6.
+
+**D-S13 — Iat.** Mean of the class scores of the chosen components,
+classes 1.5 / 2.0 / 2.5 (El Hamdouni et al., 2008). A basin with missing
+components gets the mean of the available ones (as in the paper);
+*Minimum components* can require all. `Iat_n` records how many were used.
+Fields named like an index are scored with its default classification;
+`*_score` fields are used as scores.
+
+**D-S14 — AHP.** Weights = principal eigenvector (Saaty). GSV-Studio's
+column normalisation is an option. RI for n ≤ 10 from Saaty; n = 11–16
+from GSV-Studio (published tables differ in the third decimal). Run blocked
+when CR > 0.10 unless the user ticks "Accept CR > 0.10".
+
+**D-S15 — Composite index.** Criteria rescaled 0–1 (min–max over the
+processed basins). New: a direction per criterion ("↓ low" for Vf, Smf and
+class scores) so that 1 always means more active. Methods: mean, weighted
+mean, min, max, PC1 (oriented by the sum of loadings, with loadings and
+explained variance reported). Results can be split in 4 classes
+(quantiles by default, class 1 = highest).
+
+**D-S16 — Statistics & ML.** Fields standardised (z-scores). PCA by SVD
+(identical to scikit-learn). k-means: scikit-learn (`random_state=42`, as
+GSV-Studio) or SciPy `kmeans2` when scikit-learn is missing. Cluster labels
+start at 1. DBSCAN, t-SNE, UMAP, Isolation Forest and LOF need scikit-learn
+/ umap-learn; they are listed but disabled with the reason when missing.
+Every clustering is also drawn in the PC1–PC2 plane.
+
+**D-S17 — Smf (existing tool).** Classes 1.1 / 1.5 (Bull & McFadden, 1977;
+El Hamdouni et al., 2008) instead of 1.4 / 1.8 (no source). NoData
+elevations stay missing instead of 0 m.
+
+**D-S18 — Fluvial tool (existing).** See §4 (C1–C8).
+
+---
+
+## 4. Audit fixes applied
+
+| Id | Problem | Fix | Commit |
+|---|---|---|---|
+| C1 | χ reversed relative to elevation (Z~χ slope −82.9 on a synthetic river) | χ from `chi_coordinate`, all arrays source → outlet; real rivers now give positive Z~χ slopes; chi-plot line z = z_out + ksn·χ | 1e79642 |
+| C2 | CSV/GPKG rows mixed two points | consequence of C1: one order for all arrays | 1e79642 |
+| C3 | river geometry mirrored; distances in CRS units | geometry source → outlet; metres converted to CRS units before `interpolate`/`curveSubstring` | 1e79642 |
+| C4 | "regression" k_sn crashed on the 2nd segment | local variable renamed | 1e79642 |
+| C5 | θ slider raised TypeError; NaN → 0 | engine window reused; NaN kept; knickpoint χ updated | 1e79642 |
+| C6 | `np.trapz` removed from NumPy 2.x | `trapezoid` alias (`core/utils.py`) | 3d27e15 |
+| C7 | knickpoints: up to 2ⁿ−1, nearest to source, O(n²) | global greedy segmentation, O(n) per step, BIC stop, ranked (test: 6000 points < 1 s) | 1e79642 |
+| C8 | SL from pixels sampled 3× | one sample per cell; SL by 200 m reaches mapped on the points | 1e79642 |
+| C9 | rose R ≈ 0, wrong axial mean | angle doubling (Mardia & Jupp, 2000) on measured segments | 3d27e15 |
+| C10 | Smf thresholds, NoData = 0 m | D-S17 | 3d27e15 |
+| M1 | no WebEngine → no tool loads | `base/webengine.py` fallbacks | 3d27e15 |
+| M2 | `PyQt5` imports | `qgis.PyQt` everywhere (Qt6-ready) | 3d27e15 |
+| M3 | absolute registry paths | relative paths, works as `RockMorph-main` | 4e4cae2 |
+| M5 | `grass7:` ids, `native:filldepressions` missing, `-a` comments | `core/processing_ids.py`, `native:fillsinkswangliu`, comments | 1e79642 |
+| M6 | missing icon, wrong "about", menu left after unload | icon, metadata 0.2.0 with changelog, unload removes the menu | af6920b |
+| M12 | swath crashed on empty stations | gap-aware smoothing | 3d27e15 |
+
+Found during the work (not in the audit):
+
+* **`web/js/plotly.min.js` was double-encoded** (UTF-8 saved through
+  windows-1252): negative tick labels showed "â'0.5", marker and arrow
+  symbols were broken in *all* tools. Replaced by the official 2.27.0 build
+  (identical except five bytes lost in the corruption).
+* GSV-Studio's `BasinArea` was labelled km² but returned m².
+
+Second pass (all remaining major issues):
+
+| Id | Problem | Fix |
+|---|---|---|
+| M4 | older tools read project layers from a QThread; no cancel | `ComputeWorker` reopens every layer in the worker thread (`base/thread_safe_layers.py`: same source, CRS, filter, selection; memory layers copied on the main thread); **Cancel** button in every progress bar, effective at the next progress report (tested: stops at 62 % after 0.3 s) |
+| M7 | whole raster re-read and decoded by every reader; Int8/Int64/UInt64 crashed; some sources not openable | shared LRU cache of decoded bands (file, band, size, mtime; read-only arrays), GDAL converts every type to Float32, `GPKG:` / `|layername` sources handled; second read of a 2248 × 1848 DEM: 74 ms → 0.2 ms |
+| M8 | user outlet ignored for confluence search and appended last; north-edge latitude for pixel area; O(n²) loop guard; single-ring vectoriser; wrong timing in the docstring | subdivision restricted to the area draining to the outlet (test: 11 sub-basins, 75 km², instead of 65 over the raster), outlet sorted with the others, centre latitude, set-based guard, multi-part masks sent to GDAL Polygonize, measured timing documented |
+| M9 | snapping tolerance in CRS units (2 m = 2° in geographic CRS); O(n²) graph; recursive weights; NoData flipped segments | tolerance converted to CRS units, end-point grid (O(n)), iterative weights, digitised direction kept when an end has no elevation; same 15 rivers with the network in EPSG:4326 as in UTM |
+| M10 | knickpoints never drawn | drawn from the stored river geometry, in the stream CRS, with metres → CRS units |
+| M13 | Strahler in O(E²), recursive Horton, 3-decimal nodes (~100 m in degrees) | Kahn topological order (199 reaches in 0.09 s), iterative Horton, ~1 mm node tolerance in both CRS kinds; verified on a synthetic network (orders 1→2→3, Shreve 4) |
+
+Found and fixed on the way:
+
+* GRASS `r.watershed` drainage rasters (written by HydroFlow) contain
+  negative codes on the region edges; Watershed rejected them as an
+  "unrecognised D8 encoding" (the audit's M5 "to verify" point): accepted.
+* HydroFlow wrote the straight start–end chord as `length_m` (and derived
+  `slope_mean` from it): now the length along the reach.
+* The fluvial tool cached the flow-accumulation LAYER created in a worker
+  thread; from the second run of a session every basin failed. It caches
+  the file path now.
+* QGIS caches ellipsoid parameters in the first thread that asks for them;
+  an entry made in a finished worker thread made the next run's distance
+  measurements NaN. The worker fills that cache on the main thread first.
+
+
+---
+
+## 5. Interface decisions
+
+**D-U1 — Four numbered steps in every panel** (1 Data · 2 Indices/Fields ·
+3 Settings · 4 Run), each with tooltips that explain the science and cite
+the source.
+
+**D-U2 — Presets.** "Iat – El Hamdouni et al. (2008)", Horton–Strahler,
+basin shape, relief & hypsometry, active tectonics, channel profile,
+hydrological terrain. The Iat tool ticks SL, AF, HI, VF and Bs by itself
+when the layer has them.
+
+**D-U3 — Editable thresholds.** Published classifications can be edited in
+a table; gaps, overlaps and non-numeric bounds are reported and block the
+run. A "Reset" button restores the published values.
+
+**D-U4 — Charts.** One y-axis per plot (the profile view stacks elevation
+and SL instead of a dual axis); class colours are an ordinal blue ramp
+(class 1 darkest) shared by the map and the viewer; categorical colours in
+a fixed order; light and dark themes; PNG (3×) and SVG export.
+
+---
+
+## 6. Tests on real data
+
+**Data** (downloaded for this test, not in the repository):
+Copernicus DEM GLO-30 tiles N36/N37 W004 (Sierra Nevada and Granada basin,
+Spain — the region of El Hamdouni et al., 2008, and Pérez-Peña et al.,
+2010), reprojected to ETRS89 / UTM 30N at 30 m; HydroBASINS level 12
+(15 basins, 28–242 km²); HydroRIVERS (199 reaches).
+
+**Results.**
+
+* All 54 non-experimental indices computed for all 15 basins, with both
+  the DEM-derived and the HydroRIVERS network; ~1 s per basin with every
+  index selected (17 s in total), 11 s for the 5 Iat indices.
+* Geographic DEM (EPSG:4326) path: same values within resampling
+  differences (24 s, reprojection included).
+* Fluvial tool on the same basins: 8 s for 15 rivers with GRASS flow
+  accumulation; χ, knickpoints and segment k_sn consistent (§4).
+* Synthesis tools on the indices layer: Iat, AHP (CR 0.098), composite PC1
+  (56.1 % of variance), PCA, k-means, hierarchical clustering.
+* Every tool of the plugin (16) loads in headless QGIS, including from a
+  folder named `RockMorph-main`.
+
+Iat obtained (default classifications, El Hamdouni et al., 2008):
+
+| Basin (HYBAS_ID) | Area km² | SL (m) | AF (%) | HI | Vf | Bs | Scores SL/AF/HI/Vf/Bs | Iat | Class |
+|---|---|---|---|---|---|---|---|---|---|
+| 2120709100 | 121.7 | 222 | 23.2 | 0.336 | 0.98 | 2.19 | 3/1/3/2/3 | 2.40 | 3 |
+| 2120709110 | 130.2 | 269 | 72.6 | 0.293 | 1.99 | 1.77 | 3/1/3/3/3 | 2.60 | 4 |
+| 2121255500 | 146.4 | 379 | 24.0 | 0.277 | 0.56 | 3.19 | 2/1/3/2/2 | 2.00 | 3 |
+| 2120708680 | 237.0 | 712 | 49.1 | 0.376 | 0.49 | 2.33 | 1/3/3/1/3 | 2.20 | 3 |
+| 2120708640 | 242.2 | 1041 | 76.8 | 0.557 | 0.24 | 1.50 | 1/1/1/1/3 | 1.40 | 1 |
+| 2121255100 | 175.3 | 759 | 76.5 | 0.244 | 0.29 | 2.58 | 1/1/3/1/3 | 1.80 | 2 |
+| 2120703460 | 149.0 | 204 | 40.6 | 0.165 | 19.10 | 1.71 | 3/2/3/3/3 | 2.80 | 4 |
+| 2120703520 | 148.6 | 241 | 49.3 | 0.321 | 1.86 | 2.32 | 3/3/3/3/3 | 3.00 | 4 |
+| 2121255140 | 136.4 | 165 | 52.3 | 0.332 | 0.96 | 1.32 | 3/3/3/2/3 | 2.80 | 4 |
+| 2120704060 | 27.8 | 37 | 62.0 | 0.236 | 16.58 | 2.85 | 3/2/3/3/3 | 2.80 | 4 |
+| 2120704140 | 127.0 | 670 | 30.7 | 0.261 | 0.63 | 2.41 | 1/1/3/2/3 | 2.00 | 3 |
+| 2120704430 | 129.3 | 685 | 27.6 | 0.286 | 0.40 | 2.88 | 1/1/3/1/3 | 1.80 | 2 |
+| 2120704320 | 104.0 | 320 | 45.2 | 0.431 | 0.56 | 1.93 | 2/3/2/2/3 | 2.40 | 3 |
+| 2120704330 | 190.0 | 564 | 56.4 | 0.439 | 0.30 | 1.46 | 1/3/2/1/3 | 2.00 | 3 |
+| 2120704240 | 137.7 | 334 | 40.0 | 0.422 | 0.56 | 1.86 | 2/2/2/2/3 | 2.20 | 3 |
+
+Reading: one basin is in class 1 (2120708640: SL 1041 m, HI 0.56, Vf 0.24),
+two in class 2, seven in class 3 and five in class 4. These are test values
+on downloaded data, not a validation: El Hamdouni et al. (2008) used other
+basin limits and another DEM, so only a study with your own basins can be
+compared with them.
+
+Observations that matter for interpretation:
+
+* The trunk-stream profile of 2120709100 has a 3 km flat stretch at 475 m:
+  a reservoir surface in the Copernicus DSM, filled by the routing. SL is 0
+  there. Use a hydrologically conditioned DEM where reservoirs exist.
+* HydroBASINS level-12 units are often inter-basins (a river enters from
+  upstream), so Horton ratios computed on them describe partial networks.
+* Slope–area k_sn means (~40–65) exceed χ–segment k_sn (~3–20): the pixel
+  slope–area estimate is biased upward by DEM noise; χ-based values are the
+  robust ones (Perron & Royden, 2013).
+
+---
+
+## 6b. 3D explorer — realistic rendering
+
+**D-3D1 — Two rendering styles.** *Realistic* (default) and *Classic
+hillshade* (the former look, kept for figures that must match earlier
+exports), selectable on the Lights page.
+
+**D-3D2 — Correct per-pixel normals.** The old shader derived normals from
+the height texture with a fixed factor (30 × Z-scale) whatever the cell
+size and relief, so the hillshade did not match the displayed geometry.
+Normals now use the true texel spacing and the current vertical
+exaggeration, in both styles.
+
+**D-3D3 — Cast shadows and sky-view factor, baked on the GPU.** A
+full-screen pass writes, for every texel of the height texture, the sun
+visibility (ray marched towards the sun through the height field, soft
+penumbra) and the sky-view factor (16 azimuths, horizon searched up to ~60
+texels; Zakšek et al., 2011). It runs only when the sun, the exaggeration or
+the softness change; drawing a frame costs one texture fetch.
+
+**D-3D4 — Light and colour pipeline.** Linear-space lighting (sun + sky
+light weighted by the sky-view factor + weak ground bounce), ACES filmic
+tone mapping and sRGB output; with the default sun (1.5, 45°) and ambient
+(0.3) open ground receives ~25 % of its light from the sky. Distance haze
+towards the horizon colour of the sky (adjustable, 0 = off). Exposure
+slider.
+
+**D-3D5 — Natural land cover (4th colour mode).** Illustrative colouring
+from elevation, TRUE slope (without exaggeration) and aspect: forest below
+the tree line, alpine grass / soil above, rock on slopes steeper than the
+rock slope (35° by default, ±6° transition), snow above the snow line on
+slopes that can hold it, slightly lower on north faces. Lines default to
+55 % and 85 % of the relief and can be set in metres; the four colours are
+editable. It is a visual aid, not a land-cover map.
+
+**D-3D5b — Brightness calibration.** The first version of the realistic
+style was ~2.2× brighter than the classic hillshade on the Sierra Nevada
+scene (mean luminance 0.55 vs 0.25 on the terrain). Exposure 100 % is now
+calibrated to 0.41 with a colour map (shaded slopes stay readable, where the
+classic style crushes them to black) and 0.27 in natural colours; the
+Exposure slider (40–250 %) adjusts it.
+
+**D-3D5c — Image export.** The requested resolution was ignored (exports
+came out at screen size) and, on high-DPI screens, the picture was cropped;
+it is now rendered at dpi / 96 times the view size (≤ 4×, ≤ 8192 px; e.g.
+4000 × 2375 px at 300 dpi for a 1280 × 760 view). Each export also started
+an extra animation loop, slowing QGIS a little more after every export; the
+natural colour mode exports without the elevation colour bar.
+
+**D-3D6 — Data sent to the viewer.** The mesh stays at ≤ 400 cells per
+side (interactivity) but a separate height texture of ≤ 1024 cells per side
+carries the relief detail for normals, shadows and occlusion. Both grids are
+reduced by NaN-aware block means instead of keeping one pixel out of N
+(aliasing, audit M11). Raster and vectors share one origin (centre of the
+raster extent, metres); the audit's suspected vertical offset of draped
+vectors in geographic CRS was not reproduced, but geographic vectors are
+now centred like the raster.
+
+**D-3D7 — Bugs fixed on the way.** On WebGL 1 (older GPUs, where QtWebEngine
+falls back), one-channel float textures do not exist and the height texture
+read as zero: the relief shading was flat. RGBA float is used there. Every
+command was logged with its full JSON payload (several MB for a DEM); only
+the action name is logged now.
+
+Tested in Chromium (WebGL 2 and forced WebGL 1) on the Sierra Nevada DEM
+(1000 × 867 texture, 334 × 289 mesh), and the panel in headless QGIS.
+
+## 6c. Topographic Profiles tool
+
+**D-P1 — Two modes.** "Along the lines" (one profile per line, from a
+layer and/or drawn on the map: left click = vertex, right click = finish,
+Esc = cancel) and "Serial cross-sections" (perpendicular to each line,
+centred, every N m, L m long, numbered from the start of the line; the
+local direction is taken over ±spacing/4 so sections follow the trend of
+the baseline, not one digitising segment).
+
+**D-P2 — Metric distances, DEM never resampled.** Lines are processed in a
+metric work CRS (as in the morphometry tool); points are transformed to the
+DEM CRS and elevations read by bilinear interpolation at the DEM cell size
+(or a user step). Same profile with a UTM and a geographic DEM: relief
+2398 m in both, length 21 061 m.
+
+**D-P3 — Hover both ways.** Chart → map: red point and highlighted line
+(2D and 3D views). Map → chart: the mouse within 8 px of a profile line
+moves the chart cursor. Crossings with a line/polygon layer (faults,
+contacts, rivers; polygon boundaries) are marked; shared boundaries are
+reported once.
+
+**D-P4 — Display.** Vertical exaggeration (true scale = 1, axes in km and
+m), stacked cross-sections drawn relative to their own low point and
+offset by 1.15 × the largest relief (no overlap; hover shows the real
+elevation), statistics table (lengths, relief, slopes, ascent/descent),
+3D view: profiles over a square terrain area 30 % wider than the profiles.
+Exports: chart PNG/SVG/PDF (3D: PNG), CSV of every sample, layer of the
+profile lines with their statistics.
+
+**Swath fixes.** (1) The tool silently profiled the FIRST feature of the
+line layer: a "Line feature" list now chooses it (default: the feature
+selected on the map); a multi-part line, formerly chained into one path
+with straight jumps, uses its longest part with a warning. (2) The map
+marker interpolated metres along the first feature in DEM CRS units
+(degrees for a geographic DEM) and ignored a profile reversed "high to
+low": it is now placed between the sampled stations returned by the engine
+(test with a geographic DEM and a reversed profile: 2 m from the expected
+point). The band drawn on the map is the outline of the transversals
+actually sampled.
+
+**Swath 3D block (done).** The sampler keeps every transversal sample
+(formerly reduced to statistics) and sends a decimated grid (≤ 300
+stations × 120 samples, ~0.6 MB) with the lateral offsets (− = right,
++ = left of the line direction). The "3D block" tab of the Swath shows it as
+a Plotly surface (distance × offset × elevation) with the min / mean / max
+envelopes on the near wall, a vertical exaggeration field, and a long band
+drawn at least 40 % as wide as long (the stretch is written on the chart).
+Hovering the surface puts the exact sampled point on the map, offset
+included (checked: ±1000 m land 1 km east/west of the line with a
+geographic DEM and a reversed profile). The grid follows a "high to low"
+reversal (rows reversed, left/right swapped). Export: PNG for the 3D block.
+
+## 6d. Port of the GSV-Studio `dev` branch (Nov. 2026)
+
+GSV-Studio's `dev` branch (91 commits, 29 Oct – 12 Nov 2026) was reviewed
+for geomorphology. Everything that fits a QGIS plugin was ported; the parts
+QGIS already covers (gridding/kriging, georeferencing, print layouts, LiDAR,
+offline tiles, project/undo/preferences shell, Word report, batch API) were
+deliberately left out.
+
+| Area | Added | Where | Reference |
+|---|---|---|---|
+| Surface | Curvatures: profile, plan, mean, Gaussian, kmin, kmax (1/m, convex > 0) | Terrain Derivatives → "Curvature, Insolation & Landforms"; `core/terrain_metrics.py` | Evans (1979); Florinsky (2016) |
+| Surface | Yearly relative insolation (1 = flat ground) | same | Kumar et al. (1997) |
+| Surface | Swiss hillshade | same | Jenny (2001) |
+| Surface | Multi-scale DEV | same | Lindsay et al. (2015) |
+| Surface | Valley bottoms (simplified MRVBF) | same | Gallant & Dowling (2003) |
+| Surface | 8 landform classes, styled with legend | same | Iwahashi & Pike (2007) |
+| Surface | Geomorphons (10 classes), styled with legend | same | Jasiewicz & Stepinski (2013) |
+| Drainage | Stream burning of a mapped network | HydroFlow → "Burn rivers"; `core/indices/routing.py` | Hutchinson (1989); Saunders (1999) |
+| Drainage | HAND raster | HydroFlow output | Rennó et al. (2008) |
+| Drainage | MFD and D∞ accumulation (m²) | HydroFlow outputs | Freeman (1991); Tarboton (1997) |
+| Drainage | Reach k_sn = S·A^θ and area on the ordered network, graduated style | HydroFlow streams | Kirby & Whipple (2012) |
+| Rivers | Best concavity θ (max χ–z R²) with "Apply" and an "at the search limit" flag | Fluvial Toolbox | Perron & Royden (2013) |
+| Rivers | χ–z least-squares line per segment (Mχ, R², n), dotted on the χ-plot | Fluvial Toolbox | Perron & Royden (2013) |
+| Geology | Three-point dip (≥ 3 points, RMS), predicted outcrop trace | new tool "Three-Point Dip & Outcrop"; `core/structural.py` | Ragan (2009) |
+| 3D | Any layer draped on the relief with its QGIS symbology | 3D Explorer → "Draped map & probe" | — |
+| 3D | Hover probe (CRS position, Z, slope) linked to a marker on the QGIS map | same | — |
+| Synthesis | AHP weight sensitivity (±10 %, ±20 %, basins changing class) | AHP chart "sensitivity" + summary | Chen, Yu & Khan (2010) |
+| Profiles | Main river of selected basins added as profile lines | Topographic Profiles → "Main river" | — |
+
+### Differences from GSV-Studio (both behaviours documented)
+
+* **Segment k_sn with A₀ ≠ 1.** RockMorph's χ-slope segment k_sn ignored the
+  reference area; it is now Mχ·A₀^θ (identical for the default A₀ = 1 m²).
+* **Best θ search range.** 0.10–0.90 like GSV-Studio's `CONCAVITY_RANGE`, but
+  by 0.01 instead of 0.025. On the six Sierra Nevada test basins the optimum
+  is at a bound for five of them (strong knickpoints): the panel then says
+  "at the search limit, not constrained" instead of presenting the value
+  as an estimate. GSV-Studio shows the bound value without warning.
+* **HAND streams.** Cells above the HydroFlow initiation threshold, plus the
+  burned rivers when a network is given. HAND is measured on the original
+  (unburned, unfilled) elevations so burning does not inflate it.
+* **MFD/D∞, HAND and reach areas** come from one NumPy Priority-Flood + ε
+  conditioning of the (burned) DEM, so they are consistent with each other;
+  the GRASS outputs of HydroFlow keep their own fill (Wang & Liu).
+* **3D draped map.** GSV-Studio rasterised polygons with their fill colour;
+  here QGIS renders the layer itself, so any renderer (categorised geology,
+  rule-based, raster, orthophoto) and outlines are kept.
+* **Three-point dip.** GSV-Studio measures in its 3D scene; RockMorph picks
+  the points on the 2D map (or from a point layer with a Z field) and adds
+  the outcrop trace as a line layer that can be draped in the 3D Explorer.
+
+### Tests
+
+* Unit tests (no QGIS): `tests/test_terrain_metrics.py` (analytic dome,
+  bowl, cone, slopes), `tests/indices/test_routing.py` (water conservation
+  of MFD/D∞, plane draining one row per row, HAND of a V valley, θ = 0.6
+  recovered on a steady-state profile), `tests/test_structural.py` (known
+  orientations, noisy points, degenerate points, outcrop of a horizontal
+  bed) and the AHP sensitivity — 40 passed.
+* Headless QGIS on the Copernicus DEM (UTM and WGS84): all new rasters
+  written and styled (the 3600² WGS84 DEM takes 40 s for all seven
+  parameters); HydroFlow with HydroRIVERS burned (HAND 0–520 m, reach k_sn
+  0.4–74); three-point dip in both CRSs (outcrop traces through the
+  points); main-river profiles of two basins; 3D drape checked in
+  Chromium/WebGL (basin limits follow the ridges) and the probe Z within
+  2 m of the DEM; all 18 tools load.
+
+## 7. Points to decide
+
+1. D-S1/D-S2: SL reach 200 m and 300/500 classes by default (vs GSV 100/300).
+2. D-S9: Di = Fs × Dd (GSV-Studio) or Fs / Dd (Faniran).
+3. D-S5: the two Vf safeguards (re-centring, one-cell minimum floor).
+4. D-S13: Iat with missing components (mean of available vs complete set).
+5. D-S12: keep or remove the experimental erosion indices.
+
+---
+
+## Appendix — index catalogue as implemented
+
+Generated from `core/indices/catalog.py` (⚗ = experimental).
+
+### Basin geometry
+
+| Key | Index | Unit | Defaults | Default classification | Implementation notes |
+|---|---|---|---|---|---|
+| BasinArea | Basin area A | km² | — | — | Computed on the polygon reprojected to the metric work CRS. GSV-Studio labelled this value km² but returned m². |
+| BasinPerimeter | Basin perimeter P | km | — | — | P grows with the resolution of a raster-derived outline (stair-steps); compare basins digitised the same way. |
+| BasinLength | Basin length Lb | km | — | — | Lb is the long side of the minimum-area oriented bounding rectangle (as in GSV-Studio); Bw is its short side. |
+| Rf | Form factor Rf | — | — | Shape classes | — |
+| Re | Elongation ratio Re | — | — | Schumm (1956) | — |
+| Rc | Circularity ratio Rc | — | — | Miller (1953) | — |
+| Lemniscate | Lemniscate ratio k | — | — | Chorley et al. (1957) | — |
+| Compactness | Compactness coefficient Kc (Gravelius) | — | — | Gravelius (1914) | — |
+| Rfn | Fineness ratio Rfn | — | length=Basin length (GSV-Studio) | Melton (1957) | — |
+| Bs | Basin shape index Bs | — | — | El Hamdouni et al. (2008) – Iat | Bl and Bw are the sides of the minimum oriented bounding rectangle. GSV-Studio cited Cannon (1977) for the definition; the usual citation is Ramírez-Herrera (1998). |
+
+### Relief & hypsometry
+
+| Key | Index | Unit | Defaults | Default classification | Implementation notes |
+|---|---|---|---|---|---|
+| AltitudeMin | Minimum elevation Hmin | m | — | — | — |
+| AltitudeMax | Maximum elevation Hmax | m | — | — | — |
+| AltitudeMean | Mean elevation Hmean | m | — | — | — |
+| AltitudeMedianHm | Median elevation Hm | m | — | — | Exact median; GSV-Studio interpolated it from a 100-bin histogram. |
+| TR | Basin relief TR | m | — | — | — |
+| TD | Absolute dissection TD | m | — | — | — |
+| TRD | Summit relief TRD | m | formula=Hmax − Hmean (definition) | — | — |
+| Rra | Relief ratio Rh | — | — | Schumm (1956); Strahler (1958) | — |
+| Rr | Relative relief Rr | % | — | Mvondo Ondoa et al. (2016) | GSV-Studio attributed Rr to Pike & Wilson (1971); the TR·100/P form is Melton's (1957). |
+| MRN | Melton ruggedness number | — | — | — | — |
+| HI | Hypsometric integral HI | — | formula=Elevation-relief ratio (Pike & Wilson 1971) | El Hamdouni et al. (2008) – Iat | — |
+| U ⚗ | Relative uplift index U | — | — | Nsangou et al. (2020) | GSV-Studio also offered a 'U El Hamdouni 2008' classification, but El Hamdouni et al. (2008) do not use U; it was dropped. |
+| AltitudeSkewness | Elevation skewness | — | — | Statistical convention | Moments of the elevations, not the hypsometric-curve moments of Harlin (1978). |
+| AltitudeKurtosis | Elevation kurtosis | — | — | Statistical convention | — |
+| SlopeMeanDegree | Mean slope (degrees) | ° | averaging=Mean of slope angles | General slope classes | — |
+| SlopeMeanPercent | Mean gradient (%) | % | — | General slope classes | — |
+
+### Drainage network
+
+| Key | Index | Unit | Defaults | Default classification | Implementation notes |
+|---|---|---|---|---|---|
+| StreamOrderMax | Highest stream order | — | — | — | — |
+| TotalStreamLength | Total stream length ΣL | km | — | — | GSV-Studio labelled this value km but returned m. |
+| NumStreams | Number of streams ΣNu | — | — | — | Streams are counted as Strahler defines them (a run of constant order), not as vector segments. Used by Fs, Dt and Rb. |
+| TotalNumSegments | Number of links | — | — | — | Kept for comparison with GSV-Studio, which used segments where Horton's laws need streams. |
+| RB | Bifurcation ratio Rb | — | method=Mean of successive ratios | Strahler (1964) | — |
+| RL | Length ratio Rl | — | method=Mean of successive ratios | Horton (1945) | — |
+| RA | Area ratio Ra | — | method=Mean of successive ratios | Schumm (1956) | Needs drainage areas: available with the DEM-derived network, or with a vector network when the DEM routing is also computed. |
+| Dd | Drainage density Dd | km/km² | — | General classes | Dd depends on the channel-initiation threshold (DEM network) or on the mapping scale (vector network); keep it constant across a study. |
+| Fs | Stream frequency Fs | km⁻² | — | General classes | — |
+| Dt | Drainage texture Dt | km⁻¹ | — | Smith (1950), per km | — |
+| Di | Drainage intensity Di | — | formula=Fs × Dd (GSV-Studio) | Faniran (1968) | — |
+| Lg | Length of overland flow Lg | km | — | Horton (1945) | — |
+| C | Constant of channel maintenance C | km²/km | — | Schumm (1956) | — |
+| Lar | Hack's law ratio | — | formula=Main stream / Hack's law (miles) | Ratio reading | — |
+| LengthArea ⚗ | Length-area texture La | km⁻¹ | — | — | Kept from GSV-Studio for continuity; its physical meaning is weak. |
+| Hd | Ruggedness number Hd | — | — | Strahler (1958) | — |
+
+### Main channel
+
+| Key | Index | Unit | Defaults | Default classification | Implementation notes |
+|---|---|---|---|---|---|
+| HSI | Channel sinuosity | — | — | Schumm (1963) | GSV-Studio named this ratio Mueller's hydraulic sinuosity index; Mueller's HSI needs a separate valley length, so the plain sinuosity is reported. |
+| TSI ⚗ | Valley / basin length ratio | — | — | — | Mueller's topographic sinuosity index is (VI − 1)/(CI − 1); this ratio is the GSV-Studio quantity and is kept for continuity. |
+| MASC | Mean axial slope of the channel | m/m | — | — | — |
+| HG | Hydraulic gradient | % | — | — | — |
+| Ksn | Normalised steepness ksn | m^(2θ) | theta_ref=0.45, reach_length_m=250.0, statistic=Mean | Relative reading (θref = 0.45) | — |
+| Chi | Chi (χ) of the trunk stream | m | theta_ref=0.45, reference_area_m2=1.0, statistic=Chi at source | — | — |
+
+### Active tectonics
+
+| Key | Index | Unit | Defaults | Default classification | Implementation notes |
+|---|---|---|---|---|---|
+| SL | Stream length-gradient index SL | m | reach_length_m=200.0, statistic=Mean | El Hamdouni et al. (2008) – Iat | — |
+| SLK | Normalised SL (SL/K) | — | reach_length_m=200.0, statistic=Mean | Seeber & Gornitz (1983) | — |
+| AF | Asymmetry factor AF | % | side=Right bank (looking downstream) | El Hamdouni et al. (2008) – Iat | The basin is split by the trunk stream extended straight beyond its ends. |
+| TTSF | Transverse topographic symmetry T | — | sections=10, dd_method=Channel side (Cox 1994) | Cox (1994) | The midline is the principal axis of the basin area (PCA of its cells). |
+| TTSF_Azimuth | Direction of channel shift (T vector) | ° | sections=10, dd_method=Channel side (Cox 1994) | — | — |
+| VF | Valley floor width-to-height ratio Vf | — | profiles=10, start_fraction=0.05, end_fraction=0.95, profile_width_m=500.0, sampling_m=0.0, smoothing_sigma=1.5, floor_method=Flat-floor slope threshold, max_flat_slope_deg=2.0, basal_slope_threshold_deg=3.0, consistency_points=2, min_height_diff_m=0.5, min_half_width_m=1.0, divide_method=Adaptive shoulder detection, percentile=90.0, shoulder_min_rise_m=5.0, shoulder_slope_factor=0.3, shoulder_min_slope_deg=1.0, statistic=Median | El Hamdouni et al. (2008) – Iat | GSV-Studio read its Vf parameters under the key 'Vf' while the registry key is 'VF', so user settings were ignored; they are honoured here. |
+
+### Hydrological terrain
+
+| Key | Index | Unit | Defaults | Default classification | Implementation notes |
+|---|---|---|---|---|---|
+| TWI | Topographic wetness index TWI | — | statistic=Mean | — | a = upslope area per unit contour width; tan β floored at 0.001. |
+| SPI | Stream power index SPI | m | statistic=Mean | — | — |
+| STI | Sediment transport index STI | — | statistic=Mean | — | — |
+
+### Erosion (experimental)
+
+| Key | Index | Unit | Defaults | Default classification | Implementation notes |
+|---|---|---|---|---|---|
+| De ⚗ | Denudation rate D | — | — | — | Unit of S and of D to be confirmed in the source (doc/07). |
+| Ebulk ⚗ | Bulk erosion Ebulk | — | — | — | Not the volume of Brocklehurst & Whipple (2002); kept for comparison only. |
+| E ⚗ | Erosion rate E | — | — | — | The relation uses local relief; TR is used as in GSV-Studio. |

@@ -107,6 +107,10 @@
             <span class="stat-value" id="stat-theta">—</span>
         </div>
         <div class="stat-item">
+            <span class="stat-label">BEST θ (χ–z)</span>
+            <span class="stat-value" id="stat-theta-best">—</span>
+        </div>
+        <div class="stat-item">
             <span class="stat-label">KNICKPOINTS</span>
             <span class="stat-value" id="stat-knick">—</span>
         </div>
@@ -178,7 +182,7 @@
             document.getElementById('empty-state').classList.remove('hidden');
             document.getElementById('plot-main').style.display = 'none';
             ['stat-label', 'stat-slk', 'stat-chi', 'stat-ksn-mean',
-                'stat-ksn-max', 'stat-theta', 'stat-knick', 'stat-view']
+                'stat-ksn-max', 'stat-theta', 'stat-theta-best', 'stat-knick', 'stat-view']
                 .forEach(function (id) {
                     document.getElementById(id).textContent = '—';
                 });
@@ -508,6 +512,34 @@
                     });
                 }
 
+                // ── χ–z least-squares line of every segment ─────────
+                // (dotted, on the elevation axis; GSV-Studio "droites χ–z
+                // par segment"). Mχ is the slope, ksn = Mχ·A0^θ.
+                if (r.ksn_segments && r.ksn_segments.length) {
+                    r.ksn_segments.forEach(function (seg, si) {
+                        if (seg.m_chi === null || seg.m_chi === undefined) return;
+                        var c0 = Math.min(seg.chi_start, seg.chi_end);
+                        var c1 = Math.max(seg.chi_start, seg.chi_end);
+                        traces.push({
+                            x: [c0, c1],
+                            y: [seg.intercept + seg.m_chi * c0, seg.intercept + seg.m_chi * c1],
+                            name: si === 0 ? (r.label + ' χ–z fit') : '',
+                            type: 'scatter',
+                            mode: 'lines',
+                            line: { color: '#c0392b', width: 1.4, dash: 'dot' },
+                            opacity: opacity,
+                            yaxis: 'y',
+                            showlegend: si === 0 && idx === 0,
+                            hovertemplate:
+                                '<b>χ–z segment ' + (si + 1) + '</b><br>' +
+                                'Mχ = ' + seg.m_chi.toFixed(2) + ' m<br>' +
+                                'k_sn = ' + seg.ksn.toFixed(1) + '<br>' +
+                                'R² = ' + (seg.r2 !== null ? seg.r2.toFixed(3) : '—') + '<br>' +
+                                'n = ' + seg.n_points + '<extra></extra>',
+                        });
+                    });
+                }
+
                 // ── Equilibrium line — slope = mean k_sn ─────────────
                 if (data.show_equil_chi && r.chi && r.chi.length) {
                     var chi_min = Math.min.apply(null, r.chi);
@@ -515,10 +547,12 @@
                     var z_mouth = r.elevations[r.elevations.length - 1];
                     var ksn_mean = r.ksn_mean || 0;
 
-                    // z = z_mouth + k_sn * (chi_max - chi)
+                    // Steady state: z = z_outlet + k_sn * chi (chi = 0 at the
+                    // outlet). The former (chi_max - chi) form compensated the
+                    // reversed chi array of the engine (audit C1).
                     var eq_z = [
-                        z_mouth + ksn_mean * (chi_max - chi_min),
-                        z_mouth,
+                        z_mouth + ksn_mean * chi_min,
+                        z_mouth + ksn_mean * chi_max,
                     ];
                     traces.push({
                         x: [chi_min, chi_max],
@@ -683,6 +717,9 @@
                 r.ksn_max !== undefined ? r.ksn_max.toFixed(1) : '—';
             document.getElementById('stat-theta').textContent =
                 r.theta_local !== undefined ? r.theta_local.toFixed(3) : '—';
+            document.getElementById('stat-theta-best').textContent =
+                (r.theta_best !== undefined && r.theta_best !== null)
+                    ? r.theta_best.toFixed(2) + (r.theta_best_at_bound ? ' (limit)' : ' (R² ' + r.theta_best_r2.toFixed(3) + ')') : '—';
             document.getElementById('stat-knick').textContent =
                 r.knickpoints ? r.knickpoints.length : '—';
             document.getElementById('stat-view').textContent =
