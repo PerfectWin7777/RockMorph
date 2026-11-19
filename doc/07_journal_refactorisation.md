@@ -2,7 +2,7 @@
 
 This journal records every decision taken while porting the GSV-Studio
 indices, IAT, AHP, composite modeller and machine learning into RockMorph,
-and while fixing the bugs of the audit ([01_audit_complet.md](01_audit_complet.md)).
+and while fixing the bugs of the audit (initial audit of October 2026).
 Each decision has an identifier (D-A… architecture, D-S… science, D-U… user
 interface) so that it can be **accepted or rejected one by one**. When the
 scientific literature and GSV-Studio disagree, both are given, together with
@@ -51,7 +51,7 @@ only what they need (`requires` flags): polygon-only indices run instantly.
 filling (Barnes et al., 2014), D8, accumulation in topological order, trunk
 stream = largest-accumulation donor up to the divide. No FAC raster and no
 GRASS are required for the indices. GSV-Studio truncated the channel at
-1000 cells (bug P1 of [06](06_gsv_studio_inventaire.md)); there is no limit
+1000 cells (bug P1 of the GSV-Studio inventory); there is no limit
 here.
 
 **D-A4 — Thread safety.** QGIS layers are read on the main thread

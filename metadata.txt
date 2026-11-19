@@ -1,15 +1,15 @@
 [general]
 name=RockMorph
 qgisMinimumVersion=3.36
-description=Advanced Geomorphology Toolkit for QGIS with interactive 2D/3D analysis
+description=Geomorphology workstation: terrain, hydrology, river profiles (chi, ksn), 60 morphometric indices, Iat/AHP, swath profiles, three-point dip and 3D
 version=0.3.0
 author=Tony Winter
 email=wintertony7777@gmail.com
-about=RockMorph is a geomorphology toolkit for QGIS. It computes, classifies and charts 60 published morphometric and active-tectonics indices for your own basins (basin shape, relief and hypsometry, Horton-Strahler network, channel profile SL, ksn and chi, asymmetry factor, transverse symmetry, valley floor ratio, TWI/SPI/STI), combines them into the relative active tectonics index Iat (El Hamdouni et al., 2008), AHP and composite indices, and explores them with PCA, clustering and outlier detection. It also provides fluvial profile analysis (chi-plots, knickpoints, ksn), mountain-front sinuosity, topographic and swath profiles, rose diagrams, a three-point dip tool with predicted outcrop traces, hypsometric curves, terrain derivatives (curvatures, insolation, geomorphons, landforms, valley bottoms), flow routing (HAND, MFD/D-infinity, stream burning, network ksn), watershed subdivision and a 3D explorer with draped maps. Charts use Qt WebEngine and Plotly; optional methods use scikit-learn.
+about=RockMorph turns QGIS into a complete geomorphology workstation, from the DEM to the publication figure. Terrain: slope, curvatures, yearly insolation, Swiss and multidirectional shading, openness, sky-view factor, local dominance, multi-scale topographic position, valley bottoms, landform classes and geomorphons. Hydrology: sink filling, stream burning, Strahler/Horton/Shreve networks, HAND, MFD and D-infinity accumulation, watershed subdivision. Rivers: longitudinal profiles, SL index, chi-plots with knickpoints, ksn per segment and over the whole network, best concavity, normalised channel profiles. Tectonic geomorphology: 60 published morphometric indices with their classifications and references, mountain-front sinuosity, the relative active tectonics index Iat (El Hamdouni et al., 2008), AHP weighting with sensitivity analysis, composite indices, PCA, clustering and outlier detection. Profiles: topographic, serial cross-sections and swath profiles linked to the map, in 2D and 3D. Structural geology: rose diagrams, three-point dip with predicted outcrop traces, geological map digitizer. 3D: realistic terrain with cast shadows, draped maps with their QGIS style and a hover probe linked to the map. Every result is a QGIS layer or an interactive chart exportable to PNG, SVG, CSV and GeoPackage, and every method cites its source. Charts use Qt WebEngine (Plotly, three.js); GRASS, scikit-learn and umap-learn are optional.
 tracker=https://github.com/PerfectWin7777/RockMorph/issues
 repository=https://github.com/PerfectWin7777/RockMorph.git
 homepage=https://github.com/PerfectWin7777/RockMorph
-tags=geomorphology,dem,raster,terrain-analysis,hydrology,topography,swath-profile,hypsometry,rose-diagram,gis,spatial-analysis,qgis-plugin,3d-visualization,plotly,remote-sensing,geoscience
+tags=geomorphology,tectonic geomorphology,morphometry,chi,ksn,knickpoint,geomorphons,HAND,structural geology,dem,raster,terrain-analysis,hydrology,topography,swath-profile,hypsometry,rose-diagram,gis,spatial-analysis,qgis-plugin,3d-visualization,plotly,remote-sensing,geoscience
 category=Raster
 icon=icon.png
 experimental=True
@@ -21,6 +21,8 @@ changelog=0.3.0
     - New Three-Point Dip & Outcrop tool
     - 3D Explorer: any layer draped with its QGIS style, hover probe linked to the map
     - AHP weight sensitivity; Topographic Profiles along the main river
+    - Fixes: charts left empty when a computation finished before the chart page loaded; 3D view wider than the map after resizing a dock; '&' shown as '_' in group and menu titles; HAND legend range
+    - README with screenshots
     0.2.0
     - New Morphometric Indices tool (60 indices, published classifications, results viewer)
     - New Iat, AHP, Composite index and Statistics & ML tools
