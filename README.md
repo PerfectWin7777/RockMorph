@@ -10,11 +10,20 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/PerfectWin7777/RockMorph/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/PerfectWin7777/RockMorph/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="https://github.com/PerfectWin7777/RockMorph/releases"><img alt="Release" src="https://img.shields.io/github/v/release/PerfectWin7777/RockMorph?include_prereleases&sort=semver&color=2a78d6"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/PerfectWin7777/RockMorph?color=blue"></a>
   <img alt="QGIS" src="https://img.shields.io/badge/QGIS-%E2%89%A5%203.36-589632?logo=qgis&logoColor=white">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.3.0-2a78d6">
   <img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white">
   <img alt="Status" src="https://img.shields.io/badge/status-experimental-orange">
-  <img alt="License" src="https://img.shields.io/badge/license-GPL--2.0--or--later-blue">
+  <br>
+  <a href="https://github.com/PerfectWin7777/RockMorph/commits"><img alt="Last commit" src="https://img.shields.io/github/last-commit/PerfectWin7777/RockMorph"></a>
+  <a href="https://github.com/PerfectWin7777/RockMorph/commits"><img alt="Commit activity" src="https://img.shields.io/github/commit-activity/m/PerfectWin7777/RockMorph"></a>
+  <a href="https://github.com/PerfectWin7777/RockMorph/issues"><img alt="Issues" src="https://img.shields.io/github/issues/PerfectWin7777/RockMorph"></a>
+  <a href="https://github.com/PerfectWin7777/RockMorph/pulls"><img alt="Pull requests" src="https://img.shields.io/github/issues-pr/PerfectWin7777/RockMorph"></a>
+  <a href="https://github.com/PerfectWin7777/RockMorph/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/PerfectWin7777/RockMorph?style=social"></a>
+  <img alt="Code size" src="https://img.shields.io/github/languages/code-size/PerfectWin7777/RockMorph">
+  <img alt="Top language" src="https://img.shields.io/github/languages/top/PerfectWin7777/RockMorph">
 </p>
 
 <p align="center">
@@ -43,6 +52,7 @@ the Copernicus GLO-30 DEM of the Sierra Nevada (Spain), HydroBASINS and HydroRIV
 - [Methods and references](#methods-and-references)
 - [Quality and tests](#quality-and-tests)
 - [Project layout](#project-layout)
+- [Contributing](#contributing)
 - [License](#license)
 - [Author](#author)
 
@@ -125,6 +135,10 @@ topography is traced as the predicted outcrop (red dashed lines).
 - Optional: the GRASS provider (stream extraction in HydroFlow, automatic flow accumulation),
   `scikit-learn` and `umap-learn` for the extra machine-learning methods.
 
+**From a release** — download `RockMorph.zip` from the
+[releases page](https://github.com/PerfectWin7777/RockMorph/releases), then
+*Plugins › Manage and Install Plugins › Install from ZIP*.
+
 **From GitHub**
 
 ```bash
@@ -185,6 +199,13 @@ tests on real data.
 - Long computations run in background threads with progress and **Cancel**; layers are read
   thread-safely.
 - Checked on real data in projected and geographic CRS (Copernicus DEM, HydroBASINS, HydroRIVERS).
+- Continuous integration: every push and pull request runs the tests (Python 3.9 and 3.12) and
+  checks `metadata.txt`; a `v*` tag builds `RockMorph.zip` and attaches it to a GitHub release.
+
+## Contributing
+
+Work happens in pull requests: one branch per change, tests green, then merge into `main`.
+Bug reports and ideas go to the [issue tracker](https://github.com/PerfectWin7777/RockMorph/issues).
 
 ## Project layout
 
