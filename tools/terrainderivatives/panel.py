@@ -92,7 +92,7 @@ class TerrainDerivativesPanel(BasePanel):
             root.addWidget(morph_group)
 
             # ── GroupBox 2: Shading & Visualization ──
-            shading_group = QgsCollapsibleGroupBox(tr("Shading & Visualisation"))
+            shading_group = QgsCollapsibleGroupBox(tr("Shading && Visualisation"))
             shading_layout = QVBoxLayout(shading_group)
             shading_layout.setSpacing(8)
 
@@ -174,7 +174,7 @@ class TerrainDerivativesPanel(BasePanel):
             root.addWidget(shading_group)
 
             # ── GroupBox 3: Texture & Roughness ──
-            texture_group = QgsCollapsibleGroupBox(tr("Surface Texture & Position"))
+            texture_group = QgsCollapsibleGroupBox(tr("Surface Texture && Position"))
             texture_layout = QVBoxLayout(texture_group)
             texture_layout.setSpacing(8)
 
@@ -465,7 +465,7 @@ class TerrainDerivativesPanel(BasePanel):
         All are computed in NumPy by core/terrain_metrics.py; defaults are the
         GSV-Studio constants.
         """
-        group = QgsCollapsibleGroupBox(tr("Curvature, Insolation & Landforms"))
+        group = QgsCollapsibleGroupBox(tr("Curvature, Insolation && Landforms"))
         layout = QVBoxLayout(group)
         layout.setSpacing(10)
 

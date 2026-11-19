@@ -190,10 +190,10 @@ class RockMorphDock(QDockWidget):
         Provides a DRY implementation for QGIS plugins menu and dock switcher.
         """
         for cat_id, cat_info in TOOL_REGISTRY.items():
-            cat_menu = menu.addMenu(cat_info["name"])
+            cat_menu = menu.addMenu(cat_info["name"].replace("&", "&&"))   # & is a menu mnemonic
             
             for tool_id, tool_info in cat_info["tools"].items():
-                action = QAction(tool_info["name"], self)
+                action = QAction(tool_info["name"].replace("&", "&&"), self)
                 action.setStatusTip(tool_info["desc"])
                 action.triggered.connect(
                     lambda checked, t_id=tool_id: self.switch_to_tool(t_id)

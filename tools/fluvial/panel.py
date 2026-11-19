@@ -416,7 +416,7 @@ class FluvialPanel(BasePanel):
 
         # ── View toggle ───────────────────────────────────────────────
         # ── Display & Layers Group ────────────────────────────────────
-        display_group = QgsCollapsibleGroupBox(tr("Display & Layers"))
+        display_group = QgsCollapsibleGroupBox(tr("Display && Layers"))
         display_layout = QVBoxLayout(display_group)
         display_layout.setSpacing(10)
 
@@ -1007,7 +1007,7 @@ class FluvialPanel(BasePanel):
 
         self._last_data = payload
         js = f"updatePlot({json.dumps(json.dumps(payload))})"
-        self.webview.page().runJavaScript(js)
+        self.run_js(js)
 
     # ------------------------------------------------------------------
     # Knickpoint rubber bands on map canvas
@@ -1213,7 +1213,7 @@ class FluvialPanel(BasePanel):
             return
         self._pending_export_path = path
         self._pending_export_dpi  = dpi
-        self.webview.page().runJavaScript(
+        self.run_js(
             f"exportViaSvg('{self.div_id}')"
         )
 

@@ -56,7 +56,7 @@ class RosePanel(BasePanel):
         root.setSpacing(6)
 
         # --- Input group ---
-        input_group = QgsCollapsibleGroupBox(tr("Input & Analysis"))
+        input_group = QgsCollapsibleGroupBox(tr("Input && Analysis"))
         input_layout = QFormLayout(input_group)
 
         self.layer_combo = QgsMapLayerComboBox()
@@ -233,7 +233,7 @@ class RosePanel(BasePanel):
         json_data = json.dumps(data)
         # Use double quotes wrapper to avoid conflicts with JSON content
         js = f'updatePlot({json.dumps(json_data)})'
-        self.webview.page().runJavaScript(js)
+        self.run_js(js)
 
     # ------------------------------------------------------------------
     # Export
@@ -277,7 +277,7 @@ class RosePanel(BasePanel):
         self._pending_export_dpi  = dpi
 
         div_id = 'plot-main'  # div ID for plotly export
-        self.webview.page().runJavaScript(f"exportViaSvg('{div_id}')")
+        self.run_js(f"exportViaSvg('{div_id}')")
 
 
 

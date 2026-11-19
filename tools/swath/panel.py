@@ -347,7 +347,7 @@ class SwathPanel(BasePanel):
             return
         self._last_data["styles"] = self.style_manager.get_all_styles()
         json_data = json.dumps(self._last_data)
-        self.webview.page().runJavaScript(
+        self.run_js(
             f'updatePlot({json.dumps(json_data)})'
         )
 
@@ -363,7 +363,7 @@ class SwathPanel(BasePanel):
         data["styles"] = self.style_manager.get_all_styles()
         json_data = json.dumps(data)
         js = f'updatePlot({json.dumps(json_data)})'
-        self.webview.page().runJavaScript(
+        self.run_js(
             js,
             # lambda result: print("JS result:", result)
         )
@@ -391,7 +391,7 @@ class SwathPanel(BasePanel):
                 self.map_marker.hide()
             
             # Reset the cursor on the Plotly chart via JavaScript
-            # self.webview.page().runJavaScript("updateCursor(null)")
+            # self.run_js("updateCursor(null)")
 
     def _on_plot_hover(self, distance):
         """
@@ -560,11 +560,11 @@ class SwathPanel(BasePanel):
         
     #     if perpendicular_dist > threshold:
     #         # Mouse is outside the swath zone: hide the cursor
-    #         self.webview.page().runJavaScript("updateCursor(null)")
+    #         self.run_js("updateCursor(null)")
     #     else:
     #         # Mouse is inside: calculate distance from start of the line
     #         dist_along_line = line_geom.lineLocatePoint(mouse_geom)
-    #         self.webview.page().runJavaScript(f"updateCursor({dist_along_line})")
+    #         self.run_js(f"updateCursor({dist_along_line})")
 
     def cleanup(self):
         """
@@ -643,9 +643,9 @@ class SwathPanel(BasePanel):
             if view == "3d" and self._pending_export_path.lower().endswith((".svg", ".pdf")):
                 self._pending_export_path = self._pending_export_path.rsplit(".", 1)[0] + ".png"
                 self.show_info(tr("The 3D block is exported as PNG: {0}").format(self._pending_export_path))
-            self.webview.page().runJavaScript("exportSwathActive()")
+            self.run_js("exportSwathActive()")
 
-        self.webview.page().runJavaScript("activeView()", export)
+        self.run_js("activeView()", export)
     
     
     def _csv_headers(self) -> list:

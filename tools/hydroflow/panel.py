@@ -66,7 +66,7 @@ class HydroFlowPanel(BasePanel):
         param_group = QgsCollapsibleGroupBox(tr("Extraction Settings"))
         param_layout = QFormLayout(param_group)
 
-        self.chk_fill_depressions = QCheckBox(tr("Enable Sink Filling (Wang & Liu)"))
+        self.chk_fill_depressions = QCheckBox(tr("Enable Sink Filling (Wang && Liu)"))
         self.chk_fill_depressions.setChecked(True)
         param_layout.addRow(tr("Conditioning:"), self.chk_fill_depressions)
 
@@ -425,9 +425,15 @@ class HydroFlowPanel(BasePanel):
         ramp = QgsColorRampShader()
         ramp.setColorRampType(QgsColorRampShader.Interpolated)
         ramp.setColorRampItemList(items)
+        ramp.setMinimumValue(items[0].value)
+        ramp.setMaximumValue(items[-1].value)
         shader = QgsRasterShader()
         shader.setRasterShaderFunction(ramp)
-        layer.setRenderer(QgsSingleBandPseudoColorRenderer(provider, 1, shader))
+        renderer = QgsSingleBandPseudoColorRenderer(provider, 1, shader)
+        # Without explicit bounds the legend shows the default 0–255 range.
+        renderer.setClassificationMin(items[0].value)
+        renderer.setClassificationMax(items[-1].value)
+        layer.setRenderer(renderer)
         layer.triggerRepaint()
 
     # ── BasePanel required overrides ─────────────────────────────────────

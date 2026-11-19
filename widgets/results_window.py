@@ -36,7 +36,7 @@ from qgis.PyQt.QtWidgets import (  # type: ignore
     QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
 )
 
-from ..base.webengine import (  # optional in some QGIS builds (doc/03_qwebengine.md)
+from ..base.webengine import (  # optional in some QGIS builds
     WEBENGINE_AVAILABLE, QWebChannel, QWebEngineSettings, QWebEngineView,
 )
 

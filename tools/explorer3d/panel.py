@@ -189,8 +189,11 @@ class Explorer3DPanel(BasePanel):
         self.webview.setParent(self.central_container)
         self.webview.hide() 
 
-        # Install an event filter to capture real-time resizing of the central area
+        # Follow the map canvas: the container's resize event arrives before
+        # its layout has resized the canvas, so the canvas is watched too
+        # (otherwise resizing a dock left the 3D view at the old width).
         self.central_container.installEventFilter(self)
+        self.canvas_2d.installEventFilter(self)
 
 
         # Redirect JS console to QGIS Python Console
@@ -597,7 +600,7 @@ class Explorer3DPanel(BasePanel):
 
     def _build_drape_group(self) -> QWidget:
         """Draped map (any layer, rendered with its QGIS style) and hover probe options."""
-        group = QgsCollapsibleGroupBox(tr("Draped map & probe"))
+        group = QgsCollapsibleGroupBox(tr("Draped map && probe"))
         form = QFormLayout(group)
         form.setContentsMargins(6, 6, 6, 6)
 
@@ -1418,6 +1421,9 @@ class Explorer3DPanel(BasePanel):
             self.webview.show()
             self.webview.raise_()
             self.is_3d_active = True
+            # The canvas may still be laid out (dock just opened): match it again.
+            QTimer.singleShot(0, self._sync_viewport_geometry)
+            QTimer.singleShot(300, self._sync_viewport_geometry)
         else:
             self.webview.hide()
             self.canvas_2d.show()
@@ -1436,7 +1442,7 @@ class Explorer3DPanel(BasePanel):
 
         self.btn_render_terrain.setEnabled(True)
         if self._loaded_raster_id == layer.id():
-            self.btn_render_terrain.setText(tr("✔  DEM active & loaded"))
+            self.btn_render_terrain.setText(tr("✔  DEM active && loaded"))
             self.btn_render_terrain.setStyleSheet(
                 "background-color:#7f8c8d; color:white; font-weight:bold; "
                 "padding:6px; border-radius:4px;"
@@ -2669,11 +2675,15 @@ class Explorer3DPanel(BasePanel):
     def eventFilter(self, obj, event) -> bool:
         """Intercept central container resize events to synchronize WebGL container geometry."""
         from qgis.PyQt.QtCore import QEvent  # type: ignore
-        if obj == self.central_container and event.type() == QEvent.Resize:
-            if self.is_3d_active:
-                # Force the webview to perfectly match the size and position of the 2D canvas
-                self.webview.setGeometry(self.canvas_2d.geometry())
+        if (obj in (self.central_container, self.canvas_2d)
+                and event.type() in (QEvent.Resize, QEvent.Move) and self.is_3d_active):
+            # After the layout pass, match the size and position of the 2D canvas.
+            QTimer.singleShot(0, self._sync_viewport_geometry)
         return super().eventFilter(obj, event)
+
+    def _sync_viewport_geometry(self) -> None:
+        if self.is_3d_active and self.webview is not None:
+            self.webview.setGeometry(self.canvas_2d.geometry())
 
 
     # ── BasePanel required overrides ─────────────────────────────────────
@@ -2691,6 +2701,8 @@ class Explorer3DPanel(BasePanel):
             self.rad_view_2d.setChecked(True)
         if self.central_container:
             self.central_container.removeEventFilter(self)
+        if self.canvas_2d is not None:
+            self.canvas_2d.removeEventFilter(self)
         if self.webview:
             # Safely detach and schedule the widget for deletion
             self.webview.setParent(None)

@@ -834,7 +834,7 @@ class NCPPanel(BasePanel):
 
         self._last_data = payload
         js = f"updatePlot({json.dumps(json.dumps(payload))})"
-        self.webview.page().runJavaScript(js)
+        self.run_js(js)
 
     # ------------------------------------------------------------------
     # BasePanel abstract methods
@@ -875,7 +875,7 @@ class NCPPanel(BasePanel):
             return
         self._pending_export_path = path
         self._pending_export_dpi  = dpi
-        self.webview.page().runJavaScript(
+        self.run_js(
             f"exportViaSvg('{self.div_id}')"
         )
 

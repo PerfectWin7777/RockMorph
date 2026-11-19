@@ -442,7 +442,34 @@ class BasePanel(QWidget, metaclass=QWidgetABCMeta):
         #     f.write(html)
 
         # self.webview.load(QUrl.fromLocalFile(html_path))
+        # JavaScript sent before the page has loaded is queued (run_js):
+        # a computation finishing first used to call functions that did not
+        # exist yet, leaving the chart empty.
+        self._page_ready = False
+        self._js_queue = []
+        try:
+            self.webview.loadFinished.disconnect(self._on_page_loaded)
+        except TypeError:
+            pass
+        self.webview.loadFinished.connect(self._on_page_loaded)
         self.webview.setHtml(html_content, QUrl.fromLocalFile(html_path))
+
+    def _on_page_loaded(self, ok: bool) -> None:
+        """Marks the chart page ready and runs the JavaScript queued meanwhile."""
+        self._page_ready = True
+        queued, self._js_queue = self._js_queue, []
+        for script, callback in queued:
+            self.run_js(script, callback)
+
+    def run_js(self, script: str, callback=None) -> None:
+        """runJavaScript on the chart page, deferred until the page has loaded."""
+        if not getattr(self, "_page_ready", True):
+            self._js_queue.append((script, callback))
+            return
+        if callback is None:
+            self.webview.page().runJavaScript(script)
+        else:
+            self.webview.page().runJavaScript(script, callback)
 
 
     def _csv_headers(self) -> list:

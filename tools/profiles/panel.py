@@ -490,7 +490,7 @@ class ProfilesPanel(BasePanel):
         self._draw_profile_lines()
         payload = {"profiles": [{k: v for k, v in p.items() if k != "wkt"} for p in data["profiles"]],
                    "surface": data["surface"], "mode": data["mode"]}
-        self.webview.page().runJavaScript(f"renderProfiles({json.dumps(payload)});")
+        self.run_js(f"renderProfiles({json.dumps(payload)});")
         self._push_display_options()
         self.layer_btn.setEnabled(True)
         for warning in data.get("warnings", [])[:3]:
@@ -499,7 +499,7 @@ class ProfilesPanel(BasePanel):
 
     def _push_display_options(self, *args) -> None:
         options = {"exaggeration": self.ve_spin.value(), "stacked": self.stack_check.isChecked()}
-        self.webview.page().runJavaScript(f"setOptions({json.dumps(options)});")
+        self.run_js(f"setOptions({json.dumps(options)});")
 
     # -- map display and hover ------------------------------------------------------
 
@@ -562,12 +562,12 @@ class ProfilesPanel(BasePanel):
         if best is None:
             if self._map_hover_index is not None:
                 self._map_hover_index = None
-                self.webview.page().runJavaScript("hideCursor();")
+                self.run_js("hideCursor();")
                 self._highlight.hide()
             return
         self._map_hover_index = best
         along = self._work_geoms[best].lineLocatePoint(probe)
-        self.webview.page().runJavaScript(f"showCursor({best}, {along:.1f});")
+        self.run_js(f"showCursor({best}, {along:.1f});")
         self._highlight.setToGeometry(self._work_geoms[best], self._work_crs)
         self._highlight.show()
 
@@ -628,9 +628,9 @@ class ProfilesPanel(BasePanel):
                 self.show_info(tr("The 3D view is exported as PNG: {0}").format(target))
             self._pending_export_path = target
             self._pending_export_dpi = dpi
-            self.webview.page().runJavaScript("exportActiveChart();")
+            self.run_js("exportActiveChart();")
 
-        self.webview.page().runJavaScript("activeTab();", export)
+        self.run_js("activeTab();", export)
 
     # -- life cycle ---------------------------------------------------------------------------
 
