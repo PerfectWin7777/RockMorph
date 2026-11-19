@@ -14,6 +14,7 @@
   <img alt="Version" src="https://img.shields.io/badge/version-0.3.0-2a78d6">
   <img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white">
   <img alt="Status" src="https://img.shields.io/badge/status-experimental-orange">
+  <img alt="License" src="https://img.shields.io/badge/license-GPL--2.0--or--later-blue">
 </p>
 
 <p align="center">
@@ -42,6 +43,7 @@ the Copernicus GLO-30 DEM of the Sierra Nevada (Spain), HydroBASINS and HydroRIV
 - [Methods and references](#methods-and-references)
 - [Quality and tests](#quality-and-tests)
 - [Project layout](#project-layout)
+- [License](#license)
 - [Author](#author)
 
 ## Tools
@@ -197,7 +199,17 @@ doc/       implementation journal
 tests/     unit tests (pytest)
 ```
 
+## License
+
+RockMorph is free software, released under the **GNU General Public License, version 2 or (at your
+option) any later version** — the license of QGIS itself. See [LICENSE](LICENSE).
+
 ## Author
 
-**Tony Winter** — issues and suggestions are welcome on the
+**Tony Winter**
+
+- Professional: [wintertony7777@gmail.com](mailto:wintertony7777@gmail.com)
+- Personal: [wintertony410@gmail.com](mailto:wintertony410@gmail.com)
+
+Issues and suggestions are welcome on the
 [issue tracker](https://github.com/PerfectWin7777/RockMorph/issues).
